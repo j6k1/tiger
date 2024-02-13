@@ -12,9 +12,6 @@ use std::path::{Path, PathBuf};
 
 use usiagent::output::USIStdErrorWriter;
 use usiagent::OnErrorHandler;
-use usiagent::shogi::{Banmen, Teban};
-use usiagent::shogi::MochigomaCollections;
-use usiagent::rule::*;
 use usiagent::event::*;
 use usiagent::logger::*;
 use usiagent::input::*;

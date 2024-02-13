@@ -2,16 +2,12 @@ use std::{error, fmt, io};
 use std::cell::{BorrowError, BorrowMutError};
 use std::collections::VecDeque;
 use std::num::{ParseFloatError, ParseIntError};
-use std::sync::mpsc::{Receiver, RecvError, RecvTimeoutError, Sender, SendError};
+use std::sync::mpsc::{RecvError, RecvTimeoutError};
 use std::sync::{MutexGuard, PoisonError};
-use concurrent_queue::{PopError, PushError};
 use nncombinator::error::{ConfigReadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use packedsfen::error::ReadError;
 use usiagent::error::{EventDispatchError, InfoSendError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
-use usiagent::rule::{AppliedMove, LegalMove};
-use crate::search::Score;
-use crate::transposition_table::ZobristHash;
 
 #[derive(Debug)]
 pub enum ApplicationError {

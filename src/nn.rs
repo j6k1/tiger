@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::ffi::OsStr;
 use std::ops::DerefMut;
 use std::path::{Path};
 use std::rc::Rc;
@@ -29,7 +28,6 @@ use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
 use usiagent::event::{EventQueue, GameEndState, UserEvent, UserEventKind};
-use usiagent::rule::{LegalMove};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
 use crate::error::{ApplicationError};
 
@@ -114,7 +112,7 @@ impl<T,U,D,P,PT,I,O> BatchNeuralNetwork<U,D,P,PT,I,O> for T
              PT: PersistenceType {}
 pub struct EvalutorCreator;
 impl EvalutorCreator {
-    pub fn create<P: AsRef<Path>>(savedir: P, nn_filename: P,nn_path: P)
+    pub fn create<P: AsRef<Path>>(savedir: P, nn_path: P)
         -> Result<Evalutor<impl ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
                                 PreTrain<f32, OutStack=impl Send + Sync + 'static>>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
@@ -123,8 +121,6 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / 2515f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
-
-        let memory_pool = Arc::new(Mutex::new(MemoryPool::new(Alloctype::Device)?));
 
         let device = DeviceCpu::new()?;
 
@@ -172,6 +168,17 @@ pub struct Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32,
                                 PreTrain<f32>,
                                 <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M
+}
+impl<M> Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                             PreTrain<f32>,
+                             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    pub fn evalute(&self, t:Teban, b:&Banmen, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
+        let input = InputCreator::make_input(t,b,mc);
+
+        let r = self.nn.forward_all(input)?;
+
+        Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
+    }
 }
 pub struct Trainer<M>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
@@ -254,8 +261,8 @@ impl TrainerCreator {
     }
 }
 impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
-    fn sigmoid(&self,x:f32) -> f32 {
-        1. / (1. + (-1. * 0.00173873964459554))
+    fn sigmoid(&self,x:i16) -> f32 {
+        1. / (1. + (-0.00173873964459554 * x as f32))
     }
 
     pub fn learning_by_packed_sfens<'a>(&mut self,
@@ -279,7 +286,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         }
 
         let (sente_win_count,gote_win_count) = sfens_with_extended.iter()
-            .map(|(teban,_,_,es,score)| {
+            .map(|(teban,_,_,es,_)| {
                 let (s,g) = match (es,teban) {
                     (&GameEndState::Draw,_) => {
                         (0,0)
@@ -311,20 +318,24 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
                 let mut t = Arr::<f32,1>::new();
 
-                t[0] = match es {
-                    GameEndState::Win if teban == Teban::Sente => {
-                        sente_rate
-                    },
-                    GameEndState::Win => {
-                        gote_rate
-                    },
-                    GameEndState::Lose if teban == Teban::Sente => {
-                        -gote_rate
-                    },
-                    GameEndState::Lose => {
-                        -sente_rate
-                    },
-                    _ => 0f32
+                t[0] = {
+                    let t = match es {
+                        GameEndState::Win if teban == Teban::Sente => {
+                            sente_rate
+                        },
+                        GameEndState::Win => {
+                            gote_rate
+                        },
+                        GameEndState::Lose if teban == Teban::Sente => {
+                            -gote_rate
+                        },
+                        GameEndState::Lose => {
+                            -sente_rate
+                        },
+                        _ => 0f32
+                    };
+
+                    t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
@@ -418,14 +429,18 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
                 let mut t = Arr::<f32,1>::new();
 
-                t[0] = match es {
-                    GameEndState::Win => {
-                        rate
-                    }
-                    GameEndState::Lose => {
-                        -rate
-                    },
-                    _ => 0f32
+                t[0] = {
+                    let t = match es {
+                        GameEndState::Win => {
+                            rate
+                        }
+                        GameEndState::Lose => {
+                            -rate
+                        },
+                        _ => 0f32
+                    };
+
+                    t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
