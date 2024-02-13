@@ -477,7 +477,7 @@ impl<M> Learnener<M>
             for packed in testdata.into_iter().take(100) {
                 let (s,score) = test_process(&mut evalutor,packed)?;
 
-                if score >= 0.0 {
+                if score >= 0.5 {
                     estimated_win += 1;
                 }
 
@@ -487,10 +487,10 @@ impl<M> Learnener<M>
                     },
                     GameEndState::Win => {
                         win += 1;
-                        score >= 0.0
+                        score >= 0.5
                     },
                     _ => {
-                        score < 0.0
+                        score < 0.5
                     }
                 };
 
@@ -502,9 +502,9 @@ impl<M> Learnener<M>
 
                 if success {
                     successed += 1;
-                    println!("評価値{} 正解!",score * (1 << 29) as f32);
+                    println!("勝率{} 正解!",score);
                 } else {
-                    println!("評価値{} 不正解...",score * (1 << 29) as f32);
+                    println!("勝率{} 不正解...",score);
                 }
 
                 count += 1;
