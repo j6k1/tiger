@@ -262,7 +262,7 @@ impl TrainerCreator {
 }
 impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
     fn sigmoid(&self,x:i16) -> f32 {
-        1. / (1. + (-0.00173873964459554 * x as f32))
+        1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }
 
     pub fn learning_by_packed_sfens<'a>(&mut self,
