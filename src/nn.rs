@@ -8,7 +8,7 @@ use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
 use rand_distr::Normal;
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{ReLu, Tanh};
+use nncombinator::activation::{ReLu, Sigmoid};
 use nncombinator::arr::{Arr, SerializedVec};
 use nncombinator::cuda::mem::{Alloctype, MemoryPool};
 use nncombinator::device::{Device, DeviceCpu, DeviceGpu};
@@ -148,7 +148,7 @@ impl EvalutorCreator {
         })?.try_add_layer(|l| {
             BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, Tanh::new(&device), &device)
+            ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
             LinearOutputLayer::new(l, &device)
         });
@@ -231,7 +231,7 @@ impl TrainerCreator {
         })?.try_add_layer(|l| {
             BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
-            ActivationLayer::new(l,Tanh::new(&device),&device)
+            ActivationLayer::new(l,Sigmoid::new(&device),&device)
         }).add_layer_train(|l| {
             LinearOutputLayer::new(l,&device)
         });
