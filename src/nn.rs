@@ -332,7 +332,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         GameEndState::Lose => {
                             -sente_rate
                         },
-                        _ => 0f32
+                        _ => 0.5f32
                     };
 
                     t * 0.667 + self.sigmoid(*score) * 0.333
@@ -437,7 +437,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         GameEndState::Lose => {
                             -rate
                         },
-                        _ => 0f32
+                        _ => 0.5f32
                     };
 
                     t * 0.667 + self.sigmoid(*score) * 0.333
