@@ -114,7 +114,7 @@ pub struct EvalutorCreator;
 impl EvalutorCreator {
     pub fn create<P: AsRef<Path>>(savedir: P, nn_path: P)
         -> Result<Evalutor<impl ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
-                                PreTrain<f32, OutStack=impl Send + Sync + 'static>>, ApplicationError> {
+                                PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
@@ -170,7 +170,7 @@ pub struct Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32,
     nn:M
 }
 impl<M> Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
-                             PreTrain<f32>,
+                             PreTrain<f32> + Send + Sync + 'static,
                              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn evalute(&self, t:Teban, b:&Banmen, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
         let input = InputCreator::make_input(t,b,mc);

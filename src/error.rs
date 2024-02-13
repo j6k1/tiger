@@ -6,7 +6,8 @@ use std::sync::mpsc::{RecvError, RecvTimeoutError};
 use std::sync::{MutexGuard, PoisonError};
 use nncombinator::error::{ConfigReadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use packedsfen::error::ReadError;
-use usiagent::error::{EventDispatchError, InfoSendError, PlayerError, SfenStringConvertError, UsiProtocolError};
+use rayon::ThreadPoolBuildError;
+use usiagent::error::{EventDispatchError, InfoSendError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
 
 #[derive(Debug)]
@@ -37,7 +38,9 @@ pub enum ApplicationError {
     InfoSendError(InfoSendError),
     UsiProtocolError(UsiProtocolError),
     BorrowError(BorrowError),
-    BorrowMutError(BorrowMutError)
+    BorrowMutError(BorrowMutError),
+    ThreadPoolBuildError(ThreadPoolBuildError),
+    LimitSizeError(LimitSizeError)
 }
 impl fmt::Display for ApplicationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -69,6 +72,8 @@ impl fmt::Display for ApplicationError {
             ApplicationError::UsiProtocolError(ref e) => write!(f,"{}",e),
             ApplicationError::BorrowError(ref e) => write!(f,"{}",e),
             ApplicationError::BorrowMutError(ref e) => write!(f,"{}",e),
+            ApplicationError::ThreadPoolBuildError(ref e) => write!(f,"{}",e),
+            ApplicationError::LimitSizeError(ref e) => write!(f,"{}",e)
         }
     }
 }
@@ -103,6 +108,8 @@ impl error::Error for ApplicationError {
             ApplicationError::UsiProtocolError(_) => "An error occurred in the parsing or string generation process of string processing according to the USI protocol.",
             ApplicationError::BorrowError(_) => "already borrowed.",
             ApplicationError::BorrowMutError(_) => "already mutably borrowed.",
+            ApplicationError::ThreadPoolBuildError(_) => "Failed to create thread pool.",
+            ApplicationError::LimitSizeError(_) => "Size exceeds the upper limit."
         }
     }
 
@@ -135,6 +142,8 @@ impl error::Error for ApplicationError {
             ApplicationError::UsiProtocolError(ref e) => Some(e),
             ApplicationError::BorrowError(ref e) => Some(e),
             ApplicationError::BorrowMutError(ref e) => Some(e),
+            ApplicationError::ThreadPoolBuildError(ref e) => Some(e),
+            ApplicationError::LimitSizeError(ref e) => Some(e),
         }
     }
 }
@@ -235,9 +244,19 @@ impl From<PoisonError<MutexGuard<'_, ()>>> for ApplicationError {
         ApplicationError::PoisonError(format!("{}",err))
     }
 }
+impl From<ThreadPoolBuildError> for ApplicationError {
+    fn from(err: ThreadPoolBuildError) -> ApplicationError {
+        ApplicationError::ThreadPoolBuildError(err)
+    }
+}
 impl From<InfoSendError> for ApplicationError {
     fn from(err: InfoSendError) -> ApplicationError {
         ApplicationError::InfoSendError(err)
+    }
+}
+impl From<LimitSizeError> for ApplicationError {
+    fn from(err: LimitSizeError) -> ApplicationError {
+        ApplicationError::LimitSizeError(err)
     }
 }
 impl From<UsiProtocolError> for ApplicationError {

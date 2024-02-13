@@ -31,6 +31,7 @@ use crate::nn::TrainerCreator;
 pub mod nn;
 pub mod learning;
 pub mod transposition_table;
+pub mod player;
 pub mod search;
 pub mod error;
 
