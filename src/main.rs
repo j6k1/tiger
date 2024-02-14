@@ -22,11 +22,12 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use getopts::Options;
 use usiagent::logger::FileLogger;
-use usiagent::OnErrorHandler;
+use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
 use crate::error::ApplicationError;
 use crate::learning::Learnener;
-use crate::nn::TrainerCreator;
+use crate::nn::{EvalutorCreator, TrainerCreator};
+use crate::player::Tiger;
 
 pub mod nn;
 pub mod learning;
@@ -135,6 +136,18 @@ fn run() -> Result<(),ApplicationError> {
 
         r
     } else {
-        unimplemented!()
+        let agent = UsiAgent::new(Tiger::new(|| EvalutorCreator::create("data","nn.bin")));
+
+        let r = agent.start_default(|on_error_handler,e| {
+            match on_error_handler {
+                Some(ref h) => {
+                    let _ = h.lock().map(|h| h.call(e));
+                },
+                None => (),
+            }
+        });
+        r.map_err(|_| ApplicationError::AgentRunningError(String::from(
+            "An error occurred while running USIAgent. See log for details..."
+        )))
     }
 }
