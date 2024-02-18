@@ -323,19 +323,19 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win if teban == Teban::Sente => {
-                            1.
+                            0.99
                             //sente_rate
                         },
                         GameEndState::Win => {
-                            1.
+                            0.99
                             //gote_rate
                         },
                         GameEndState::Lose if teban == Teban::Sente => {
-                            0.
+                            0.01
                             //-gote_rate
                         },
                         GameEndState::Lose => {
-                            0.
+                            0.01
                             //-sente_rate
                         },
                         _ => 0.5f32
@@ -458,12 +458,12 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win => {
-                            1.
+                            0.99
                             //rate
                         }
                         GameEndState::Lose => {
                             //-rate
-                            0.
+                            0.01
                         },
                         _ => 0.5f32
                     };
