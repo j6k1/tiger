@@ -136,7 +136,7 @@ fn run() -> Result<(),ApplicationError> {
 
         r
     } else {
-        let agent = UsiAgent::new(Tiger::new(|| EvalutorCreator::create("data","nn.bin")));
+        let agent = UsiAgent::new(Tiger::new(| model_name | EvalutorCreator::create(String::from("data"),model_name.clone())));
 
         let r = agent.start_default(|on_error_handler,e| {
             match on_error_handler {

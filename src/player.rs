@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::fmt;
+use std::{fmt, fs};
+use std::fs::DirEntry;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -72,10 +74,18 @@ impl FromOption for bool {
         }
     }
 }
+impl FromOption for String {
+    fn from_option(option: SysEventOption) -> Option<String> {
+        match option {
+            SysEventOption::Str(s) => Some(s),
+            _ => None
+        }
+    }
+}
 pub struct Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
                              PreTrain<f32> + Send + Sync + 'static,
                           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    evalutor_creator: Box<dyn Fn() -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
+    evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
     evalutor: Option<Arc<Evalutor<M>>>,
     kyokumen:Option<Kyokumen>,
     zh:Option<ZobristHash<u64>>,
@@ -87,6 +97,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>
     factor_nodes_per_thread:u8,
     nodes_per_leaf_node:u16,
     turn_limit:Option<u32>,
+    model_name:String
 }
 impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
                                          PreTrain<f32> + Send + Sync + 'static,
@@ -98,7 +109,7 @@ impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output
 impl<M> Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
                           PreTrain<f32> + Send + Sync + 'static,
                        <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
-    pub fn new<C: Fn() -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
+    pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
         Tiger {
             evalutor_creator:Box::new(evalutor_creator),
             evalutor:None,
@@ -112,6 +123,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
             factor_nodes_per_thread:FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             turn_limit:None,
+            model_name: String::from("nn.bins")
         }
     }
 }
@@ -123,6 +135,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
 
     fn get_option_kinds(&mut self) -> Result<BTreeMap<String,SysEventOptionKind>,ApplicationError> {
         let mut kinds:BTreeMap<String,SysEventOptionKind> = BTreeMap::new();
+
         kinds.insert(String::from("USI_Hash"),SysEventOptionKind::Num);
         kinds.insert(String::from("USI_Ponder"),SysEventOptionKind::Bool);
         kinds.insert(String::from("MaxDepth"),SysEventOptionKind::Num);
@@ -131,12 +144,37 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("FactorForNumberOfNodesPerThread"),SysEventOptionKind::Num);
         kinds.insert(String::from("NodesPerLeafNodes"),SysEventOptionKind::Num);
+        kinds.insert(String::from("ModelFile"),SysEventOptionKind::Str);
 
         Ok(kinds)
     }
 
     fn get_options(&mut self) -> Result<BTreeMap<String,UsiOptType>,ApplicationError> {
         let mut options:BTreeMap<String,UsiOptType> = BTreeMap::new();
+        let mut paths = fs::read_dir(Path::new("data"))?.into_iter()
+            .collect::<Vec<Result<DirEntry,_>>>();
+
+        paths.sort_by(|a,b| {
+            match (a,b) {
+                (Ok(a),Ok(b)) => {
+                    let a = a.file_name();
+                    let b = b.file_name();
+                    a.cmp(&b)
+                },
+                _ => {
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
+
+        let paths = paths.into_iter().filter(|ent| {
+            ent.as_ref().map(|e| e.path().as_path().extension().map(|ext| ext == "bin").unwrap_or(false)).unwrap_or(false)
+        }).map(|ent| {
+            ent.as_ref().map(|e| e.path().as_path().file_name().map(|s| {
+                s.to_string_lossy().to_string()
+            }).unwrap_or(String::from(""))).unwrap_or(String::from(""))
+        }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
+
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
         options.insert(String::from("MaxDepth"),UsiOptType::Spin(1,100,Some(MAX_DEPTH as i64)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
@@ -145,6 +183,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
         UsiOptType::Spin(1,255,Some(FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD as i64))
         );
         options.insert(String::from("NodesPerLeafNodes"), UsiOptType::Spin(1,593,Some(NODES_PER_LEAF_NODE as i64)));
+        options.insert(String::from("ModelFile"),UsiOptType::Combo(Some(String::from("nn.bin")),paths));
 
         Ok(options)
     }
@@ -155,7 +194,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
         match self.evalutor {
             Some(_) => (),
             None => {
-                self.evalutor = Some(Arc::new((self.evalutor_creator)()?))
+                self.evalutor = Some(Arc::new((self.evalutor_creator)(self.model_name.clone())?))
             }
         }
         Ok(())
@@ -180,6 +219,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
             },
             "NodesPerLeafNodes" => {
                 self.nodes_per_leaf_node = u16::from_option(value).unwrap_or(NODES_PER_LEAF_NODE);
+            },
+            "ModelFile" => {
+                self.model_name = String::from_option(value).unwrap_or(String::from("nn.bin"));
             },
             _ => ()
         }
@@ -329,10 +371,12 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
 
                 let bestmove = match result {
                     Err(ref e) => {
+                        println!("info string error {}",&e);
                         let _ = env.on_error_handler.lock().map(|h| h.call(e));
                         BestMove::Resign
                     },
                     Ok(EvaluationResult::Timeout) => {
+                        println!("info string timeout!");
                         BestMove::Resign
                     },
                     Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
