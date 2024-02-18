@@ -288,6 +288,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         Ok(env.info_sender.flush()?)
     }
 
+    fn send_message(&self, env:&mut Environment<L,S>, message:&str) -> Result<(),ApplicationError>
+        where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
+        let mut commands:Vec<UsiInfoSubCommand> = Vec::new();
+        commands.push(UsiInfoSubCommand::Str(String::from(message)));
+
+        Ok(env.info_sender.send(commands)?)
+    }
+
     fn update_tt<'a>(&self, env: &mut Environment<L, S>,
                      zh: &'a ZobristHash<u64>,
                      depth: u32,

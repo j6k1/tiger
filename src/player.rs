@@ -371,12 +371,16 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=Arr<f
 
                 let bestmove = match result {
                     Err(ref e) => {
-                        println!("info string error {}",&e);
+                        strategy.send_message(&mut env,format!("error {}",&e).as_str())?;
+                        env.info_sender.flush()?;
+
                         let _ = env.on_error_handler.lock().map(|h| h.call(e));
                         BestMove::Resign
                     },
                     Ok(EvaluationResult::Timeout) => {
-                        println!("info string timeout!");
+                        strategy.send_message(&mut env,"timeout!")?;
+                        env.info_sender.flush()?;
+
                         BestMove::Resign
                     },
                     Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
