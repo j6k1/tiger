@@ -414,7 +414,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 mc: &mc,
                 zh: zh,
                 depth: depth,
-                current_depth: current_depth + 1,
+                current_depth: current_depth,
                 base_depth: base_depth,
                 max_depth: max_depth,
                 rng:&mut rng
