@@ -285,6 +285,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             sfens_with_extended.push((teban,banmen,mc,game_result,score));
         }
 
+        /*
         let (sente_win_count,gote_win_count) = sfens_with_extended.iter()
             .map(|(teban,_,_,es,_)| {
                 let (s,g) = match (es,teban) {
@@ -309,6 +310,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         } else {
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
+        */
 
         let batch = sfens_with_extended.iter()
             .map(|(teban,banmen,mc,es, score)| {
@@ -321,21 +323,26 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win if teban == Teban::Sente => {
-                            sente_rate
+                            1.
+                            //sente_rate
                         },
                         GameEndState::Win => {
-                            gote_rate
+                            1.
+                            //gote_rate
                         },
                         GameEndState::Lose if teban == Teban::Sente => {
-                            -gote_rate
+                            0.
+                            //-gote_rate
                         },
                         GameEndState::Lose => {
-                            -sente_rate
+                            0.
+                            //-sente_rate
                         },
                         _ => 0.5f32
                     };
 
-                    t * 0.667 + self.sigmoid(*score) * 0.333
+                    t
+                    //t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
@@ -387,6 +394,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             sfens_with_extended.push((teban, banmen, mc, game_result, score));
         }
 
+        /*
         let (sente_win_count,gote_win_count) = sfens_with_extended.iter().map(|(_,_,_,es,_)| {
             match es {
                 GameResult::Draw => (0,0),
@@ -402,13 +410,14 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         } else {
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
-
+        */
         let batch = sfens_with_extended.iter()
             .map(|(teban,banmen,mc,es,score)| {
                 let teban = *teban;
 
                 let input = InputCreator::make_input(teban, banmen, mc);
 
+                /*
                 let (rate,es) = match (es,teban) {
                     (GameResult::Draw,_) => {
                         (1.,GameEndState::Draw)
@@ -426,21 +435,41 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         (gote_rate,GameEndState::Lose)
                     }
                 };
-
+                */
+                let es = match (es,teban) {
+                    (GameResult::Draw,_) => {
+                        GameEndState::Draw
+                    },
+                    (GameResult::SenteWin,Teban::Sente) => {
+                        GameEndState::Win
+                    },
+                    (GameResult::GoteWin,Teban::Gote) => {
+                        GameEndState::Win
+                    },
+                    (GameResult::SenteWin,Teban::Gote) => {
+                        GameEndState::Lose
+                    },
+                    (GameResult::GoteWin,Teban::Sente) => {
+                        GameEndState::Lose
+                    }
+                };
                 let mut t = Arr::<f32,1>::new();
 
                 t[0] = {
                     let t = match es {
                         GameEndState::Win => {
-                            rate
+                            1.
+                            //rate
                         }
                         GameEndState::Lose => {
-                            -rate
+                            //-rate
+                            0.
                         },
                         _ => 0.5f32
                     };
 
-                    t * 0.667 + self.sigmoid(*score) * 0.333
+                    t
+                    //t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
