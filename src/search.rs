@@ -721,6 +721,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     scoreval = s;
 
                                     best_moves = mvs;
+                                    prev_move.map(|m| best_moves.push_front(m));
 
                                     if gs.current_depth == 1 && s > gs.best_score {
                                         self.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
@@ -729,7 +730,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
                                     if scoreval >= beta {
-                                        prev_move.map(|m| best_moves.push_front(m));
                                         return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                                     }
                                 }
@@ -763,6 +763,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             scoreval = s;
 
                             best_moves = mvs;
+                            prev_move.map(|m| best_moves.push_front(m));
 
                             self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
@@ -771,7 +772,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             }
 
                             if scoreval >= beta {
-                                prev_move.map(|m| best_moves.push_front(m));
                                 return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                             }
                         }
@@ -786,8 +786,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             }
         }
-
-        prev_move.map(|m| best_moves.push_front(m));
 
         Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()))
     }
