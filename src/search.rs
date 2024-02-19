@@ -202,8 +202,23 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError>;
     fn qsearch(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
+               env:&mut Environment<L,S>,
+               zh: &ZobristHash<u64>,
                mut alpha:Score,beta:Score,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
-        let mut score = Score::Value(evalutor.evalute(teban,state.get_banmen(),mc)?);
+        let mut score = match env.transposition_table.get(zh).map(|tte| tte.deref().clone())  {
+            Some(TTPartialEntry {
+                depth: depth,
+                score: score,
+                beta: _,
+                alpha: _,
+                best_move: _
+            }) if depth >= 0 => {
+                score
+            },
+            _ => {
+                Score::Value(evalutor.evalute(teban, state.get_banmen(), mc)?)
+            }
+        };
 
         if score >= beta {
             return Ok(score);
@@ -231,9 +246,16 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 return Ok(Score::INFINITE);
             }
 
+            let o = match m {
+                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                _ => None
+            };
+
+            let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            score = -self.qsearch(teban.opposite(),&next,&nmc,-beta,-alpha,evalutor,rng)?;
+            score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,-beta,-alpha,evalutor,rng)?;
 
             if score >= beta {
                 return Ok(score);
@@ -684,7 +706,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         if gs.depth == 0 || gs.current_depth >= gs.max_depth {
-            let s = self.qsearch(gs.teban,&gs.state,&gs.mc,gs.alpha,gs.beta,evalutor,gs.rng)?;
+            let s = self.qsearch(gs.teban,&gs.state,&gs.mc,env,&gs.zh,gs.alpha,gs.beta,evalutor,gs.rng)?;
 
             let mut mvs = VecDeque::new();
 
