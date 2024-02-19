@@ -207,8 +207,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                mut alpha:Score,beta:Score,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let mut score = match env.transposition_table.get(zh).map(|tte| tte.deref().clone())  {
             Some(TTPartialEntry {
-                depth: depth,
-                score: score,
+                depth,
+                score,
                 beta: _,
                 alpha: _,
                 best_move: _

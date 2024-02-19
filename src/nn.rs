@@ -323,26 +323,25 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win if teban == Teban::Sente => {
-                            0.99
+                            1.
                             //sente_rate
                         },
                         GameEndState::Win => {
-                            0.99
+                            1.
                             //gote_rate
                         },
                         GameEndState::Lose if teban == Teban::Sente => {
-                            0.01
-                            //-gote_rate
+                            0.
+                            // 0.5 - 0.5 * gote_rate
                         },
                         GameEndState::Lose => {
-                            0.01
-                            //-sente_rate
+                            0.
+                            //0.5 - 0.5 * sente_rate
                         },
                         _ => 0.5f32
                     };
 
-                    t
-                    //t * 0.667 + self.sigmoid(*score) * 0.333
+                    t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
@@ -458,18 +457,17 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win => {
-                            0.99
-                            //rate
+                            1.
+                            //0.5 - 0.5 * rate
                         }
                         GameEndState::Lose => {
-                            //-rate
-                            0.01
+                            //0.5 - 0.5 * -rate
+                            0.
                         },
                         _ => 0.5f32
                     };
 
-                    t
-                    //t * 0.667 + self.sigmoid(*score) * 0.333
+                    t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
