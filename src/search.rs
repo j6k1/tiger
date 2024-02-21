@@ -622,13 +622,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             (state, mc, _) => {
                 let state = Arc::new(state);
 
-                if Rule::is_mate(gs.teban.opposite(),&state) {
-                    let mut mvs = VecDeque::new();
-                    mvs.push_front(m);
-
-                    return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,zh));
-                }
-
                 let mc = Arc::new(mc);
 
                 let mut gs = GameState {
@@ -707,6 +700,16 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         let prev_move = gs.m.clone();
+
+        if Rule::is_mate(gs.teban,&gs.state) {
+            if let Some(m) = prev_move.clone() {
+                let mut mvs = VecDeque::new();
+
+                mvs.push_front(m);
+
+                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+            }
+        }
 
         if gs.depth == 0 || gs.current_depth >= gs.max_depth {
             let s = self.qsearch(gs.teban,&gs.state,&gs.mc,env,&gs.zh,gs.alpha,gs.beta,evalutor,gs.rng)?;
