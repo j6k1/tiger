@@ -527,7 +527,7 @@ impl<M> Learnener<M>
             println!("負け {}% (負けと評価された局面の割合 {}%)",(count - win) as f32 / count as f32 * 100.,
                      (count - estimated_win) as f32 / count as f32 * 100.);
             println!("正解率(勝敗) {}%",successed as f32 / count as f32 * 100.);
-            println!("正解率(指し手の一致率) {}%",compare_moves as f32 / same_moves as f32 * 100.);
+            println!("正解率(指し手の一致率) {}%", same_moves as f32 / compare_moves as f32 * 100.);
         }
 
         print!("{}局面を学習しました。\n", processed_count);
