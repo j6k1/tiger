@@ -89,6 +89,7 @@ fn run() -> Result<(),ApplicationError> {
     let args: Vec<String> = env::args().collect();
     let mut opts = Options::new();
     opts.optopt("", "kifudir", "Directory of game data to be used of learning.", "path string.");
+    opts.optopt("", "testdir", "Directory of test data to validate learning results.", "path string.");
     opts.optflag("", "yaneuraou", "YaneuraOu format teacher phase.");
     opts.optflag("", "hcpe", "hcpe format teacher phase.");
     opts.optopt("e", "maxepoch", "Number of epochs in batch learning.", "number of epoch");
@@ -101,6 +102,8 @@ fn run() -> Result<(),ApplicationError> {
     };
 
     if let Some(kifudir) = matches.opt_str("kifudir") {
+        let testdir = matches.opt_str("testdir").unwrap_or(kifudir.clone());
+
         let logger = Arc::new(Mutex::new(FileLogger::new(String::from("logs/log.txt"))?));
         let on_error_handler = Arc::new(Mutex::new(OnErrorHandler::new(logger)));
 
@@ -110,6 +113,7 @@ fn run() -> Result<(),ApplicationError> {
 
         let r = if matches.opt_present("yaneuraou") {
             Learnener::new().learning_from_yaneuraou_bin(kifudir,
+                                                         testdir,
                                                          TrainerCreator::create(String::from("data"),
                                                                                 String::from("nn.bin"))?,
                                                          on_error_handler.clone(),
@@ -119,6 +123,7 @@ fn run() -> Result<(),ApplicationError> {
                                                          maxepoch)
         } else if matches.opt_present("hcpe") {
             Learnener::new().learning_from_hcpe(kifudir,
+                                                testdir,
                                                 TrainerCreator::create(String::from("data"),
                                                                        String::from("nn.bin"))?,
                                                 on_error_handler.clone(),

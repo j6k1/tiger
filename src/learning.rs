@@ -187,6 +187,7 @@ impl<M> Learnener<M>
 
 
     pub fn learning_from_yaneuraou_bin(&mut self, kifudir:String,
+                                       testdir:String,
                                        evalutor: Trainer<M>,
                                        on_error_handler_arc:Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                        learn_sfen_read_size:usize,
@@ -194,6 +195,7 @@ impl<M> Learnener<M>
                                        save_batch_count:usize,
                                        maxepoch:usize) -> Result<(),ApplicationError> {
         self.learning_batch(kifudir,
+                            testdir,
                             "bin",
                             40,
                             evalutor,
@@ -210,6 +212,7 @@ impl<M> Learnener<M>
     }
 
     pub fn learning_from_hcpe(&mut self, kifudir:String,
+                              testdir:String,
                               evalutor: Trainer<M>,
                               on_error_handler_arc:Arc<Mutex<OnErrorHandler<FileLogger>>>,
                               learn_sfen_read_size:usize,
@@ -218,6 +221,7 @@ impl<M> Learnener<M>
                               maxepoch:usize
     ) -> Result<(),ApplicationError> {
         self.learning_batch(kifudir,
+                            testdir,
                             "hcpe",
                             38,
                             evalutor,
@@ -234,6 +238,7 @@ impl<M> Learnener<M>
     }
 
     pub fn learning_batch<'a,F>(&mut self,kifudir:String,
+                                testdir:String,
                                 ext:&str,
                                 item_size:usize,
                                 evalutor: Trainer<M>,
@@ -434,7 +439,7 @@ impl<M> Learnener<M>
         if notify_run_test_arc.load(Ordering::Acquire) {
             let mut testdata = Vec::new();
 
-            let mut paths = fs::read_dir(Path::new(&kifudir)
+            let mut paths = fs::read_dir(Path::new(&testdir)
                 .join("tests"))?.into_iter()
                 .collect::<Vec<Result<DirEntry,_>>>();
 
