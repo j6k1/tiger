@@ -249,7 +249,7 @@ impl<M> Learnener<M>
                                 ) -> Result<(),ApplicationError>,
                                 mut test_process:F
     ) -> Result<(),ApplicationError>
-        where F: FnMut(&mut Trainer<M>,Vec<u8>) -> Result<(GameEndState,f32),ApplicationError> {
+        where F: FnMut(&mut Trainer<M>,Vec<u8>) -> Result<(GameEndState,f32,Option<bool>),ApplicationError> {
 
         let system_event_queue_arc:Arc<Mutex<EventQueue<SystemEvent,SystemEventKind>>> = Arc::new(Mutex::new(EventQueue::new()));
         let user_event_queue:Arc<Mutex<EventQueue<UserEvent,UserEventKind>>> = Arc::new(Mutex::new(EventQueue::new()));
@@ -473,9 +473,22 @@ impl<M> Learnener<M>
             let mut estimated_win = 0;
             let mut win = 0;
             let mut count = 0;
+            let mut same_moves = 0;
+            let mut compare_moves = 0;
 
             for packed in testdata.into_iter().take(100) {
-                let (s,score) = test_process(&mut evalutor,packed)?;
+                let (s,score,same_move) = test_process(&mut evalutor,packed)?;
+
+                match same_move {
+                    Some(true) => {
+                        compare_moves += 1;
+                        same_moves += 1;
+                    },
+                    Some(false) => {
+                        compare_moves += 1;
+                    },
+                    _ => ()
+                }
 
                 if score >= 0.5 {
                     estimated_win += 1;
@@ -513,7 +526,8 @@ impl<M> Learnener<M>
             println!("勝ち {}% (勝ちと評価された局面の割合 {}%)",win as f32 / count as f32 * 100.,estimated_win as f32 / count as f32 * 100.);
             println!("負け {}% (負けと評価された局面の割合 {}%)",(count - win) as f32 / count as f32 * 100.,
                      (count - estimated_win) as f32 / count as f32 * 100.);
-            println!("正解率 {}%",successed as f32 / count as f32 * 100.);
+            println!("正解率(勝敗) {}%",successed as f32 / count as f32 * 100.);
+            println!("正解率(指し手の一致率) {}%",compare_moves as f32 / same_moves as f32 * 100.);
         }
 
         print!("{}局面を学習しました。\n", processed_count);

@@ -28,6 +28,9 @@ use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
 use usiagent::event::{EventQueue, GameEndState, UserEvent, UserEventKind};
+use usiagent::math::Prng;
+use usiagent::movepick::RandomPicker;
+use usiagent::rule::{LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
 use crate::error::{ApplicationError};
 
@@ -265,6 +268,45 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }
 
+    pub fn test_accuracy(&self,teban:Teban,banmen:Banmen,mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
+        let mut rnd = rand::thread_rng();
+        let mut picker = RandomPicker::new(Prng::new(rnd.gen()));
+
+        let state = State::new(banmen);
+
+        Rule::legal_moves_all_by_strategy::<NonEvasionsAll>(teban,&state,&mc,&mut picker)?;
+
+        let mut best_score = None;
+        let mut best_move = None;
+
+        for m in &mut picker {
+            let next = Rule::apply_move_none_check(&state, teban, &mc, m.to_applied_move());
+
+            match next {
+                (state, mc, _) => {
+                    let input = InputCreator::make_input(teban.opposite(),state.get_banmen(),&mc);
+
+                    let r = self.nn.forward_all(input)?;
+                    let r = r[0].clone() - 0.5;
+
+                    match best_score {
+                        None => {
+                            best_score = Some(-r);
+                            best_move = Some(m);
+                        },
+                        Some(s) if -r > s => {
+                            best_score = Some(-r);
+                            best_move = Some(m);
+                        },
+                        _ => ()
+                    }
+                }
+            }
+        }
+
+        Ok(best_move)
+    }
+
     pub fn learning_by_packed_sfens<'a>(&mut self,
                                         packed_sfens:Vec<Vec<u8>>,
                                         _:&'a Mutex<EventQueue<UserEvent,UserEventKind>>)
@@ -359,10 +401,10 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
     pub fn test_by_packed_sfens(&mut self,
                                 packed_sfen:Vec<u8>)
-                                -> Result<(GameEndState,f32),ApplicationError> {
+                                -> Result<(GameEndState,f32,Option<bool>),ApplicationError> {
         let ((teban,banmen,mc),yaneuraou::haffman_code::ExtendFields {
             value: _,
-            best_move: _,
+            best_move,
             end_ply: _,
             game_result
         }) = self.packed_sfen_reader.read_sfen_with_extended(packed_sfen)?;
@@ -371,7 +413,46 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
         let r = self.nn.forward_all(input.clone())?;
 
-        Ok((game_result,r[0]))
+        let same = match best_move {
+            yaneuraou::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
+                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                    match m {
+                        LegalMove::To(m) => {
+                            let (bsx, bsy) = m.src().square_to_point();
+                            let (bdx, bdy) = m.dst().square_to_point();
+                            let bn = m.is_nari();
+
+                            if sx == bsx && sy == bsy && bdx == dx && bdy == dy && bn == n {
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        _ => false
+                    }
+                }).or(Some(false))
+            },
+            yaneuraou::reader::BestMove::MovePut(k,x,y) => {
+                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                    match m {
+                        LegalMove::Put(m) => {
+                            let (bx,by) = m.dst().square_to_point();
+                            let bk = m.kind();
+
+                            if x == bx && y == by && bk == k {
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        _ => false
+                    }
+                }).or(Some(false))
+            },
+            _ => None
+        };
+
+        Ok((game_result,r[0],same))
     }
 
     pub fn learning_by_hcpe<'a>(&mut self,
@@ -484,16 +565,55 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
     pub fn test_by_packed_hcpe(&mut self,
                                hcpe:Vec<u8>)
-                               -> Result<(GameEndState,f32),ApplicationError> {
+                               -> Result<(GameEndState,f32,Option<bool>),ApplicationError> {
         let ((teban,banmen,mc),hcpe::haffman_code::ExtendFields {
             eval: _,
-            best_move: _,
+            best_move,
             game_result
         }) = self.hcpe_reader.read_sfen_with_extended(hcpe)?;
 
         let input = InputCreator::make_input(teban, &banmen, &mc);
 
         let r = self.nn.forward_all(input.clone())?;
+
+        let same = match best_move {
+            hcpe::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
+                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                    match m {
+                        LegalMove::To(m) => {
+                            let (bsx, bsy) = m.src().square_to_point();
+                            let (bdx, bdy) = m.dst().square_to_point();
+                            let bn = m.is_nari();
+
+                            if sx == bsx && sy == bsy && bdx == dx && bdy == dy && bn == n {
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        _ => false
+                    }
+                }).or(Some(false))
+            },
+            hcpe::reader::BestMove::MovePut(k,x,y) => {
+                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                    match m {
+                        LegalMove::Put(m) => {
+                            let (bx,by) = m.dst().square_to_point();
+                            let bk = m.kind();
+
+                            if x == bx && y == by && bk == k {
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        _ => false
+                    }
+                }).or(Some(false))
+            },
+            _ => None
+        };
 
         let s = match game_result {
             GameResult::SenteWin if teban == Teban::Sente => {
@@ -511,7 +631,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             _ => GameEndState::Draw
         };
 
-        Ok((s,r[0]))
+        Ok((s,r[0],same))
     }
 
     pub fn save(&mut self) -> Result<(),ApplicationError> {
