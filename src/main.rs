@@ -43,7 +43,8 @@ const LEAN_BATCH_SIZE:usize = 1000 * 100;
 pub struct Config {
     learn_sfen_read_size:Option<usize>,
     learn_batch_size:Option<usize>,
-    save_batch_count:Option<usize>
+    save_batch_count:Option<usize>,
+    learning_rate:Option<f32>
 }
 pub struct ConfigLoader {
     reader:BufReader<File>,
@@ -115,7 +116,8 @@ fn run() -> Result<(),ApplicationError> {
             Learnener::new().learning_from_yaneuraou_bin(kifudir,
                                                          testdir,
                                                          TrainerCreator::create(String::from("data"),
-                                                                                String::from("nn.bin"))?,
+                                                                                String::from("nn.bin"),
+                                                                                config.learning_rate.unwrap_or(0.01))?,
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
@@ -125,7 +127,8 @@ fn run() -> Result<(),ApplicationError> {
             Learnener::new().learning_from_hcpe(kifudir,
                                                 testdir,
                                                 TrainerCreator::create(String::from("data"),
-                                                                       String::from("nn.bin"))?,
+                                                                       String::from("nn.bin"),
+                                                                       config.learning_rate.unwrap_or(0.01))?,
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),

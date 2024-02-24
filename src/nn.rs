@@ -196,7 +196,7 @@ pub struct Trainer<M>
 pub struct TrainerCreator {
 }
 impl TrainerCreator {
-    pub fn create(save_dir:String, nn_path:String)
+    pub fn create(save_dir:String, nn_path:String, learning_rate:f32)
         -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>>>,ApplicationError> {
 
         let mut rnd = prelude::thread_rng();
@@ -255,7 +255,7 @@ impl TrainerCreator {
 
         Ok(Trainer {
             nn:nn,
-            optimizer:MomentumSGD::new(0.01),
+            optimizer:MomentumSGD::new(learning_rate),
             nn_path: nn_path,
             nnsavedir: save_dir,
             packed_sfen_reader:PackedSfenReader::new(),
