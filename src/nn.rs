@@ -20,7 +20,7 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::layer::batchnormalization::BatchNormalizationLayerBuilder;
 use nncombinator::lossfunction::{CrossEntropy};
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{MomentumSGD};
+use nncombinator::optimizer::{MomentumSGD, SGD};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
@@ -187,7 +187,7 @@ pub struct Trainer<M>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
 
     nn:M,
-    optimizer:MomentumSGD<f32>,
+    optimizer:SGD<f32>,
     nn_path:String,
     nnsavedir:String,
     packed_sfen_reader:PackedSfenReader,
@@ -217,22 +217,22 @@ impl TrainerCreator {
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<2515,256>::new().build(l,&device, move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        //})?.try_add_layer(|l| {
-        //    BatchNormalizationLayerBuilder::new().build(l,&device)
+        })?.try_add_layer(|l| {
+            BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,ReLu::new(&device),&device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<256,32>::new().build(l,&device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        //})?.try_add_layer(|l| {
-        //    BatchNormalizationLayerBuilder::new().build(l,&device)
+        })?.try_add_layer(|l| {
+            BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,ReLu::new(&device),&device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32,1>::new().build(l,&device, move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        //})?.try_add_layer(|l| {
-        //    BatchNormalizationLayerBuilder::new().build(l,&device)
+        })?.try_add_layer(|l| {
+            BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,Sigmoid::new(&device),&device)
         }).add_layer_train(|l| {
@@ -255,7 +255,7 @@ impl TrainerCreator {
 
         Ok(Trainer {
             nn:nn,
-            optimizer:MomentumSGD::new(learning_rate),
+            optimizer:SGD::new(learning_rate),
             nn_path: nn_path,
             nnsavedir: save_dir,
             packed_sfen_reader:PackedSfenReader::new(),
