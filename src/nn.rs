@@ -327,7 +327,6 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             sfens_with_extended.push((teban,banmen,mc,game_result,score));
         }
 
-        /*
         let (sente_win_count,gote_win_count) = sfens_with_extended.iter()
             .map(|(teban,_,_,es,_)| {
                 let (s,g) = match (es,teban) {
@@ -352,7 +351,6 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         } else {
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
-        */
 
         let batch = sfens_with_extended.iter()
             .map(|(teban,banmen,mc,es, score)| {
@@ -365,20 +363,16 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win if teban == Teban::Sente => {
-                            1.
-                            //sente_rate
+                            sente_rate
                         },
                         GameEndState::Win => {
-                            1.
-                            //gote_rate
+                            gote_rate
                         },
                         GameEndState::Lose if teban == Teban::Sente => {
-                            0.
-                            // 0.5 - 0.5 * gote_rate
+                            0.5 - 0.5 * gote_rate
                         },
                         GameEndState::Lose => {
-                            0.
-                            //0.5 - 0.5 * sente_rate
+                            0.5 - 0.5 * sente_rate
                         },
                         _ => 0.5f32
                     };
@@ -474,7 +468,6 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             sfens_with_extended.push((teban, banmen, mc, game_result, score));
         }
 
-        /*
         let (sente_win_count,gote_win_count) = sfens_with_extended.iter().map(|(_,_,_,es,_)| {
             match es {
                 GameResult::Draw => (0,0),
@@ -490,14 +483,13 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         } else {
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
-        */
+
         let batch = sfens_with_extended.iter()
             .map(|(teban,banmen,mc,es,score)| {
                 let teban = *teban;
 
                 let input = InputCreator::make_input(teban, banmen, mc);
 
-                /*
                 let (rate,es) = match (es,teban) {
                     (GameResult::Draw,_) => {
                         (1.,GameEndState::Draw)
@@ -515,35 +507,16 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         (gote_rate,GameEndState::Lose)
                     }
                 };
-                */
-                let es = match (es,teban) {
-                    (GameResult::Draw,_) => {
-                        GameEndState::Draw
-                    },
-                    (GameResult::SenteWin,Teban::Sente) => {
-                        GameEndState::Win
-                    },
-                    (GameResult::GoteWin,Teban::Gote) => {
-                        GameEndState::Win
-                    },
-                    (GameResult::SenteWin,Teban::Gote) => {
-                        GameEndState::Lose
-                    },
-                    (GameResult::GoteWin,Teban::Sente) => {
-                        GameEndState::Lose
-                    }
-                };
+
                 let mut t = Arr::<f32,1>::new();
 
                 t[0] = {
                     let t = match es {
                         GameEndState::Win => {
-                            1.
-                            //0.5 - 0.5 * rate
+                            rate
                         }
                         GameEndState::Lose => {
-                            //0.5 - 0.5 * -rate
-                            0.
+                            0.5 - 0.5 * -rate
                         },
                         _ => 0.5f32
                     };
