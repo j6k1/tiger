@@ -217,22 +217,22 @@ impl TrainerCreator {
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<2515,256>::new().build(l,&device, move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+        //})?.try_add_layer(|l| {
+        //    BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,ReLu::new(&device),&device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<256,32>::new().build(l,&device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+        //})?.try_add_layer(|l| {
+        //    BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,ReLu::new(&device),&device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32,1>::new().build(l,&device, move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+        //})?.try_add_layer(|l| {
+        //    BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l,Sigmoid::new(&device),&device)
         }).add_layer_train(|l| {
@@ -363,22 +363,21 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 t[0] = {
                     let t = match es {
                         GameEndState::Win if teban == Teban::Sente => {
-                            sente_rate - 0.01
+                            sente_rate
                         },
                         GameEndState::Win => {
-                            gote_rate - 0.01
+                            gote_rate
                         },
                         GameEndState::Lose if teban == Teban::Sente => {
-                            0.5 - 0.5 * gote_rate + 0.01
+                            0.5 - 0.5 * gote_rate
                         },
                         GameEndState::Lose => {
-                            0.5 - 0.5 * sente_rate + 0.01
+                            0.5 - 0.5 * sente_rate
                         },
                         _ => 0.5f32
                     };
 
-                    //t * 0.667 + self.sigmoid(*score) * 0.333
-                    t
+                    t * 0.667 + self.sigmoid(*score) * 0.333
                 };
 
                 (t,input)
