@@ -20,7 +20,7 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::layer::batchnormalization::BatchNormalizationLayerBuilder;
 use nncombinator::lossfunction::{CrossEntropy};
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{SGD};
+use nncombinator::optimizer::{MomentumSGD};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
@@ -187,7 +187,7 @@ pub struct Trainer<M>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
 
     nn:M,
-    optimizer:SGD<f32>,
+    optimizer:MomentumSGD<f32>,
     nn_path:String,
     nnsavedir:String,
     packed_sfen_reader:PackedSfenReader,
@@ -255,7 +255,7 @@ impl TrainerCreator {
 
         Ok(Trainer {
             nn:nn,
-            optimizer:SGD::new(0.005),
+            optimizer:MomentumSGD::new(0.01),
             nn_path: nn_path,
             nnsavedir: save_dir,
             packed_sfen_reader:PackedSfenReader::new(),
