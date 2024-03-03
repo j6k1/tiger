@@ -1,3 +1,6 @@
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+
 extern crate rand;
 extern crate rand_distr;
 extern crate rand_xorshift;

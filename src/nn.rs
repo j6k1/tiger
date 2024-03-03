@@ -1,27 +1,33 @@
 use std::cell::RefCell;
+use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::path::{Path};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::fs;
+use std::marker::PhantomData;
 use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
-use rand_distr::Normal;
+use rand_distr::{Normal, StandardNormal};
 use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ReLu, Sigmoid};
-use nncombinator::arr::{Arr, SerializedVec};
-use nncombinator::cuda::mem::{Alloctype, MemoryPool};
+use nncombinator::arr::{Arr, Arr2, SerializedVec};
+use nncombinator::{Cons, Nil, Stack};
+use nncombinator::cuda::mem::{Alloctype, CachedTensor, MemoryPool};
 use nncombinator::device::{Device, DeviceCpu, DeviceGpu};
-use nncombinator::layer::{AddLayer, AddLayerTrain, BatchForwardBase, BatchTrain, ForwardAll, PreTrain, TryAddLayer};
+use nncombinator::device::linear::DeviceLinear;
+use nncombinator::error::{ConfigReadError, EvaluateError, PersistenceError, TrainingError};
+use nncombinator::layer::{AddLayer, AddLayerTrain, AskDiffInput, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchTrain, Forward, ForwardAll, Loss, PreTrain, TryAddLayer, UpdateWeight};
 use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
-use nncombinator::layer::linear::{LinearLayerBuilder};
+use nncombinator::layer::linear::{LinearLayer, LinearLayerBuilder, LinearLayerInstantiation};
 use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::layer::batchnormalization::BatchNormalizationLayerBuilder;
-use nncombinator::lossfunction::{CrossEntropy};
+use nncombinator::lossfunction::{CrossEntropy, LossFunction};
+use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{MomentumSGD};
-use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
+use nncombinator::optimizer::{MomentumSGD, Optimizer};
+use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
@@ -100,6 +106,564 @@ const OPPONENT_INDEX_MAP:[usize; 7] = [
     OPPONENT_MOCHIGOMA_HISHA_INDEX
 ];
 
+pub struct HalfKP<U,const N:usize>(pub Arr<U,N>, pub Arr<U,N>) where U: Default + Clone + Send;
+
+impl<U,const N:usize> From<&HalfKP<U,N>> for (Arr<U,N>,Arr<U,N>) where U: Default + Clone + Send {
+    fn from(value: &HalfKP<U, N>) -> Self {
+        match value {
+            &HalfKP(ref so, ref oo) => (so.clone(),oo.clone())
+        }
+    }
+}
+impl<U,const N:usize> BatchDataType for HalfKP<U,N> where U: Default + Clone + Send {
+    type Type = HalfKPList<U,N>;
+}
+
+pub struct HalfKPList<U,const N:usize> where U: Default + Clone + Send {
+    list:(Vec<Arr<U,N>>,Vec<Arr<U,N>>),
+    len: usize
+}
+type FeatureTransformStack<U,const NI:usize,const NO:usize> = Cons<Cons<Nil,Arr<U,NI>>,Arr<U,NO>>;
+type FeatureTransformBatchStack<U,const NI:usize,const NO:usize> = Cons<Cons<Nil,SerializedVec<U,Arr<U,NI>>>,SerializedVec<U,Arr<U,NO>>>;
+
+impl<U,const N:usize> HalfKPList<U,N> where U: Default + Clone + Send {
+    pub fn new() -> HalfKPList<U,N> {
+        HalfKPList {
+            list:(Vec::new(),Vec::new()),
+            len: 0
+        }
+    }
+
+    pub fn push(&mut self,item: HalfKP<U,N>) {
+        match item {
+            HalfKP(s, o) => {
+                self.list.0.push(s);
+                self.list.1.push(o);
+            }
+        }
+
+        self.len += 1;
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+impl<T,U,const N:usize> From<HalfKPList<U,N>> for (SerializedVec<U,T>,SerializedVec<U,T>)
+    where U: Default + Clone + Send,
+          SerializedVec<U,T>: From<Vec<Arr<U,N>>> {
+    fn from(value: HalfKPList<U, N>) -> Self {
+        match value {
+            HalfKPList {
+                list: (s,o),
+                len: _
+            } => {
+                (s.into(),o.into())
+            }
+        }
+    }
+}
+impl<T,U,const N:usize> From<&HalfKPList<U,N>> for (SerializedVec<U,T>,SerializedVec<U,T>)
+    where U: Default + Clone + Send,
+          SerializedVec<U,T>: From<Vec<Arr<U,N>>> {
+    fn from(value: &HalfKPList<U, N>) -> Self {
+        match value {
+            HalfKPList {
+                list: (s,o),
+                len: _
+            } => {
+                (s.clone().into(),o.clone().into())
+            }
+        }
+    }
+}
+pub struct FeatureTransformLayer<U,P,I,C,D,const NI:usize,const NO:usize>
+    where U: UnitValue<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + 'static,
+          D: Device<U> {
+    parent:P,
+    device:D,
+    inner:LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>,
+    u:PhantomData<U>,
+    c:PhantomData<C>,
+    i:PhantomData<I>
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where U: UnitValue<U> + rand_distr::num_traits::Float,
+          P: ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             PreTrain<U> + 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          I: Debug + Send + Sync,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>: LinearLayerInstantiation<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>,
+          StandardNormal: Distribution<U> {
+    pub fn new(parent:P,device:&D) -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>, ApplicationError> {
+        let mut rnd = prelude::thread_rng();
+        let mut rnd = XorShiftRng::from_seed(rnd.gen());
+
+        let n1 = Normal::<U>::new(U::default(), (U::from_f32(2.).unwrap() / U::from_usize(NI).unwrap()).sqrt()).unwrap();
+
+        Ok(FeatureTransformLayer {
+            parent: parent,
+            device: device.clone(),
+            inner: InputLayer::<U,Arr<U,NI>,Arr<U,NI>>::new().try_add_layer(|l| {
+                   LinearLayerBuilder::<NI,NO>::new().build(l,device,
+                    move || n1.sample(&mut rnd), || U::default())
+            })?,
+            u:PhantomData::<U>,
+            c:PhantomData::<C>,
+            i:PhantomData::<I>
+        })
+    }
+}
+impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where T: LinearPersistence<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + Persistence<U,T,Linear> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Send + Sync {
+    fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
+        self.parent.load(persistence)?;
+
+        self.inner.load(persistence)
+    }
+
+    fn save(&mut self, persistence: &mut T) -> Result<(), PersistenceError> {
+        self.parent.save(persistence)?;
+
+        self.inner.save(persistence)
+    }
+}
+impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where T: LinearPersistence<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + Persistence<U,T,Linear> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+          DeviceGpu<U>: Device<U>,
+          U: UnitValue<U>,
+          I: Debug + Send + Sync {
+    fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
+        self.parent.load(persistence)?;
+
+        self.inner.load(persistence)
+    }
+
+    fn save(&mut self, persistence: &mut T) -> Result<(), PersistenceError> {
+        self.parent.save(persistence)?;
+
+        self.inner.save(persistence)
+    }
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> Forward<HalfKP<U,NI>,Result<Arr<U,{NO*2}>,EvaluateError>> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+             PreTrain<U> + Loss<U> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    fn forward(&self, &HalfKP(ref self_input, ref oppoent_input):&HalfKP<U,NI>) -> Result<Arr<U,{NO*2}>,EvaluateError> {
+        let s = self.inner.forward(self_input)?;
+        let o = self.inner.forward(oppoent_input)?;
+
+        let mut next = Vec::with_capacity(NO*2);
+
+        next.extend_from_slice(&s);
+        next.extend_from_slice(&o);
+
+        Ok(next.try_into()?)
+    }
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> ForwardAll for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+             PreTrain<U> + Loss<U> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type Input = I;
+    type Output = Arr<U,{NO*2}>;
+
+    fn forward_all(&self, input: Self::Input) -> Result<Self::Output, EvaluateError> {
+        let input = self.parent.forward_all(input)?;
+
+        Ok(self.forward(&input)?)
+    }
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> PreTrain<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U> +
+             ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [();NO*2]: {
+    type OutStack = Cons<Cons<<P as PreTrain<U>>::OutStack,(FeatureTransformStack<U,NI,NO>,FeatureTransformStack<U,NI,NO>)>,Arr<U,{NO*2}>>;
+
+    fn pre_train(&self, input: Self::Input) -> Result<Self::OutStack, EvaluateError> {
+        let r = self.parent.pre_train(input)?;
+
+        let (ss,os) = r.map(|r| {
+            let (so,oo) = r.into();
+
+            self.inner.pre_train(so).and_then(|ss| {
+                self.inner.pre_train(oo).map(move |os| (ss,os))
+            })
+        })?;
+
+        let mut next = Vec::with_capacity(NO*2);
+
+        {
+            let s = ss.get_head();
+            let o = os.get_head();
+
+            next.extend_from_slice(s);
+            next.extend_from_slice(o);
+        }
+
+        Ok(r.push((ss,os)).push(next.try_into()?))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where P: PreTrain<U> +
+             ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type LossInput = Arr<U,{NO*2}>;
+    type LossOutput = <P as BackwardAll<U>>::LossOutput;
+
+    fn backward_all<L: LossFunction<U>>(&mut self, input: Self::LossInput, stack:Self::OutStack, lossf:&L)
+        -> Result<(<Self as BackwardAll<U>>::LossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
+        let (sl,ol) = input.as_raw_slice().split_at(NO);
+
+        let sl = sl.to_vec().try_into()?;
+        let ol = ol.to_vec().try_into()?;
+
+        let (s,_) = stack.pop();
+
+        let (s,(ss,os)) = s.pop();
+
+        let ((sl,ss),(ol,os)) = (
+            self.inner.backward_all(sl,ss,lossf)?,self.inner.backward_all(ol,os,lossf)?
+        );
+
+        let (s,loss) = self.parent.loss(HalfKP(sl, ol), lossf, s)?;
+
+        let (l,s) = self.parent.backward_all(loss, s, lossf)?;
+
+        Ok((l,Cons(s,(ss,os))))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where P: PreTrain<U> +
+             ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type LossInput = Arr<U,{NO*2}>;
+    type LossOutput = <P as BackwardAll<U>>::LossOutput;
+
+    fn backward_all<L: LossFunction<U>>(&mut self, input: Self::LossInput, stack:Self::OutStack, lossf:&L)
+        -> Result<(<Self as BackwardAll<U>>::LossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
+        let (sl,ol) = input.as_raw_slice().split_at(NO);
+
+        let sl = sl.to_vec().try_into()?;
+        let ol = ol.to_vec().try_into()?;
+
+        let (s,_) = stack.pop();
+
+        let (s,(ss,os)) = s.pop();
+
+        let ((sl,ss),(ol,os)) = (
+            self.inner.backward_all(sl,ss,lossf)?,self.inner.backward_all(ol,os,lossf)?
+        );
+
+        let (s,loss) = self.parent.loss(HalfKP(sl, ol), lossf, s)?;
+
+        let (l,s) = self.parent.backward_all(loss, s, lossf)?;
+
+        Ok((l,Cons(s,(ss,os))))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + UpdateWeight<U> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
+
+    fn update_weight<OP: Optimizer<U>>(&mut self, stack: Self::GradientStack, optimizer: &mut OP) -> Result<(), TrainingError> {
+        let (s,(ss,os)) = stack.pop();
+
+        self.inner.update_weight(ss,optimizer)?;
+        self.inner.update_weight(os,optimizer)?;
+
+        Ok(self.parent.update_weight(s,optimizer)?)
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + UpdateWeight<U> + 'static,
+          DeviceGpu<U>: Device<U> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
+
+    fn update_weight<OP: Optimizer<U>>(&mut self, stack: Self::GradientStack, optimizer: &mut OP) -> Result<(), TrainingError> {
+        let (s,(ss,os)) = stack.pop();
+
+        self.inner.update_weight(ss,optimizer)?;
+        self.inner.update_weight(os,optimizer)?;
+
+        Ok(self.parent.update_weight(s,optimizer)?)
+    }
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> AskDiffInput<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U,OutStack=<<Self as PreTrain<U>>::OutStack as Stack>::Remaining> +
+             ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             AskDiffInput<U>,
+          U: Default + Clone + Copy + Send + UnitValue<U>,
+          D: Device<U>,
+          I: Debug + Send + Sync,
+          Self: PreTrain<U> {
+    type DiffInput = P::DiffInput;
+
+    fn ask_diff_input(&self, stack: &Self::OutStack) -> Self::DiffInput {
+        stack.map_remaining(|s| self.parent.ask_diff_input(s))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {}
+impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
+             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type BatchInput = Vec<I>;
+    type BatchOutput = SerializedVec<U,Arr<U,{NO*2}>>;
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    fn batch_forward(&self, input: Self::BatchInput) -> Result<Self::BatchOutput, TrainingError> {
+        let len = input.len();
+
+        let input = self.parent.batch_forward(input)?;
+
+        let (self_input,opponent_input) = input.into();
+
+        let s = self.inner.batch_forward(self_input)?;
+        let o = self.inner.batch_forward(opponent_input)?;
+
+        let mut next:Vec<Arr<U,{NO*2}>> = Vec::with_capacity(len);
+
+        for (s,o) in s.iter().zip(o.iter()) {
+            let mut p = Vec::with_capacity(NO*2);
+
+            p.extend_from_slice(s.as_raw_slice());
+            p.extend_from_slice(o.as_raw_slice());
+
+            next.push(p.try_into()?);
+        }
+
+        Ok(next.into())
+    }
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type BatchOutStack = Cons<Cons<<P as BatchPreTrainBase<U>>::BatchOutStack,
+                                    (FeatureTransformBatchStack<U,NI,NO>,FeatureTransformBatchStack<U,NI,NO>)>, SerializedVec<U,Arr<U,{NO*2}>>>;
+}
+impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> +
+             BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          C: 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]:,
+          Self: PreTrain<U> {
+    fn batch_pre_train(&self, input: Self::BatchInput) -> Result<Self::BatchOutStack, TrainingError> {
+        let len = input.len();
+
+        let r = self.parent.batch_pre_train(input)?;
+
+        let (ss,os) = r.map(|r| {
+            let (so,oo) = r.into();
+
+            self.inner.batch_pre_train(so).and_then(|ss| {
+                self.inner.batch_pre_train(oo).map(move |os| (ss,os))
+            })
+        })?;
+
+        let mut next:Vec<Arr<U,{NO*2}>> = Vec::with_capacity(len);
+
+        for (so,oo) in ss.get_head().iter().zip(os.get_head().iter()) {
+            let mut out = Vec::with_capacity(NO*2);
+
+            out.extend_from_slice(so.as_raw_slice());
+            out.extend_from_slice(oo.as_raw_slice());
+
+            next.push(out.try_into()?);
+        }
+
+        Ok(r.push((ss,os)).push(next.into()))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> +
+             BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
+    type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
+
+    fn batch_backward<L: LossFunction<U>>(&mut self, input: Self::BatchLossInput, stack: Self::BatchOutStack, lossf: &L)
+        -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
+        let len = input.len();
+
+        let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
+        let mut ol:Vec<Arr<U,NO>> = Vec::with_capacity(len);
+
+        for loss in input.iter() {
+            let (s,o) = loss.as_raw_slice().split_at(NO);
+
+            sl.push(s.to_vec().try_into()?);
+            ol.push(o.to_vec().try_into()?);
+        }
+
+        let sl = sl.into();
+        let ol = ol.into();
+
+        let (s,_) = stack.pop();
+
+        let (s,(ss,os)) = s.pop();
+
+        let ((sl,ss),(ol,os)) = (
+            self.inner.batch_backward(sl,ss,lossf)?,
+            self.inner.batch_backward(ol,os,lossf)?
+        );
+
+        let (s,loss) = self.parent.batch_loss(HalfKPList {
+            list: (sl.iter().map(|sl| sl.into()).collect(), ol.iter().map(|ol| ol.into()).collect()), len:len
+        }, lossf, s)?;
+
+        let (l,s) = self.parent.batch_backward(loss, s, lossf)?;
+
+        Ok((l,Cons(s,(ss,os))))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> +
+             BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+    type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
+    type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
+
+    fn batch_backward<L: LossFunction<U>>(&mut self, input: Self::BatchLossInput, stack: Self::BatchOutStack, lossf: &L)
+        -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
+        let len = input.len();
+
+        let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
+        let mut ol:Vec<Arr<U,NO>> = Vec::with_capacity(len);
+
+        for loss in input.iter() {
+            let (s,o) = loss.as_raw_slice().split_at(NO);
+
+            sl.push(s.to_vec().try_into()?);
+            ol.push(o.to_vec().try_into()?);
+        }
+
+        let sl = sl.into();
+        let ol = ol.into();
+
+        let (s,_) = stack.pop();
+
+        let (s,(ss,os)) = s.pop();
+
+        let ((sl,ss),(ol,os)) = (
+            self.inner.batch_backward(sl,ss,lossf)?,
+            self.inner.batch_backward(ol,os,lossf)?
+        );
+
+        let (s,loss) = self.parent.batch_loss(HalfKPList {
+            list: (sl.iter().map(|sl| sl.into()).collect(), ol.iter().map(|ol| ol.into()).collect()), len:len
+        }, lossf, s)?;
+
+        let (l,s) = self.parent.batch_backward(loss, s, lossf)?;
+
+        Ok((l,Cons(s,(ss,os))))
+    }
+}
+impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+}
+impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
+             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Clone + Default + Send + Sync + 'static,
+          [(); NO*2]: {
+}
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=SerializedVec<U,I>,BatchOutput=SerializedVec<U,O>> +
                                  BatchTrain<U,D> + Persistence<U,P,PT>
@@ -268,7 +832,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
         1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }
 
-    pub fn test_accuracy(&self,teban:Teban,banmen:Banmen,mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
+    pub fn select_bestmove(&self, teban:Teban, banmen:Banmen, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
         let mut rnd = rand::thread_rng();
         let mut picker = RandomPicker::new(Prng::new(rnd.gen()));
 
@@ -409,7 +973,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
         let same = match best_move {
             yaneuraou::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                self.select_bestmove(teban, banmen, mc)?.map(|m| {
                     match m {
                         LegalMove::To(m) => {
                             let (bsx, bsy) = m.src().square_to_point();
@@ -427,7 +991,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 }).or(Some(false))
             },
             yaneuraou::reader::BestMove::MovePut(k,x,y) => {
-                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                self.select_bestmove(teban, banmen, mc)?.map(|m| {
                     match m {
                         LegalMove::Put(m) => {
                             let (bx,by) = m.dst().square_to_point();
@@ -551,7 +1115,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 
         let same = match best_move {
             hcpe::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                self.select_bestmove(teban, banmen, mc)?.map(|m| {
                     match m {
                         LegalMove::To(m) => {
                             let (bsx, bsy) = m.src().square_to_point();
@@ -569,7 +1133,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 }).or(Some(false))
             },
             hcpe::reader::BestMove::MovePut(k,x,y) => {
-                self.test_accuracy(teban,banmen,mc)?.map(|m| {
+                self.select_bestmove(teban, banmen, mc)?.map(|m| {
                     match m {
                         LegalMove::Put(m) => {
                             let (bx,by) = m.dst().square_to_point();
