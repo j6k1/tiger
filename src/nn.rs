@@ -16,13 +16,12 @@ use nncombinator::{Cons, Nil, Stack};
 use nncombinator::cuda::mem::{Alloctype, CachedTensor, MemoryPool};
 use nncombinator::device::{Device, DeviceCpu, DeviceGpu};
 use nncombinator::device::linear::DeviceLinear;
-use nncombinator::error::{ConfigReadError, EvaluateError, PersistenceError, TrainingError};
-use nncombinator::layer::{AddLayer, AddLayerTrain, AskDiffInput, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchTrain, Forward, ForwardAll, Loss, PreTrain, TryAddLayer, UpdateWeight};
+use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
+use nncombinator::layer::{AddLayer, AddLayerTrain, AskDiffInput, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, BatchTrain, Forward, ForwardAll, Loss, PreTrain, TryAddLayer, UpdateWeight};
 use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayer, LinearLayerBuilder, LinearLayerInstantiation};
 use nncombinator::layer::activation::ActivationLayer;
-use nncombinator::layer::batchnormalization::BatchNormalizationLayerBuilder;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
@@ -42,19 +41,19 @@ use crate::error::{ApplicationError};
 
 const BANMEN_SIZE:usize = 81;
 
-const OU_INDEX:usize = 0;
-const FU_INDEX:usize = OU_INDEX + BANMEN_SIZE;
+const FU_INDEX:usize = 0;
 const KYOU_INDEX:usize = FU_INDEX + BANMEN_SIZE;
 const KEI_INDEX:usize = KYOU_INDEX + BANMEN_SIZE;
 const GIN_INDEX:usize = KEI_INDEX + BANMEN_SIZE;
 const KIN_INDEX:usize = GIN_INDEX + BANMEN_SIZE;
 const KAKU_INDEX:usize = KIN_INDEX + BANMEN_SIZE;
 const HISHA_INDEX:usize = KAKU_INDEX + BANMEN_SIZE;
-const NARIFU_INDEX:usize = HISHA_INDEX + BANMEN_SIZE;
-const NARIKYOU_INDEX:usize = NARIFU_INDEX + BANMEN_SIZE;
-const NARIKEI_INDEX:usize = NARIKYOU_INDEX + BANMEN_SIZE;
-const NARIGIN_INDEX:usize = NARIKEI_INDEX + BANMEN_SIZE;
-const NARIKAKU_INDEX:usize = NARIGIN_INDEX + BANMEN_SIZE;
+//const NARIFU_INDEX:usize = HISHA_INDEX + BANMEN_SIZE;
+//const NARIKYOU_INDEX:usize = NARIFU_INDEX + BANMEN_SIZE;
+//const NARIKEI_INDEX:usize = NARIKYOU_INDEX + BANMEN_SIZE;
+//const NARIGIN_INDEX:usize = NARIKEI_INDEX + BANMEN_SIZE;
+//const NARIKAKU_INDEX:usize = NARIGIN_INDEX + BANMEN_SIZE;
+const NARIKAKU_INDEX:usize = HISHA_INDEX + BANMEN_SIZE;
 const NARIHISHA_INDEX:usize = NARIKAKU_INDEX + BANMEN_SIZE;
 const OPPONENT_FU_INDEX:usize = NARIHISHA_INDEX + BANMEN_SIZE;
 const OPPONENT_KYOU_INDEX:usize = OPPONENT_FU_INDEX + BANMEN_SIZE;
@@ -63,15 +62,15 @@ const OPPONENT_GIN_INDEX:usize = OPPONENT_KEI_INDEX + BANMEN_SIZE;
 const OPPONENT_KIN_INDEX:usize = OPPONENT_GIN_INDEX + BANMEN_SIZE;
 const OPPONENT_KAKU_INDEX:usize = OPPONENT_KIN_INDEX + BANMEN_SIZE;
 const OPPONENT_HISHA_INDEX:usize = OPPONENT_KAKU_INDEX + BANMEN_SIZE;
-const OPPONENT_OU_INDEX:usize = OPPONENT_HISHA_INDEX + BANMEN_SIZE;
-const OPPONENT_NARIFU_INDEX:usize = OPPONENT_OU_INDEX + BANMEN_SIZE;
-const OPPONENT_NARIKYOU_INDEX:usize = OPPONENT_NARIFU_INDEX + BANMEN_SIZE;
-const OPPONENT_NARIKEI_INDEX:usize = OPPONENT_NARIKYOU_INDEX + BANMEN_SIZE;
-const OPPONENT_NARIGIN_INDEX:usize = OPPONENT_NARIKEI_INDEX + BANMEN_SIZE;
-const OPPONENT_NARIKAKU_INDEX:usize = OPPONENT_NARIGIN_INDEX + BANMEN_SIZE;
+//const OPPONENT_NARIFU_INDEX:usize = OPPONENT_HISHA_INDEX + BANMEN_SIZE;
+//const OPPONENT_NARIKYOU_INDEX:usize = OPPONENT_NARIFU_INDEX + BANMEN_SIZE;
+//const OPPONENT_NARIKEI_INDEX:usize = OPPONENT_NARIKYOU_INDEX + BANMEN_SIZE;
+//const OPPONENT_NARIGIN_INDEX:usize = OPPONENT_NARIKEI_INDEX + BANMEN_SIZE;
+//const OPPONENT_NARIKAKU_INDEX:usize = OPPONENT_NARIGIN_INDEX + BANMEN_SIZE;
+const OPPONENT_NARIKAKU_INDEX:usize = OPPONENT_HISHA_INDEX + BANMEN_SIZE;
 const OPPONENT_NARIHISHA_INDEX:usize = OPPONENT_NARIKAKU_INDEX + BANMEN_SIZE;
-
-const MOCHIGOMA_FU_INDEX:usize = OPPONENT_NARIHISHA_INDEX + BANMEN_SIZE;
+const PIECE_END:usize = OPPONENT_NARIHISHA_INDEX + BANMEN_SIZE;
+const MOCHIGOMA_FU_INDEX:usize = PIECE_END;
 const MOCHIGOMA_KYOU_INDEX:usize = MOCHIGOMA_FU_INDEX + 19;
 const MOCHIGOMA_KEI_INDEX:usize = MOCHIGOMA_KYOU_INDEX + 5;
 const MOCHIGOMA_GIN_INDEX:usize = MOCHIGOMA_KEI_INDEX + 5;
@@ -85,6 +84,9 @@ const OPPONENT_MOCHIGOMA_GIN_INDEX:usize = OPPONENT_MOCHIGOMA_KEI_INDEX + 5;
 const OPPONENT_MOCHIGOMA_KIN_INDEX:usize = OPPONENT_MOCHIGOMA_GIN_INDEX + 5;
 const OPPONENT_MOCHIGOMA_KAKU_INDEX:usize = OPPONENT_MOCHIGOMA_KIN_INDEX + 5;
 const OPPONENT_MOCHIGOMA_HISHA_INDEX:usize = OPPONENT_MOCHIGOMA_KAKU_INDEX + 3;
+const MOCHIGOMA_END:usize = OPPONENT_MOCHIGOMA_HISHA_INDEX + 3;
+
+pub const FEATURES_NUM:usize = MOCHIGOMA_END * BANMEN_SIZE;
 
 const SELF_INDEX_MAP:[usize; 7] = [
     MOCHIGOMA_FU_INDEX,
@@ -106,6 +108,7 @@ const OPPONENT_INDEX_MAP:[usize; 7] = [
     OPPONENT_MOCHIGOMA_HISHA_INDEX
 ];
 
+#[derive(Debug)]
 pub struct HalfKP<U,const N:usize>(pub Arr<U,N>, pub Arr<U,N>) where U: Default + Clone + Send;
 
 impl<U,const N:usize> From<&HalfKP<U,N>> for (Arr<U,N>,Arr<U,N>) where U: Default + Clone + Send {
@@ -119,6 +122,7 @@ impl<U,const N:usize> BatchDataType for HalfKP<U,N> where U: Default + Clone + S
     type Type = HalfKPList<U,N>;
 }
 
+#[derive(Debug)]
 pub struct HalfKPList<U,const N:usize> where U: Default + Clone + Send {
     list:(Vec<Arr<U,N>>,Vec<Arr<U,N>>),
     len: usize
@@ -146,6 +150,11 @@ impl<U,const N:usize> HalfKPList<U,N> where U: Default + Clone + Send {
     }
 
     pub fn len(&self) -> usize {
+        self.len
+    }
+}
+impl<U,const N:usize> BatchSize for HalfKPList<U,N> where U: Default + Clone + Send {
+    fn size(&self) -> usize {
         self.len
     }
 }
@@ -189,15 +198,15 @@ pub struct FeatureTransformLayer<U,P,I,C,D,const NI:usize,const NO:usize>
     i:PhantomData<I>
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where U: UnitValue<U> + rand_distr::num_traits::Float,
+    where U: UnitValue<U>,
           P: ForwardAll<Input=I,Output=HalfKP<U,NI>> +
              PreTrain<U> + 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           I: Debug + Send + Sync,
-          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
-          LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>: LinearLayerInstantiation<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>,
-          StandardNormal: Distribution<U> {
-    pub fn new(parent:P,device:&D) -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>, ApplicationError> {
+          LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>: LinearLayerInstantiation<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO> {
+    pub fn new(parent:P,device:&D) -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>, LayerInstantiationError>
+        where U: UnitValue<U> + rand_distr::num_traits::Float,
+              StandardNormal: Distribution<U> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
@@ -259,7 +268,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> Forward<HalfKP<U,NI>,Result<Arr<U,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     fn forward(&self, &HalfKP(ref self_input, ref oppoent_input):&HalfKP<U,NI>) -> Result<Arr<U,{NO*2}>,EvaluateError> {
         let s = self.inner.forward(self_input)?;
@@ -279,7 +288,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> ForwardAll for FeatureTransformLay
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     type Input = I;
     type Output = Arr<U,{NO*2}>;
@@ -297,7 +306,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> PreTrain<U> for FeatureTransformLa
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [();NO*2]: {
     type OutStack = Cons<Cons<<P as PreTrain<U>>::OutStack,(FeatureTransformStack<U,NI,NO>,FeatureTransformStack<U,NI,NO>)>,Arr<U,{NO*2}>>;
 
@@ -330,7 +339,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
              BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     type LossInput = Arr<U,{NO*2}>;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
@@ -363,7 +372,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
              BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     type LossInput = Arr<U,{NO*2}>;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
@@ -393,7 +402,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
 impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + UpdateWeight<U> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
 
@@ -410,7 +419,7 @@ impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLa
     where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + UpdateWeight<U> + 'static,
           DeviceGpu<U>: Device<U> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
 
@@ -442,40 +451,42 @@ impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
              BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {}
 impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
              BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static,
           [(); NO*2]: {}
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
-    type BatchInput = Vec<I>;
+    type BatchInput = <I as BatchDataType>::Type;
     type BatchOutput = SerializedVec<U,Arr<U,{NO*2}>>;
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
     fn batch_forward(&self, input: Self::BatchInput) -> Result<Self::BatchOutput, TrainingError> {
-        let len = input.len();
+        let len = input.size();
 
         let input = self.parent.batch_forward(input)?;
 
@@ -500,31 +511,33 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
     type BatchOutStack = Cons<Cons<<P as BatchPreTrainBase<U>>::BatchOutStack,
                                     (FeatureTransformBatchStack<U,NI,NO>,FeatureTransformBatchStack<U,NI,NO>)>, SerializedVec<U,Arr<U,{NO*2}>>>;
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]:,
           Self: PreTrain<U> {
     fn batch_pre_train(&self, input: Self::BatchInput) -> Result<Self::BatchOutStack, TrainingError> {
-        let len = input.len();
+        let len = input.size();
 
         let r = self.parent.batch_pre_train(input)?;
 
@@ -552,12 +565,13 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransf
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
     type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
     type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
@@ -599,13 +613,14 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
     type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
     type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
@@ -647,73 +662,106 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
-             BatchForwardBase<BatchInput=Vec<I>,BatchOutput=HalfKPList<U,NI>> + BatchForward +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
-          I: Debug + Clone + Default + Send + Sync + 'static,
+          I: Debug + Send + Sync + 'static + BatchDataType,
+          <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
 }
+pub struct FeatureTransformLayerBuilder<const NO:usize> {
+    no:PhantomData<[();NO]>
+}
+impl<const NO:usize> FeatureTransformLayerBuilder<NO> {
+    /// Create an instance of FeatureTransformLayerBuilder
+    pub fn new() -> FeatureTransformLayerBuilder<NO> {
+        FeatureTransformLayerBuilder {
+            no:PhantomData::<[();NO]>
+        }
+    }
+}
+impl<const NO:usize> FeatureTransformLayerBuilder<NO> {
+    /// Create an instance of FeatureTransformLayers
+    /// # Arguments
+    /// * `parent` - upper layer
+    /// * `device` - Device object used for neural network computation
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors
+    /// * [`LayerInstantiationError`]
+    pub fn build<U,C,P,D,I,const NI:usize>(&self,parent: P, device:&D)
+        -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>,LayerInstantiationError>
+        where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+                 PreTrain<U> + Loss<U>,
+              U: Default + Clone + Copy + UnitValue<U> + rand_distr::num_traits::Float,
+              I: Debug + Send + Sync + BatchDataType,
+              D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+              LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>: LinearLayerInstantiation<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>,
+              StandardNormal: Distribution<U>,
+              <I as BatchDataType>::Type: Debug + BatchSize {
+        Ok(FeatureTransformLayer::<U,P,I,C,D,NI,NO>::new(parent,device)?)
+    }
+}
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O>: ForwardAll<Input=I,Output=O> +
-                                 BatchForwardBase<BatchInput=SerializedVec<U,I>,BatchOutput=SerializedVec<U,O>> +
+                                 BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
                                  BatchTrain<U,D> + Persistence<U,P,PT>
                                  where U: UnitValue<U>,
                                        D: Device<U>,
+                                       I: BatchDataType,
+                                       O: BatchDataType,
                                        PT: PersistenceType {}
 impl<T,U,D,P,PT,I,O> BatchNeuralNetwork<U,D,P,PT,I,O> for T
     where T: ForwardAll<Input=I,Output=O> +
-             BatchForwardBase<BatchInput=SerializedVec<U,I>,BatchOutput=SerializedVec<U,O>> +
+             BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
              BatchTrain<U,D> + Persistence<U,P,PT>,
              U: UnitValue<U>,
              D: Device<U>,
-             PT: PersistenceType {}
+             I: BatchDataType,
+             O: BatchDataType,
+             PT: PersistenceType,
+             <I as BatchDataType>::Type: Debug + BatchSize {}
 pub struct EvalutorCreator;
 impl EvalutorCreator {
-    pub fn create<P: AsRef<Path>>(savedir: P, nn_path: P)
-        -> Result<Evalutor<impl ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+    pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static)
+        -> Result<Evalutor<impl ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                 PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / 2515f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2f32 / 1024f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
-        let net: InputLayer<f32, Arr<f32, 2515>, _> = InputLayer::new();
+        let net: InputLayer<f32, HalfKP<f32,FEATURES_NUM>, _> = InputLayer::new();
 
         let rnd = rnd_base.clone();
 
         let mut nn = net.try_add_layer(|l| {
-            let rnd = rnd.clone();
-            LinearLayerBuilder::<2515, 256>::new().build(l, &device, move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+            FeatureTransformLayerBuilder::<512>::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            LinearLayerBuilder::<256, 32>::new().build(l, &device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+            LinearLayerBuilder::<1024, 32>::new().build(l, &device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device, move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
@@ -731,16 +779,16 @@ impl EvalutorCreator {
         })
     }
 }
-pub struct Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+pub struct Evalutor<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                 PreTrain<f32>,
                                 <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M
 }
-impl<M> Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+impl<M> Evalutor<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                              PreTrain<f32> + Send + Sync + 'static,
                              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    pub fn evalute(&self, t:Teban, b:&Banmen, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
-        let input = InputCreator::make_input(t,b,mc);
+    pub fn evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
+        let input = HalfKP(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
         let r = self.nn.forward_all(input)?;
 
@@ -748,7 +796,7 @@ impl<M> Evalutor<M> where M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>
     }
 }
 pub struct Trainer<M>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<f32,FEATURES_NUM>,Arr<f32,1>> {
 
     nn:M,
     optimizer:MomentumSGD<f32>,
@@ -761,46 +809,38 @@ pub struct TrainerCreator {
 }
 impl TrainerCreator {
     pub fn create(save_dir:String, nn_path:String, learning_rate:f32)
-        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>>>,ApplicationError> {
+        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<f32,FEATURES_NUM>,Arr<f32,1>>>,ApplicationError> {
 
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32/2515f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2f32/256f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, 1f32/32f32.sqrt()).unwrap();
-
         let memory_pool = Arc::new(Mutex::new(MemoryPool::new(Alloctype::Device)?));
+
+        let n2 = Normal::<f32>::new(0.0, (2f32 / 1024f32).sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceGpu::new(&memory_pool)?;
 
-        let net:InputLayer<f32,Arr<f32,2515>,_> = InputLayer::new();
+        let net: InputLayer<f32, HalfKP<f32,FEATURES_NUM>, _> = InputLayer::new();
 
         let rnd = rnd_base.clone();
 
         let mut nn = net.try_add_layer(|l| {
-            let rnd = rnd.clone();
-            LinearLayerBuilder::<2515,256>::new().build(l,&device, move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+            FeatureTransformLayerBuilder::<512>::new().build(l,&device)
         })?.add_layer(|l| {
-            ActivationLayer::new(l,ReLu::new(&device),&device)
+            ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            LinearLayerBuilder::<256,32>::new().build(l,&device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+            LinearLayerBuilder::<1024, 32>::new().build(l, &device, move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
         })?.add_layer(|l| {
-            ActivationLayer::new(l,ReLu::new(&device),&device)
+            ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            LinearLayerBuilder::<32,1>::new().build(l,&device, move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
-        })?.try_add_layer(|l| {
-            BatchNormalizationLayerBuilder::new().build(l,&device)
+            LinearLayerBuilder::<32, 1>::new().build(l, &device, move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.)
         })?.add_layer(|l| {
-            ActivationLayer::new(l,Sigmoid::new(&device),&device)
+            ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
-            LinearOutputLayer::new(l,&device)
+            LinearOutputLayer::new(l, &device)
         });
 
         {
@@ -827,28 +867,29 @@ impl TrainerCreator {
         })
     }
 }
-impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,Arr<f32,2515>,Arr<f32,1>> {
+impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<f32,FEATURES_NUM>,Arr<f32,1>> {
     fn sigmoid(&self,x:i16) -> f32 {
         1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }
 
-    pub fn select_bestmove(&self, teban:Teban, banmen:Banmen, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
+    pub fn select_bestmove(&self, teban:Teban, state:&State, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
         let mut rnd = rand::thread_rng();
         let mut picker = RandomPicker::new(Prng::new(rnd.gen()));
 
-        let state = State::new(banmen);
-
-        Rule::legal_moves_all_by_strategy::<NonEvasionsAll>(teban,&state,&mc,&mut picker)?;
+        Rule::legal_moves_all_by_strategy::<NonEvasionsAll>(teban,state,&mc,&mut picker)?;
 
         let mut best_score = None;
         let mut best_move = None;
 
         for m in &mut picker {
-            let next = Rule::apply_move_none_check(&state, teban, &mc, m.to_applied_move());
+            let next = Rule::apply_move_none_check(state, teban, &mc, m.to_applied_move());
 
             match next {
                 (state, mc, _) => {
-                    let input = InputCreator::make_input(teban.opposite(),state.get_banmen(),&mc);
+                    let input = HalfKP(
+                                    InputCreator::make_input(teban.opposite(),&state,&mc),
+                                    InputCreator::make_input(teban,&state,&mc)
+                    );
 
                     let r = self.nn.forward_all(input)?;
                     let r = r[0].clone() - 0.5;
@@ -916,11 +957,14 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
 
-        let batch = sfens_with_extended.iter()
+        let batch = sfens_with_extended.into_iter()
             .map(|(teban,banmen,mc,es, score)| {
-                let teban = *teban;
+                let state = State::new(banmen);
 
-                let input = InputCreator::make_input(teban, banmen, mc);
+                let input = HalfKP(
+                    InputCreator::make_input(teban, &state, &mc),
+                    InputCreator::make_input(teban.opposite(),&state,&mc)
+                );
 
                 let mut t = Arr::<f32,1>::new();
 
@@ -941,11 +985,11 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         _ => 0.5f32
                     };
 
-                    t * 0.667 + self.sigmoid(*score) * 0.333
+                    t * 0.667 + self.sigmoid(score) * 0.333
                 };
 
                 (t,input)
-        }).fold((Vec::new(),Vec::new()),  | mut acc, (t,i) | {
+        }).fold((Vec::new(),HalfKPList::new()),  | mut acc, (t,i) | {
             acc.0.push(t);
             acc.1.push(i);
 
@@ -967,13 +1011,18 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             game_result
         }) = self.packed_sfen_reader.read_sfen_with_extended(packed_sfen)?;
 
-        let input = InputCreator::make_input(teban, &banmen, &mc);
+        let state = State::new(banmen);
 
-        let r = self.nn.forward_all(input.clone())?;
+        let input = HalfKP(
+                        InputCreator::make_input(teban, &state, &mc),
+                        InputCreator::make_input(teban.opposite(),&state,&mc)
+        );
+
+        let r = self.nn.forward_all(input)?;
 
         let same = match best_move {
             yaneuraou::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.select_bestmove(teban, banmen, mc)?.map(|m| {
+                self.select_bestmove(teban, &state, mc)?.map(|m| {
                     match m {
                         LegalMove::To(m) => {
                             let (bsx, bsy) = m.src().square_to_point();
@@ -991,7 +1040,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 }).or(Some(false))
             },
             yaneuraou::reader::BestMove::MovePut(k,x,y) => {
-                self.select_bestmove(teban, banmen, mc)?.map(|m| {
+                self.select_bestmove(teban, &state, mc)?.map(|m| {
                     match m {
                         LegalMove::Put(m) => {
                             let (bx,by) = m.dst().square_to_point();
@@ -1048,11 +1097,14 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             (1.,sente_win_count as f32 / gote_win_count as f32)
         };
 
-        let batch = sfens_with_extended.iter()
+        let batch = sfens_with_extended.into_iter()
             .map(|(teban,banmen,mc,es,score)| {
-                let teban = *teban;
+                let state = State::new(banmen);
 
-                let input = InputCreator::make_input(teban, banmen, mc);
+                let input = HalfKP(
+                            InputCreator::make_input(teban, &state, &mc),
+                            InputCreator::make_input(teban.opposite(),&state,&mc)
+                );
 
                 let (rate,es) = match (es,teban) {
                     (GameResult::Draw,_) => {
@@ -1085,11 +1137,11 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                         _ => 0.5f32
                     };
 
-                    t * 0.667 + self.sigmoid(*score) * 0.333
+                    t * 0.667 + self.sigmoid(score) * 0.333
                 };
 
                 (t,input)
-            }).fold((Vec::new(),Vec::new()), | mut acc, (t,i) | {
+            }).fold((Vec::new(),HalfKPList::new()), | mut acc, (t,i) | {
                 acc.0.push(t);
                 acc.1.push(i);
                 acc
@@ -1109,13 +1161,18 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
             game_result
         }) = self.hcpe_reader.read_sfen_with_extended(hcpe)?;
 
-        let input = InputCreator::make_input(teban, &banmen, &mc);
+        let state = State::new(banmen);
 
-        let r = self.nn.forward_all(input.clone())?;
+        let input = HalfKP(
+            InputCreator::make_input(teban, &state, &mc),
+            InputCreator::make_input(teban.opposite(),&state,&mc)
+        );
+
+        let r = self.nn.forward_all(input)?;
 
         let same = match best_move {
             hcpe::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.select_bestmove(teban, banmen, mc)?.map(|m| {
+                self.select_bestmove(teban, &state, mc)?.map(|m| {
                     match m {
                         LegalMove::To(m) => {
                             let (bsx, bsy) = m.src().square_to_point();
@@ -1133,7 +1190,7 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
                 }).or(Some(false))
             },
             hcpe::reader::BestMove::MovePut(k,x,y) => {
-                self.select_bestmove(teban, banmen, mc)?.map(|m| {
+                self.select_bestmove(teban, &state, mc)?.map(|m| {
                     match m {
                         LegalMove::Put(m) => {
                             let (bx,by) = m.dst().square_to_point();
@@ -1194,10 +1251,16 @@ impl<M> Trainer<M> where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersist
 pub struct InputCreator;
 
 impl InputCreator {
-    pub fn make_input(t:Teban,b:&Banmen,mc:&MochigomaCollections) -> Arr<f32,2515> {
+    pub fn make_input(t:Teban,state:&State,mc:&MochigomaCollections) -> Arr<f32,FEATURES_NUM> {
         let mut inputs = Arr::new();
 
-        match b {
+        let ou_position = if t == Teban::Sente {
+            Rule::ou_square(t,state)
+        } else {
+            80 -  Rule::ou_square(t,state)
+        };
+
+        match state.get_banmen() {
             &Banmen(ref kinds) => {
                 for y in 0..9 {
                     for x in 0..9 {
@@ -1206,7 +1269,9 @@ impl InputCreator {
                         if kind != KomaKind::Blank {
                             let index = InputCreator::input_index_of_banmen(t,kind,x as u32,y as u32).unwrap();
 
-                            inputs[index] = 1f32;
+                            if index < MOCHIGOMA_END {
+                                 inputs[ou_position as usize * (MOCHIGOMA_END) + index] = 1f32;
+                            }
                         }
                     }
                 }
@@ -1225,26 +1290,11 @@ impl InputCreator {
             Teban::Gote => (mg,ms),
         };
 
+        let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
+
         for &k in &MOCHIGOMA_KINDS {
-            let c = ms.get(k);
-
-            for i in 0..c {
-                let offset = SELF_INDEX_MAP[k as usize];
-
-                let offset = offset as usize;
-
-                inputs[offset + i as usize] = 1f32;
-            }
-
-            let c = mg.get(k);
-
-            for i in 0..c {
-                let offset = OPPONENT_INDEX_MAP[k as usize];
-
-                let offset = offset as usize;
-
-                inputs[offset + i as usize] = 1f32;
-            }
+            inputs[s + SELF_INDEX_MAP[ms.get(k)]] = 1f32;
+            inputs[s + OPPONENT_INDEX_MAP[mg.get(k)]] = 1f32;
         }
         inputs
     }
@@ -1259,11 +1309,16 @@ impl InputCreator {
             KIN_INDEX,
             KAKU_INDEX,
             HISHA_INDEX,
-            OU_INDEX,
-            NARIFU_INDEX,
-            NARIKYOU_INDEX,
-            NARIKEI_INDEX,
-            NARIGIN_INDEX,
+//            OU_INDEX,
+//            NARIFU_INDEX,
+//            NARIKYOU_INDEX,
+//            NARIKEI_INDEX,
+//            NARIGIN_INDEX,
+            MOCHIGOMA_END,
+            KIN_INDEX,
+            KIN_INDEX,
+            KIN_INDEX,
+            KIN_INDEX,
             NARIKAKU_INDEX,
             NARIHISHA_INDEX,
             OPPONENT_FU_INDEX,
@@ -1273,11 +1328,16 @@ impl InputCreator {
             OPPONENT_KIN_INDEX,
             OPPONENT_KAKU_INDEX,
             OPPONENT_HISHA_INDEX,
-            OPPONENT_OU_INDEX,
-            OPPONENT_NARIFU_INDEX,
-            OPPONENT_NARIKYOU_INDEX,
-            OPPONENT_NARIKEI_INDEX,
-            OPPONENT_NARIGIN_INDEX,
+            MOCHIGOMA_END,
+//            OPPONENT_OU_INDEX,
+//            OPPONENT_NARIFU_INDEX,
+//            OPPONENT_NARIKYOU_INDEX,
+//            OPPONENT_NARIKEI_INDEX,
+//            OPPONENT_NARIGIN_INDEX,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
             OPPONENT_NARIKAKU_INDEX,
             OPPONENT_NARIHISHA_INDEX
         ];
@@ -1290,11 +1350,16 @@ impl InputCreator {
             OPPONENT_KIN_INDEX,
             OPPONENT_KAKU_INDEX,
             OPPONENT_HISHA_INDEX,
-            OPPONENT_OU_INDEX,
-            OPPONENT_NARIFU_INDEX,
-            OPPONENT_NARIKYOU_INDEX,
-            OPPONENT_NARIKEI_INDEX,
-            OPPONENT_NARIGIN_INDEX,
+//            OPPONENT_OU_INDEX,
+//            OPPONENT_NARIFU_INDEX,
+//            OPPONENT_NARIKYOU_INDEX,
+//            OPPONENT_NARIKEI_INDEX,
+//            OPPONENT_NARIGIN_INDEX,
+            MOCHIGOMA_END,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
+            OPPONENT_KIN_INDEX,
             OPPONENT_NARIKAKU_INDEX,
             OPPONENT_NARIHISHA_INDEX,
             FU_INDEX,
@@ -1304,11 +1369,16 @@ impl InputCreator {
             KIN_INDEX,
             KAKU_INDEX,
             HISHA_INDEX,
-            OU_INDEX,
-            NARIFU_INDEX,
-            NARIKYOU_INDEX,
-            NARIKEI_INDEX,
-            NARIGIN_INDEX,
+            MOCHIGOMA_END,
+//            OU_INDEX,
+//            NARIFU_INDEX,
+//            NARIKYOU_INDEX,
+//            NARIKEI_INDEX,
+//            NARIGIN_INDEX,
+            KIN_INDEX,
+            KIN_INDEX,
+            KIN_INDEX,
+            KIN_INDEX,
             NARIKAKU_INDEX,
             NARIHISHA_INDEX
         ];
@@ -1321,12 +1391,12 @@ impl InputCreator {
                     )));
             },
             Teban::Sente => {
-                SENTE_INDEX_MAP[kind as usize] + y as usize * 9 + x as usize
+                SENTE_INDEX_MAP[kind as usize] + x as usize * 9 + y as usize
             },
             Teban::Gote => {
                 let (x,y) = (8-x,8-y);
 
-                GOTE_INDEX_MAP[kind as usize] + y as usize * 9 + x as usize
+                GOTE_INDEX_MAP[kind as usize] + x as usize * 9 + y as usize
             }
         };
 

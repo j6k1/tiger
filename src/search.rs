@@ -22,7 +22,7 @@ use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
 use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
-use crate::nn::Evalutor;
+use crate::nn::{Evalutor, HalfKP, FEATURES_NUM};
 use crate::transposition_table::{TT, TTPartialEntry, ZobristHash};
 
 pub const TURN_LIMIT:u32 = 10000;
@@ -181,7 +181,7 @@ pub struct GameState<'a> {
 }
 pub struct Root<L,S,M> where L: Logger + Send + 'static,
                              S: InfoSender,
-                             M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                             M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                 PreTrain<f32> + Send + Sync + 'static,
                              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
@@ -195,7 +195,7 @@ const TIMELIMIT_MARGIN:u64 = 50;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
-                                     M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                                     M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                         PreTrain<f32> + Send + Sync + 'static,
                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
@@ -216,7 +216,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 score
             },
             _ => {
-                Score::Value(evalutor.evalute(teban, state.get_banmen(), mc)?)
+                Score::Value(evalutor.evalute(teban, state, mc)?)
             }
         };
 
@@ -359,7 +359,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 }
 impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                               S: InfoSender,
-                              M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                              M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                  PreTrain<f32> + Send + Sync + 'static,
                               <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new(thread_pool:ThreadPool) -> Root<L,S,M> {
@@ -490,7 +490,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
-                                            M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                                            M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                                PreTrain<f32> + Send + Sync + 'static,
                                             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
@@ -570,7 +570,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 }
 pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
                                   S: InfoSender,
-                                  M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                                  M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                      PreTrain<f32> + Send + Sync + 'static,
                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
@@ -579,7 +579,7 @@ pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                  S: InfoSender,
-                                 M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                                 M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                     PreTrain<f32> + Send + Sync + 'static,
                                  <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Recursive<L,S,M> {
@@ -649,7 +649,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                      S: InfoSender,
-                                                     M: ForwardAll<Input=Arr<f32, 2515>, Output=Arr<f32, 1>> +
+                                                     M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
                                                         PreTrain<f32> + Send + Sync + 'static,
                                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
