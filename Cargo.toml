@@ -11,6 +11,7 @@ rand_xorshift = "0.3.0"
 statrs = "0.16.0"
 rand_distr = "0.4.3"
 rayon = "1.5.1"
+libc = "0.2"
 getopts = "0.2"
 toml = "0.4"
 serde = "1.0"
@@ -23,3 +24,6 @@ path = "../nncombinator"
 path = "../packedsfen"
 [dependencies.usiagent]
 path = "../USIAgent"
+[build-dependencies]
+cc = "1.0.73"
+

@@ -32,6 +32,7 @@ use crate::learning::Learnener;
 use crate::nn::{EvalutorCreator, TrainerCreator};
 use crate::player::Tiger;
 
+pub mod kernel;
 pub mod nn;
 pub mod learning;
 pub mod transposition_table;
