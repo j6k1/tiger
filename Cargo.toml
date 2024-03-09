@@ -27,5 +27,5 @@ path = "../packedsfen"
 [dependencies.usiagent]
 path = "../USIAgent"
 [build-dependencies]
-cc = "1.0.84"
+cc = "1.0.73"
 
