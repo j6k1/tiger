@@ -112,7 +112,16 @@ const OPPONENT_INDEX_MAP:[usize; 7] = [
 #[derive(Debug)]
 pub struct HalfKP<U,const N:usize>(pub Arr<U,N>, pub Arr<U,N>) where U: Default + Clone + Send;
 
+impl<U,const N:usize> From<HalfKP<U,N>> for (Arr<U,N>,Arr<U,N>) where U: Default + Clone + Send {
+    #[inline]
+    fn from(value: HalfKP<U, N>) -> Self {
+        match value {
+            HalfKP(so, oo) => (so,oo)
+        }
+    }
+}
 impl<U,const N:usize> From<&HalfKP<U,N>> for (Arr<U,N>,Arr<U,N>) where U: Default + Clone + Send {
+    #[inline]
     fn from(value: &HalfKP<U, N>) -> Self {
         match value {
             &HalfKP(ref so, ref oo) => (so.clone(),oo.clone())
@@ -139,6 +148,7 @@ impl<U,const N:usize> HalfKPList<U,N> where U: Default + Clone + Send {
         }
     }
 
+    #[inline]
     pub fn push(&mut self,item: HalfKP<U,N>) {
         match item {
             HalfKP(s, o) => {
@@ -150,11 +160,13 @@ impl<U,const N:usize> HalfKPList<U,N> where U: Default + Clone + Send {
         self.len += 1;
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 }
 impl<U,const N:usize> BatchSize for HalfKPList<U,N> where U: Default + Clone + Send {
+    #[inline]
     fn size(&self) -> usize {
         self.len
     }
@@ -162,6 +174,7 @@ impl<U,const N:usize> BatchSize for HalfKPList<U,N> where U: Default + Clone + S
 impl<T,U,const N:usize> From<HalfKPList<U,N>> for (SerializedVec<U,T>,SerializedVec<U,T>)
     where U: Default + Clone + Send,
           SerializedVec<U,T>: From<Vec<Arr<U,N>>> {
+    #[inline]
     fn from(value: HalfKPList<U, N>) -> Self {
         match value {
             HalfKPList {
@@ -176,6 +189,7 @@ impl<T,U,const N:usize> From<HalfKPList<U,N>> for (SerializedVec<U,T>,Serialized
 impl<T,U,const N:usize> From<&HalfKPList<U,N>> for (SerializedVec<U,T>,SerializedVec<U,T>)
     where U: Default + Clone + Send,
           SerializedVec<U,T>: From<Vec<Arr<U,N>>> {
+    #[inline]
     fn from(value: &HalfKPList<U, N>) -> Self {
         match value {
             HalfKPList {
@@ -205,6 +219,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,C,D,NI
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           I: Debug + Send + Sync,
           LinearLayer<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO>: LinearLayerInstantiation<U,C,InputLayer<U,Arr<U,NI>,Arr<U,NI>>,D,Arr<U,NI>,Arr<U,NI>,NI,NO> {
+    #[inline]
     pub fn new(parent:P,device:&D) -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>, LayerInstantiationError>
         where U: UnitValue<U> + rand_distr::num_traits::Float,
               StandardNormal: Distribution<U> {
@@ -271,6 +286,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> Forward<HalfKP<U,NI>,Result<Arr<U,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
+    #[inline]
     fn forward(&self, &HalfKP(ref self_input, ref oppoent_input):&HalfKP<U,NI>) -> Result<Arr<U,{NO*2}>,EvaluateError> {
         let s = self.inner.forward(self_input)?;
         let o = self.inner.forward(oppoent_input)?;
@@ -294,6 +310,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> ForwardAll for FeatureTransformLay
     type Input = I;
     type Output = Arr<U,{NO*2}>;
 
+    #[inline]
     fn forward_all(&self, input: Self::Input) -> Result<Self::Output, EvaluateError> {
         let input = self.parent.forward_all(input)?;
 
@@ -311,6 +328,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> PreTrain<U> for FeatureTransformLa
           [();NO*2]: {
     type OutStack = Cons<Cons<<P as PreTrain<U>>::OutStack,(FeatureTransformStack<U,NI,NO>,FeatureTransformStack<U,NI,NO>)>,Arr<U,{NO*2}>>;
 
+    #[inline]
     fn pre_train(&self, input: Self::Input) -> Result<Self::OutStack, EvaluateError> {
         let r = self.parent.pre_train(input)?;
 
@@ -345,6 +363,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
     type LossInput = Arr<U,{NO*2}>;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
 
+    #[inline]
     fn backward_all<L: LossFunction<U>>(&mut self, input: Self::LossInput, stack:Self::OutStack, lossf:&L)
         -> Result<(<Self as BackwardAll<U>>::LossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let (sl,ol) = input.as_raw_slice().split_at(NO);
@@ -378,6 +397,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
     type LossInput = Arr<U,{NO*2}>;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
 
+    #[inline]
     fn backward_all<L: LossFunction<U>>(&mut self, input: Self::LossInput, stack:Self::OutStack, lossf:&L)
         -> Result<(<Self as BackwardAll<U>>::LossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let (sl,ol) = input.as_raw_slice().split_at(NO);
@@ -407,6 +427,7 @@ impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLa
           [(); NO*2]: {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
 
+    #[inline]
     fn update_weight<OP: Optimizer<U>>(&mut self, stack: Self::GradientStack, optimizer: &mut OP) -> Result<(), TrainingError> {
         let (s,(ss,os)) = stack.pop();
 
@@ -424,6 +445,7 @@ impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLa
           [(); NO*2]: {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>,Cons<Nil,(Arr2<U,NI,NO>,Arr<U,NO>)>)>;
 
+    #[inline]
     fn update_weight<OP: Optimizer<U>>(&mut self, stack: Self::GradientStack, optimizer: &mut OP) -> Result<(), TrainingError> {
         let (s,(ss,os)) = stack.pop();
 
@@ -444,6 +466,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> AskDiffInput<U> for FeatureTransfo
           Self: PreTrain<U> {
     type DiffInput = P::DiffInput;
 
+    #[inline]
     fn ask_diff_input(&self, stack: &Self::OutStack) -> Self::DiffInput {
         stack.map_remaining(|s| self.parent.ask_diff_input(s))
     }
@@ -486,9 +509,11 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
+    #[inline]
     fn batch_forward(&self, input: Self::BatchInput) -> Result<Self::BatchOutput, TrainingError> {
         let input = self.parent.batch_forward(input)?;
 
+        let (self_input,opponent_input) = input.into();
         let (self_input,opponent_input) = input.into();
 
         let s = self.inner.batch_forward(self_input)?;
@@ -526,6 +551,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransf
           <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]:,
           Self: PreTrain<U> {
+    #[inline]
     fn batch_pre_train(&self, input: Self::BatchInput) -> Result<Self::BatchOutStack, TrainingError> {
         let r = self.parent.batch_pre_train(input)?;
 
@@ -556,6 +582,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
     type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
     type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
 
+    #[inline]
     fn batch_backward<L: LossFunction<U>>(&mut self, input: Self::BatchLossInput, stack: Self::BatchOutStack, lossf: &L)
         -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let len = input.len();
@@ -594,6 +621,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
     type BatchLossInput = SerializedVec<U,Arr<U,{NO*2}>>;
     type BatchLossOutput = <P as BatchBackward<U>>::BatchLossOutput;
 
+    #[inline]
     fn batch_backward<L: LossFunction<U>>(&mut self, input: Self::BatchLossInput, stack: Self::BatchOutStack, lossf: &L)
         -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let len = input.len();
