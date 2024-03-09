@@ -137,6 +137,7 @@ pub struct HalfKPList<U,const N:usize> where U: Default + Clone + Send {
     list:(Vec<Arr<U,N>>,Vec<Arr<U,N>>),
     len: usize
 }
+
 type FeatureTransformStack<U,const NI:usize,const NO:usize> = Cons<Cons<Nil,Arr<U,NI>>,Arr<U,NO>>;
 type FeatureTransformBatchStack<U,const NI:usize,const NO:usize> = Cons<Cons<Nil,SerializedVec<U,Arr<U,NI>>>,SerializedVec<U,Arr<U,NO>>>;
 
@@ -201,6 +202,50 @@ impl<T,U,const N:usize> From<&HalfKPList<U,N>> for (SerializedVec<U,T>,Serialize
         }
     }
 }
+
+#[derive(Debug)]
+pub struct HalfKPLoss<U,const N:usize>(pub Arr<U,N>, pub Arr<U,N>) where U: Default + Clone + Send;
+
+impl<U,const N:usize> From<HalfKPLoss<U,N>> for (Arr<U,N>,Arr<U,N>) where U: Default + Clone + Send {
+    #[inline]
+    fn from(value: HalfKPLoss<U, N>) -> Self {
+        match value {
+            HalfKPLoss(s, o) => (s,o)
+        }
+    }
+}
+impl<U,const N:usize> BatchDataType for HalfKPLoss<U,N> where U: Default + Clone + Send {
+    type Type = HalfKPLossList<U,N>;
+}
+#[derive(Debug)]
+pub struct HalfKPLossList<U,const N:usize> where U: Default + Clone + Send {
+    list:(SerializedVec<U,Arr<U,N>>,SerializedVec<U,Arr<U,N>>),
+    len: usize
+}
+impl<U,const N:usize> HalfKPLossList<U,N> where U: Default + Clone + Send {
+    pub fn new(self_loss:SerializedVec<U,Arr<U,N>>,opponent_loss:SerializedVec<U,Arr<U,N>>,len:usize) -> HalfKPLossList<U,N> {
+        HalfKPLossList {
+            list: (self_loss,opponent_loss),
+            len: len
+        }
+    }
+}
+impl<U,const N:usize> BatchSize for HalfKPLossList<U,N> where U: Default + Clone + Send {
+    fn size(&self) -> usize {
+        self.len
+    }
+}
+impl<U,const N:usize> From<HalfKPLossList<U,N>> for (SerializedVec<U,Arr<U,N>>,SerializedVec<U,Arr<U,N>>)
+    where U: Default + Clone + Send {
+    fn from(value: HalfKPLossList<U, N>) -> Self {
+        match value {
+            HalfKPLossList {
+                list: (s,o),
+                len: _
+            } => (s,o)
+        }
+    }
+}
 pub struct FeatureTransformLayer<U,P,I,C,D,const NI:usize,const NO:usize>
     where U: UnitValue<U>,
           P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + 'static,
@@ -244,7 +289,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,C,D,NI
 impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where T: LinearPersistence<U>,
           P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + Persistence<U,T,Linear> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + PreTrain<U> + Loss<U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync {
     fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
@@ -262,7 +307,7 @@ impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureT
 impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where T: LinearPersistence<U>,
           P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + Persistence<U,T,Linear> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + PreTrain<U> + Loss<U> + 'static,
           DeviceGpu<U>: Device<U>,
           U: UnitValue<U>,
           I: Debug + Send + Sync {
@@ -279,7 +324,7 @@ impl<T,U,P,I,const NI:usize,const NO:usize> Persistence<U,T,Linear> for FeatureT
     }
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> Forward<HalfKP<U,NI>,Result<Arr<U,{NO*2}>,EvaluateError>> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> +
              PreTrain<U> + Loss<U> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
@@ -300,7 +345,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> Forward<HalfKP<U,NI>,Result<Arr<U,
     }
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> ForwardAll for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+    where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> +
              PreTrain<U> + Loss<U> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
@@ -320,7 +365,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> ForwardAll for FeatureTransformLay
 impl<U,P,I,C,D,const NI:usize,const NO:usize> PreTrain<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U> +
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + PreTrain<U> + Loss<U> + 'static,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + PreTrain<U> + Loss<U> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
@@ -356,7 +401,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> PreTrain<U> for FeatureTransformLa
 impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where P: PreTrain<U> +
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           [(); NO*2]: {
@@ -379,7 +424,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
             self.inner.backward_all(sl,ss,lossf)?,self.inner.backward_all(ol,os,lossf)?
         );
 
-        let (s,loss) = self.parent.loss(HalfKP(sl, ol), lossf, s)?;
+        let (s,loss) = self.parent.loss(HalfKPLoss(sl, ol), lossf, s)?;
 
         let (l,s) = self.parent.backward_all(loss, s, lossf)?;
 
@@ -389,7 +434,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
 impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where P: PreTrain<U> +
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
@@ -413,7 +458,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLay
             self.inner.backward_all(sl,ss,lossf)?,self.inner.backward_all(ol,os,lossf)?
         );
 
-        let (s,loss) = self.parent.loss(HalfKP(sl, ol), lossf, s)?;
+        let (s,loss) = self.parent.loss(HalfKPLoss(sl, ol), lossf, s)?;
 
         let (l,s) = self.parent.backward_all(loss, s, lossf)?;
 
@@ -458,7 +503,7 @@ impl<U,P,I,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransformLa
 impl<U,P,I,C,D,const NI:usize,const NO:usize> AskDiffInput<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
     where P: PreTrain<U,OutStack=<<Self as PreTrain<U>>::OutStack as Stack>::Remaining> +
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              AskDiffInput<U>,
           U: Default + Clone + Copy + Send + UnitValue<U>,
           D: Device<U>,
@@ -473,22 +518,22 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> AskDiffInput<U> for FeatureTransfo
 }
 impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U>,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           [(); NO*2]: {}
 impl<U,P,I,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
     where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> +
-             BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U>,
+             BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U>,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           [(); NO*2]: {}
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
           U: UnitValue<U>,
@@ -499,10 +544,10 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransf
     type BatchOutput = SerializedVec<U,Arr<U,{NO*2}>>;
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
@@ -514,7 +559,6 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
         let input = self.parent.batch_forward(input)?;
 
         let (self_input,opponent_input) = input.into();
-        let (self_input,opponent_input) = input.into();
 
         let s = self.inner.batch_forward(self_input)?;
         let o = self.inner.batch_forward(opponent_input)?;
@@ -525,10 +569,10 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
     }
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
@@ -539,11 +583,11 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTr
                                     (FeatureTransformBatchStack<U,NI,NO>,FeatureTransformBatchStack<U,NI,NO>)>, SerializedVec<U,Arr<U,{NO*2}>>>;
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           C: 'static,
           D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
@@ -569,11 +613,11 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransf
     }
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           DeviceCpu<U>: Device<U> + DeviceLinear<U,Arr2<U,NI,NO>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
@@ -598,8 +642,9 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
             self.inner.batch_backward(ol,os,lossf)?
         );
 
-        let (s,loss) = self.parent.batch_loss(HalfKPList {
-            list: (sl.iter().map(|sl| sl.into()).collect(), ol.iter().map(|ol| ol.into()).collect()), len:len
+        let (s,loss) = self.parent.batch_loss(HalfKPLossList {
+            list: (sl,ol),
+            len:len
         }, lossf, s)?;
 
         let (l,s) = self.parent.batch_backward(loss, s, lossf)?;
@@ -608,11 +653,11 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
     }
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
@@ -637,8 +682,9 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
             self.inner.batch_backward(ol,os,lossf)?
         );
 
-        let (s,loss) = self.parent.batch_loss(HalfKPList {
-            list: (sl.iter().map(|sl| sl.into()).collect(), ol.iter().map(|ol| ol.into()).collect()), len:len
+        let (s,loss) = self.parent.batch_loss(HalfKPLossList {
+            list: (sl,ol),
+            len:len
         }, lossf, s)?;
 
         let (l,s) = self.parent.batch_backward(loss, s, lossf)?;
@@ -647,20 +693,20 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
     }
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer<U,P,I,CachedTensor<U,Arr2<U,NI,NO>>,DeviceGpu<U>,NI,NO>
-    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> +
+    where P: PreTrain<U> + ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
-             BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+             BatchLoss<U,BatchLossInput=HalfKPLossList<U,NI>> + 'static,
           DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
@@ -690,7 +736,7 @@ impl<const NO:usize> FeatureTransformLayerBuilder<NO> {
     /// * [`LayerInstantiationError`]
     pub fn build<U,C,P,D,I,const NI:usize>(&self,parent: P, device:&D)
         -> Result<FeatureTransformLayer<U,P,I,C,D,NI,NO>,LayerInstantiationError>
-        where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKP<U,NI>> +
+        where P: ForwardAll<Input=I,Output=HalfKP<U,NI>> + BackwardAll<U,LossInput=HalfKPLoss<U,NI>> +
                  PreTrain<U> + Loss<U>,
               U: Default + Clone + Copy + UnitValue<U> + rand_distr::num_traits::Float,
               I: Debug + Send + Sync + BatchDataType,
