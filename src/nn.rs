@@ -37,6 +37,7 @@ use usiagent::math::Prng;
 use usiagent::movepick::RandomPicker;
 use usiagent::rule::{LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
+use crate::device::DeviceFeatureTransform;
 use crate::error::{ApplicationError};
 
 const BANMEN_SIZE:usize = 81;
@@ -480,14 +481,12 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
-          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]: {
     fn batch_forward(&self, input: Self::BatchInput) -> Result<Self::BatchOutput, TrainingError> {
-        let len = input.size();
-
         let input = self.parent.batch_forward(input)?;
 
         let (self_input,opponent_input) = input.into();
@@ -495,18 +494,9 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchForward for FeatureTransformL
         let s = self.inner.batch_forward(self_input)?;
         let o = self.inner.batch_forward(opponent_input)?;
 
-        let mut next:Vec<Arr<U,{NO*2}>> = Vec::with_capacity(len);
+        let next = self.device.features_batch_combine(&s,&o)?;
 
-        for (s,o) in s.iter().zip(o.iter()) {
-            let mut p = Vec::with_capacity(NO*2);
-
-            p.extend_from_slice(s.as_raw_slice());
-            p.extend_from_slice(o.as_raw_slice());
-
-            next.push(p.try_into()?);
-        }
-
-        Ok(next.into())
+        Ok(next)
     }
 }
 impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTransformLayer<U,P,I,C,D,NI,NO>
@@ -515,7 +505,7 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrainBase<U> for FeatureTr
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
-          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
@@ -530,15 +520,13 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransf
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
           C: 'static,
-          D: Device<U> + DeviceLinear<U,C,NI,NO> + 'static,
+          D: Device<U> + DeviceLinear<U,C,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
           [(); NO*2]:,
           Self: PreTrain<U> {
     fn batch_pre_train(&self, input: Self::BatchInput) -> Result<Self::BatchOutStack, TrainingError> {
-        let len = input.size();
-
         let r = self.parent.batch_pre_train(input)?;
 
         let (ss,os) = r.map(|r| {
@@ -549,18 +537,9 @@ impl<U,P,I,C,D,const NI:usize,const NO:usize> BatchPreTrain<U> for FeatureTransf
             })
         })?;
 
-        let mut next:Vec<Arr<U,{NO*2}>> = Vec::with_capacity(len);
+        let next = self.device.features_batch_combine(ss.get_head(),os.get_head())?;
 
-        for (so,oo) in ss.get_head().iter().zip(os.get_head().iter()) {
-            let mut out = Vec::with_capacity(NO*2);
-
-            out.extend_from_slice(so.as_raw_slice());
-            out.extend_from_slice(oo.as_raw_slice());
-
-            next.push(out.try_into()?);
-        }
-
-        Ok(r.push((ss,os)).push(next.into()))
+        Ok(r.push((ss,os)).push(next))
     }
 }
 impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,DeviceCpu<U>,NI,NO>
@@ -569,6 +548,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
+          DeviceCpu<U>: Device<U> + DeviceLinear<U,Arr2<U,NI,NO>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
@@ -580,18 +560,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
         -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let len = input.len();
 
-        let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
-        let mut ol:Vec<Arr<U,NO>> = Vec::with_capacity(len);
-
-        for loss in input.iter() {
-            let (s,o) = loss.as_raw_slice().split_at(NO);
-
-            sl.push(s.to_vec().try_into()?);
-            ol.push(o.to_vec().try_into()?);
-        }
-
-        let sl = sl.into();
-        let ol = ol.into();
+        let (sl,ol) = self.device.loss_input_transform_to_features(&input)?;
 
         let (s,_) = stack.pop();
 
@@ -617,7 +586,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
              BatchPreTrainBase<U> +
              BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,
@@ -629,18 +598,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchBackward<U> for FeatureTransformL
         -> Result<(<Self as BatchBackward<U>>::BatchLossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
         let len = input.len();
 
-        let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
-        let mut ol:Vec<Arr<U,NO>> = Vec::with_capacity(len);
-
-        for loss in input.iter() {
-            let (s,o) = loss.as_raw_slice().split_at(NO);
-
-            sl.push(s.to_vec().try_into()?);
-            ol.push(o.to_vec().try_into()?);
-        }
-
-        let sl = sl.into();
-        let ol = ol.into();
+        let (sl,ol) = self.device.loss_input_transform_to_features(&input)?;
 
         let (s,_) = stack.pop();
 
@@ -675,7 +633,7 @@ impl<U,P,I,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLayer
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=HalfKPList<U,NI>> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=HalfKPList<U,NI>> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + 'static,
+          DeviceGpu<U>: Device<U> + DeviceLinear<U,CachedTensor<U,Arr2<U,NI,NO>>,NI,NO> + DeviceFeatureTransform<U,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           <I as BatchDataType>::Type: Debug + BatchSize,

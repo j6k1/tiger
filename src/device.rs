@@ -1,6 +1,5 @@
 use libc::{c_uint};
 use cuda_runtime_sys::dim3;
-
 use nncombinator::arr::{Arr, SerializedVec};
 use nncombinator::cuda::{CudaPtr, DataTypeInfo, Kernel, Memory};
 use nncombinator::device::{DeviceCpu, DeviceGpu};
@@ -12,7 +11,7 @@ use crate::kernel::device::{FeaturesBatchCombine, FeaturesBatchCombineArgs, Loss
 pub trait DeviceFeatureTransform<U,const FEATURES_NUM: usize,const NO: usize> where U: UnitValue<U> {
     fn features_batch_combine<'a>(&self,self_output:&'a SerializedVec<U,Arr<U,NO>>,opponent_output:&'a SerializedVec<U,Arr<U,NO>>)
         -> Result<SerializedVec<U,Arr<U,{NO*2}>>,EvaluateError>;
-    fn loss_input_transform_to_features(&self,combined_input:&SerializedVec<U,Arr<U,{NO*2}>>)
+    fn loss_input_transform_to_features<'a>(&self,combined_input:&'a SerializedVec<U,Arr<U,{NO*2}>>)
         -> Result<(SerializedVec<U,Arr<U,NO>>,SerializedVec<U,Arr<U,NO>>),EvaluateError>;
 }
 impl<U,const FEATURES_NUM:usize,const NO:usize> DeviceFeatureTransform<U,FEATURES_NUM,NO> for DeviceCpu<U> where U: UnitValue<U> {
@@ -32,7 +31,7 @@ impl<U,const FEATURES_NUM:usize,const NO:usize> DeviceFeatureTransform<U,FEATURE
         Ok(combined.into())
     }
 
-    fn loss_input_transform_to_features(&self, combined_input: &SerializedVec<U, Arr<U, { NO * 2 }>>) -> Result<(SerializedVec<U, Arr<U, NO>>, SerializedVec<U, Arr<U, NO>>), EvaluateError> {
+    fn loss_input_transform_to_features<'a>(&self, combined_input: &'a SerializedVec<U, Arr<U, { NO * 2 }>>) -> Result<(SerializedVec<U, Arr<U, NO>>, SerializedVec<U, Arr<U, NO>>), EvaluateError> {
         let len = combined_input.len();
 
         let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
@@ -80,7 +79,7 @@ impl<U,const FEATURES_NUM:usize,const NO:usize> DeviceFeatureTransform<U,FEATURE
         Ok(args.combined_output.read_to_vec()?.try_into()?)
     }
 
-    fn loss_input_transform_to_features(&self, combined_input: &SerializedVec<U, Arr<U, { NO * 2 }>>)
+    fn loss_input_transform_to_features<'a>(&self, combined_input: &'a SerializedVec<U, Arr<U, { NO * 2 }>>)
         -> Result<(SerializedVec<U, Arr<U, NO>>, SerializedVec<U, Arr<U, NO>>), EvaluateError> {
         let len = combined_input.len();
 

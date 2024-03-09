@@ -1,6 +1,8 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
+extern crate libc;
+extern crate cuda_runtime_sys;
 extern crate rand;
 extern crate rand_distr;
 extern crate rand_xorshift;

@@ -13,6 +13,7 @@ __device__ void features_batch_combine(const T *self_output, const T *oppoent_ou
     }
 }
 
+template<typename T>
 
 __device__ void loss_input_transform_to_features(T *self_input, T *oppoent_input, const T *combined_input, const size_t nlen, const size_t batch_size) {
     const size_t batch_index = blockDim.y * blockIdx.y + threadIdx.y;
