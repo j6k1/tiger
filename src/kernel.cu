@@ -14,15 +14,15 @@ __device__ void features_batch_combine(const T *self_output, const T *oppoent_ou
 }
 
 
-__device__ void loss_input_transform_to_features(T *self_output, T *oppoent_output, const T *combined_input, const size_t nlen, const size_t batch_size) {
+__device__ void loss_input_transform_to_features(T *self_input, T *oppoent_input, const T *combined_input, const size_t nlen, const size_t batch_size) {
     const size_t batch_index = blockDim.y * blockIdx.y + threadIdx.y;
     const size_t index = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (batch_index < batch_size && index < nlen * 2) {
         if (index >= nlen) {
-            oppoent_output[batch_index * nlen + index - nlen] = combined_output[batch_index * nlen * 2 + index];
+            oppoent_input[batch_index * nlen + index - nlen] = combined_input[batch_index * nlen * 2 + index];
         } else {
-            self_output[batch_index * nlen + index] = combined_output[batch_index * nlen * 2 + index];
+            self_input[batch_index * nlen + index] = combined_input[batch_index * nlen * 2 + index];
         }
     }
 }
@@ -36,11 +36,11 @@ extern "C" {
         features_batch_combine(self_output,oppoent_output,combined_output,nlen,batch_size);
     }
 
-    __global__ void loss_input_transform_to_features_float(float *self_output, float *oppoent_output, const float *combined_input, const size_t nlen, const size_t batch_size) {
-        loss_input_transform_to_features(self_output,oppoent_output,combined_output,nlen,batch_size);
+    __global__ void loss_input_transform_to_features_float(float *self_input, float *oppoent_input, const float *combined_input, const size_t nlen, const size_t batch_size) {
+        loss_input_transform_to_features(self_input,oppoent_input,combined_input,nlen,batch_size);
     }
 
-    __global__ void loss_input_transform_to_features_double(double *self_output, double *oppoent_output, const double *combined_input, const size_t nlen, const size_t batch_size) {
-        loss_input_transform_to_features(self_output,oppoent_output,combined_output,nlen,batch_size);
+    __global__ void loss_input_transform_to_features_double(double *self_input, double *oppoent_input, const double *combined_input, const size_t nlen, const size_t batch_size) {
+        loss_input_transform_to_features(self_input,oppoent_input,combined_input,nlen,batch_size);
     }
 }
