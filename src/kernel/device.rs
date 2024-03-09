@@ -73,10 +73,10 @@ impl Kernel for FeaturesBatchCombine<f64> {
 /// Define the arguments passed to the cuda kernel function
 /// Convert the output of the lower LinearLayer loss calculation to the loss of the inner layer of the FeatureTransformLayer.
 pub struct LossInputTransformToFeaturesArgs<T> where T: DataTypeInfo {
-    self_input: CudaPtr<T>,
-    opponent_input: CudaPtr<T>,
+    pub self_input: CudaPtr<T>,
+    pub opponent_input: CudaPtr<T>,
     /// output
-    pub combined_input: CudaPtr<T>,
+    combined_input: CudaPtr<T>,
     out_len: usize,
     batch_len: usize,
 }
