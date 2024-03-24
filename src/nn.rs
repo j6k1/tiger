@@ -930,7 +930,7 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let memory_pool = Arc::new(Mutex::new(MemoryPool::new(Alloctype::Device)?));
+        let memory_pool = Arc::new(Mutex::new(MemoryPool::with_size(1024 * 1024 * 1024 * 4,Alloctype::Device)?));
 
         let n2 = Normal::<f32>::new(0.0, (2f32 / 1024f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
