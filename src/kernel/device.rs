@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use nncombinator::cuda::{AsMutKernelPtr, CudaPtr, DataTypeInfo, Kernel, KernelArgs};
+use nncombinator::cuda::{AsKernelPtr, CudaPtr, DataTypeInfo, Kernel, KernelArgs};
 use libc::{size_t, c_void};
 
 extern "C" {
@@ -40,7 +40,7 @@ impl<T> FeaturesBatchCombineArgs<T> where T: DataTypeInfo {
     }
 }
 impl<T> KernelArgs for FeaturesBatchCombineArgs<T> where T: DataTypeInfo {
-    fn as_vec(&mut self) -> Vec<&mut dyn AsMutKernelPtr> {
+    fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
             &mut self.self_output,
             &mut self.opponent_output,
@@ -102,7 +102,7 @@ impl<T> LossInputTransformToFeaturesArgs<T> where T: DataTypeInfo {
     }
 }
 impl<T> KernelArgs for LossInputTransformToFeaturesArgs<T> where T: DataTypeInfo {
-    fn as_vec(&mut self) -> Vec<&mut dyn AsMutKernelPtr> {
+    fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
             &mut self.self_input,
             &mut self.opponent_input,
