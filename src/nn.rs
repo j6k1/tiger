@@ -26,7 +26,7 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{MomentumSGDBuilder, Optimizer, OptimizerBuilder};
+use nncombinator::optimizer::{MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
@@ -859,7 +859,8 @@ impl EvalutorCreator {
 
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder = MomentumSGDBuilder::with_params(&device,0.01,0.9,0.0001);
+        //let optimizer_builder = MomentumSGDBuilder::with_params(&device,0.01,0.9,0.0001);
+        let optimizer_builder = SGDBuilder::new(0.01);
 
         let net: InputLayer<f32, HalfKP<f32,FEATURES_NUM>, _> = InputLayer::new();
 
@@ -937,7 +938,8 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&memory_pool)?;
 
-        let optimizer_builder = MomentumSGDBuilder::with_params(&device,learning_rate,0.9,0.0001);
+//        let optimizer_builder = MomentumSGDBuilder::with_params(&device,learning_rate,0.9,0.0001);
+        let optimizer_builder = SGDBuilder::new(learning_rate);
 
         let net: InputLayer<f32, HalfKP<f32,FEATURES_NUM>, _> = InputLayer::new();
 
