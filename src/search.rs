@@ -22,7 +22,8 @@ use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
 use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
-use crate::nn::{Evalutor, HalfKP, FEATURES_NUM};
+use crate::features::HalfKP;
+use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::transposition_table::{TT, TTPartialEntry, ZobristHash};
 
 pub const TURN_LIMIT:u32 = 10000;

@@ -3,6 +3,10 @@
 
 extern crate libc;
 extern crate cuda_runtime_sys;
+extern crate rcublas_sys;
+extern crate rcublas;
+extern crate rcudnn;
+extern crate rcudnn_sys;
 extern crate rand;
 extern crate rand_distr;
 extern crate rand_xorshift;
@@ -18,8 +22,6 @@ extern crate usiagent;
 extern crate nncombinator;
 extern crate packedsfen;
 
-extern crate core;
-
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read};
@@ -34,8 +36,8 @@ use crate::learning::Learnener;
 use crate::nn::{EvalutorCreator, TrainerCreator};
 use crate::player::Tiger;
 
-pub mod kernel;
 pub mod device;
+pub mod features;
 pub mod nn;
 pub mod learning;
 pub mod transposition_table;

@@ -19,7 +19,8 @@ use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
 use usiagent::rule::{AppliedMove, Kyokumen, State};
 use usiagent::shogi::{Banmen, Mochigoma, MochigomaCollections, Move, Teban};
 use crate::error::ApplicationError;
-use crate::nn::{Evalutor, HalfKP, FEATURES_NUM};
+use crate::features::HalfKP;
+use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::search::{BASE_DEPTH, Environment, EvaluationResult, FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT};
 use crate::transposition_table::{TT, ZobristHash};
 

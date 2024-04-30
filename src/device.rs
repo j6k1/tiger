@@ -1,108 +1,180 @@
-use libc::{c_uint};
-use cuda_runtime_sys::dim3;
-use nncombinator::arr::{Arr, SerializedVec};
-use nncombinator::cuda::{CudaPtr, DataTypeInfo, Kernel, Memory};
-use nncombinator::device::{DeviceCpu, DeviceGpu};
-use nncombinator::error::EvaluateError;
+use std::iter;
+
 use nncombinator::mem::AsRawSlice;
+use rcublas_sys::{cublasOperation_t, cublasSgemm_v2, cublasStatus_t};
+
+use nncombinator::arr::{Arr, Arr2, ArrView};
+use nncombinator::cuda::{AsMutPtr, AsPtr, CudaMemoryPoolPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, Memory, MemoryMoveTo};
+use nncombinator::device::{DeviceCpu, DeviceGpu, DeviceMemoryPool};
+use nncombinator::error::{EvaluateError, TrainingError};
 use nncombinator::ope::UnitValue;
-use crate::kernel::device::{FeaturesBatchCombine, FeaturesBatchCombineArgs, LossInputTransformToFeatures, LossInputTransformToFeaturesArgs};
 
-pub trait DeviceFeatureTransform<U,const FEATURES_NUM: usize,const NO: usize> where U: UnitValue<U> {
-    fn features_batch_combine<'a>(&self,self_output:&'a SerializedVec<U,Arr<U,NO>>,opponent_output:&'a SerializedVec<U,Arr<U,NO>>)
-        -> Result<SerializedVec<U,Arr<U,{NO*2}>>,EvaluateError>;
-    fn loss_input_transform_to_features<'a>(&self,combined_input:&'a SerializedVec<U,Arr<U,{NO*2}>>)
-        -> Result<(SerializedVec<U,Arr<U,NO>>,SerializedVec<U,Arr<U,NO>>),EvaluateError>;
+use crate::features::{HalfKP, HalfKPView};
+
+pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize> where U: UnitValue<U> {
+    fn forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPView<'a,U,NI>) -> Result<Arr<U,{NO*2}>,EvaluateError>;
+    fn backward_feature_transform<'a>(&self,units:&T,input:ArrView<'a,U,{NO*2}>) -> Result<HalfKP<U,NI>,TrainingError>;
 }
-impl<U,const FEATURES_NUM:usize,const NO:usize> DeviceFeatureTransform<U,FEATURES_NUM,NO> for DeviceCpu<U> where U: UnitValue<U> {
-    fn features_batch_combine<'a>(&self, self_output: &'a SerializedVec<U, Arr<U, NO>>, opponent_output: &'a SerializedVec<U, Arr<U, NO>>)
-        -> Result<SerializedVec<U, Arr<U, { NO * 2 }>>, EvaluateError> {
-        let mut combined:Vec<Arr<U,{NO*2}>> = Vec::with_capacity(self_output.len());
+impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> for DeviceCpu<U> 
+    where U: UnitValue<U> {
 
-        for (s,o) in self_output.iter().zip(opponent_output.iter()) {
-            let mut p = Vec::with_capacity(NO*2);
+    #[inline]
+    fn forward_feature_transform<'a>(&self,bias:&Arr<U,NO>,units:&Arr2<U,NI,NO>,input:HalfKPView<'a,U,NI>) 
+    -> Result<Arr<U,{NO*2}>,EvaluateError> {
+        let mut r = Arr::<U,{NO*2}>::new();
 
-            p.extend_from_slice(s.as_raw_slice());
-            p.extend_from_slice(o.as_raw_slice());
+        for input in input.iter() {
+            for i in 0..NO {
+                let w = units.iter().map(|w| w[i]).collect::<Vec<U>>();
+                let w = <&[U;NI]>::try_from(w.as_slice())?;
 
-            combined.push(p.try_into()?);
+                for index in 0..NI {
+                    r[i] += input[index] * w[index];
+                }
+            }
         }
 
-        Ok(combined.into())
+        Ok(r)
     }
 
-    fn loss_input_transform_to_features<'a>(&self, combined_input: &'a SerializedVec<U, Arr<U, { NO * 2 }>>) -> Result<(SerializedVec<U, Arr<U, NO>>, SerializedVec<U, Arr<U, NO>>), EvaluateError> {
-        let len = combined_input.len();
+    #[inline]
+    fn backward_feature_transform<'a>(&self,units:&Arr2<U,NI,NO>,input:ArrView<'a,U,{NO*2}>) -> Result<HalfKP<U,NI>,TrainingError> {
+        let mut sr = Arr::<U,NI>::new();
+        let mut or = Arr::<U,NI>::new();
 
-        let mut sl:Vec<Arr<U,NO>> = Vec::with_capacity(len);
-        let mut ol:Vec<Arr<U,NO>> = Vec::with_capacity(len);
+        let(s,o) = input.as_raw_slice().split_at(NO);
 
-        for loss in combined_input.iter() {
-            let (s,o) = loss.as_raw_slice().split_at(NO);
+        let s = <&[U;NO]>::try_from(s)?;
 
-            sl.push(s.to_vec().try_into()?);
-            ol.push(o.to_vec().try_into()?);
+        for (i,w) in (0..NI).zip(units.iter()) {
+            let w = <&[U;NO]>::try_from(w.as_raw_slice())?;
+            let mut r = U::default();
+
+            for j in 0..NO {
+                r +=  s[i] * w[i];
+            }
+
+            sr[i] = r;
         }
 
-        Ok((sl.into(),ol.into()))
+        let o = <&[U;NO]>::try_from(o)?;
+
+        for (i,w) in (0..NI).zip(units.iter()) {
+            let w = <&[U;NO]>::try_from(w.as_raw_slice())?;
+            let mut r = U::default();
+
+            for j in 0..NO {
+                r +=  o[i] * w[i];
+            }
+
+            or[i] = r;
+        }
+
+        Ok(HalfKP::new(sr, or))
     }
 }
-impl<U,const FEATURES_NUM:usize,const NO:usize> DeviceFeatureTransform<U,FEATURES_NUM,NO> for DeviceGpu<U>
-    where U: UnitValue<U> + DataTypeInfo,
-          FeaturesBatchCombine<U>: Kernel<Args=FeaturesBatchCombineArgs<U>>,
-          LossInputTransformToFeatures<U>: Kernel<Args=LossInputTransformToFeaturesArgs<U>> {
-    fn features_batch_combine<'a>(&self, self_output: &'a SerializedVec<U, Arr<U, NO>>, opponent_output: &'a SerializedVec<U, Arr<U, NO>>)
-        -> Result<SerializedVec<U, Arr<U, { NO * 2 }>>, EvaluateError> {
-        let len = self_output.len();
+impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,NI,NO>,CudaTensor1dPtr<f32,NO>,NI,NO> for DeviceGpu<f32> {
+    #[inline]
+    fn forward_feature_transform<'a>(&self,bias:&CudaTensor1dPtr<f32,NO>,units:&CudaTensor2dPtr<f32,NI,NO>,input:HalfKPView<'a,f32,NI>) 
+    -> Result<Arr<f32,{NO*2}>,EvaluateError> {
+        let mut input_ptr = CudaMemoryPoolPtr::new(NI * 2 ,self.get_memory_pool())?;
+        let mut output_ptr = CudaMemoryPoolPtr::new(NO * 2,self.get_memory_pool())?;
 
-        let combined_output: CudaPtr<U> = CudaPtr::new(NO * 2 * len)?;
-        let mut self_output_ptr: CudaPtr<U> = CudaPtr::new(NO * len)?;
-        let mut opponent_output_ptr: CudaPtr<U> = CudaPtr::new(NO * len)?;
+        let bias = iter::repeat(bias.read_to_vec()?.into_boxed_slice().iter().cloned().collect::<Vec<f32>>())
+                                    .take(2).collect::<Vec<Vec<f32>>>()
+                                    .into_iter().flatten().collect::<Vec<f32>>();
 
-        self_output_ptr.memcpy(self_output.as_raw_slice().as_ptr(), NO * len)?;
-        opponent_output_ptr.memcpy(opponent_output.as_raw_slice().as_ptr(), NO * len)?;
+        input_ptr.memcpy(input.as_ptr(),NI * 2)?;
+        output_ptr.memcpy(bias.as_slice().as_ptr(),NO * 2)?;
 
-        let mut args = FeaturesBatchCombineArgs::new(
-            self_output_ptr,
-            opponent_output_ptr,
-            combined_output,
-            NO,
-            len);
+        let alpha = CudaPtr::try_from(1.0f32)?;
+        let beta = CudaPtr::try_from(1.0f32)?;
 
-        let mut kernel = FeaturesBatchCombine::<U>::new();
-
-        kernel.launch(dim3 { x: (NO as c_uint * 2 + 32 - 1) / 32,
-            y: (len as c_uint + 32 - 1) / 32, z: 1 },
-                      dim3 { x: 32, y: 32, z: 1 },
-                      &mut args, 0).unwrap();
-
-        Ok(args.combined_output.read_to_vec()?.try_into()?)
+        match unsafe {
+            cublasSgemm_v2(*self.cublas().id_c(),
+                           cublasOperation_t::CUBLAS_OP_N,
+                           cublasOperation_t::CUBLAS_OP_N,
+                           NO as ::libc::c_int,
+                           2 as libc::c_int,
+                           NI as ::libc::c_int,
+                           alpha.as_ptr(),
+                           units.as_ptr(),
+                           NO as libc::c_int,
+                           input_ptr.as_ptr(),
+                           NI as libc::c_int,
+                           beta.as_ptr(),
+                           output_ptr.as_mut_ptr(),
+                           NO as ::libc::c_int
+            )
+        } {
+            cublasStatus_t::CUBLAS_STATUS_SUCCESS => {
+                Ok(output_ptr.read_to_vec()?.try_into()?)
+            },
+            cublasStatus_t::CUBLAS_STATUS_NOT_INITIALIZED => {
+                return Err(EvaluateError::CublasError(rcublas::Error::NotInitialized));
+            },
+            cublasStatus_t::CUBLAS_STATUS_INVALID_VALUE => {
+                return Err(EvaluateError::CublasError(rcublas::Error::InvalidValue(
+                    "Parameters m or n are less than 0, or incx or incy was specified as 0."
+                )));
+            },
+            cublasStatus_t::CUBLAS_STATUS_EXECUTION_FAILED => {
+                return Err(EvaluateError::CublasError(rcublas::Error::ExecutionFailed));
+            },
+            status => {
+                return Err(EvaluateError::CublasError(rcublas::Error::Unknown(
+                    "Unable to get cuBLAS cublasSgemm_v2",
+                    status as i32 as u64
+                )));
+            }
+        }
     }
 
-    fn loss_input_transform_to_features<'a>(&self, combined_input: &'a SerializedVec<U, Arr<U, { NO * 2 }>>)
-        -> Result<(SerializedVec<U, Arr<U, NO>>, SerializedVec<U, Arr<U, NO>>), EvaluateError> {
-        let len = combined_input.len();
+    #[inline]
+    fn backward_feature_transform<'a>(&self,units:&CudaTensor2dPtr<f32,NI,NO>,input:ArrView<'a,f32,{NO*2}>) -> Result<HalfKP<f32,NI>,TrainingError> {
+        let mut input_ptr = CudaMemoryPoolPtr::new(NO*2,&self.memory_pool)?;
+        let mut output_ptr = CudaMemoryPoolPtr::new(NI*2,&self.memory_pool)?;
 
-        let mut combined_input_ptr: CudaPtr<U> = CudaPtr::new(NO * 2 * len)?;
-        let self_input: CudaPtr<U> = CudaPtr::new(NO * len)?;
-        let opponent_input: CudaPtr<U> = CudaPtr::new(NO * len)?;
+        input_ptr.memcpy(input.as_raw_slice().as_ptr(),NO*2)?;
 
-        combined_input_ptr.memcpy(combined_input.as_raw_slice().as_ptr(), NO * 2 * len)?;
+        let alpha = CudaPtr::try_from(1.0f32)?;
+        let beta = CudaPtr::try_from(0.0f32)?;
 
-        let mut args = LossInputTransformToFeaturesArgs::new(
-            self_input,
-            opponent_input,
-            combined_input_ptr,
-            NO,
-            len);
-
-        let mut kernel = LossInputTransformToFeatures::<U>::new();
-
-        kernel.launch(dim3 { x: (NO as c_uint * 2 + 32 - 1) / 32,
-            y: (len as c_uint + 32 - 1) / 32, z: 1 },
-                      dim3 { x: 32, y: 32, z: 1 },
-                      &mut args, 0).unwrap();
-
-        Ok((args.self_input.read_to_vec()?.try_into()?,args.opponent_input.read_to_vec()?.try_into()?))
+        match unsafe {
+            cublasSgemm_v2(*self.cublas().id_c(),
+                           cublasOperation_t::CUBLAS_OP_T,
+                           cublasOperation_t::CUBLAS_OP_N,
+                           NI as ::libc::c_int,
+                           2 as libc::c_int,
+                           NO as ::libc::c_int,
+                           alpha.as_ptr(),
+                           units.as_ptr(),
+                           NO as libc::c_int,
+                           input_ptr.as_ptr(),
+                           NO as libc::c_int,
+                           beta.as_ptr(),
+                           output_ptr.as_mut_ptr(),
+                           NI as ::libc::c_int
+            )
+        } {
+            cublasStatus_t::CUBLAS_STATUS_SUCCESS => Ok(output_ptr.read_to_vec()?.try_into()?),
+            cublasStatus_t::CUBLAS_STATUS_NOT_INITIALIZED => {
+                return Err(TrainingError::CublasError(rcublas::Error::NotInitialized));
+            },
+            cublasStatus_t::CUBLAS_STATUS_INVALID_VALUE => {
+                return Err(TrainingError::CublasError(rcublas::Error::InvalidValue(
+                    "Parameters m or n are less than 0, or incx or incy was specified as 0."
+                )));
+            },
+            cublasStatus_t::CUBLAS_STATUS_EXECUTION_FAILED => {
+                return Err(TrainingError::CublasError(rcublas::Error::ExecutionFailed));
+            },
+            status => {
+                return Err(TrainingError::CublasError(rcublas::Error::Unknown(
+                    "Unable to get cuBLAS cublasSgemm_v2",
+                    status as i32 as u64
+                )));
+            }
+        }
     }
 }

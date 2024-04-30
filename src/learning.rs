@@ -27,7 +27,8 @@ use nncombinator::layer::{BatchForwardBase, BatchTrain, ForwardAll};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 
 use crate::error::ApplicationError;
-use crate::nn::{HalfKP, Trainer, FEATURES_NUM, HalfKPList};
+use crate::features::HalfKP;
+use crate::nn::{Trainer, FEATURES_NUM};
 
 #[derive(Debug,Deserialize,Serialize)]
 pub struct CheckPoint {
@@ -95,13 +96,16 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
 }
 pub struct Learnener<M>
     where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>,Output=Arr<f32,1>> +
-    BatchForwardBase<BatchInput=HalfKPList<f32,FEATURES_NUM>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-    BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> {
-    nn:PhantomData<M>}
+             BatchForwardBase<BatchInput=SerializedVec<f32,HalfKP<f32,FEATURES_NUM>>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
+             BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> {
+             nn:PhantomData<M>
+}
 impl<M> Learnener<M>
     where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>,Output=Arr<f32,1>> +
-    BatchForwardBase<BatchInput=HalfKPList<f32,FEATURES_NUM>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-    BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear>{
+             BatchForwardBase<BatchInput=SerializedVec<f32,HalfKP<f32,FEATURES_NUM>>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
+             BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear>,
+             [(); FEATURES_NUM * 2]:,
+             [(); FEATURES_NUM * 256]: {
     pub fn new() -> Learnener<M> {
         Learnener {
             nn:PhantomData::<M>
@@ -184,7 +188,6 @@ impl<M> Learnener<M>
             }
         });
     }
-
 
     pub fn learning_from_yaneuraou_bin(&mut self, kifudir:String,
                                        testdir:String,
