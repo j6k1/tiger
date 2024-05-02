@@ -339,6 +339,7 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransform
              ForwardAll<Input=I,Output=HalfKP<U,NI>> +
              BackwardAll<U,LossInput=HalfKP<U,NI>> + Loss<U> + 'static,
           U: UnitValue<U>,
+          DeviceCpu<U>: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
@@ -583,11 +584,11 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
 
         let loss = input;
 
-        let next_loss = self.device.batch_backward_feature_transform(&self.units, &loss)?;
+        let next_loss = self.device.batch_backward_feature_transform(&self.units, (&loss).try_into()?)?;
 
         let g = s.map(|o| {
-            self.device.batch_backward_feature_transform_weight_gradient(o.try_into()?, &loss)
-        })?;
+            (&loss).try_into().map(|loss| self.device.batch_backward_feature_transform_weight_gradient(o.try_into()?, loss))
+        })??;
 
         let bg = self.device.batch_feature_transform_bias_gradient((&loss).try_into()?)?;
 
@@ -627,11 +628,11 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
 
         let loss = input;
 
-        let next_loss = self.device.batch_backward_feature_transform(&self.units, &loss)?;
+        let next_loss = self.device.batch_backward_feature_transform(&self.units, (&loss).try_into()?)?;
 
         let g = s.map(|o| {
-            self.device.batch_backward_feature_transform_weight_gradient(o.try_into()?, &loss)
-        })?;
+            (&loss).try_into().map(|loss| self.device.batch_backward_feature_transform_weight_gradient(o.try_into()?, loss))
+        })??;
 
         let bg = self.device.batch_feature_transform_bias_gradient((&loss).try_into()?)?;
 
