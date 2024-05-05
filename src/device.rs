@@ -42,16 +42,17 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         r.extend_from_slice(&bias);
 
         for (input,offset) in input.iter().zip([0,NO]) {
-            for i in 0..NO {
-                let w = units.iter().map(|w| w[i]).collect::<Vec<U>>();
-                let w = <&[U;NI]>::try_from(w.as_slice())?;
-
-                for index in 0..NI {
-                    r[i + offset] = input[index] * w[index];
+            let it = input.iter().enumerate().filter(|(_,&v)| {
+                v > U::default()
+            }).map(|(i,_)| i);
+            
+            for i in it {
+                for j in 0..NO {
+                    r[j + offset] += units[(i,j)];
                 }
             }
         }
-
+        
         Ok(r.try_into()?)
     }
 

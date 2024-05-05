@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::ops::{Add, Deref, Neg, Sub};
 use std::sync::{Arc, atomic, mpsc, Mutex};
@@ -205,28 +205,27 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     fn qsearch(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
                env:&mut Environment<L,S>,
                zh: &ZobristHash<u64>,
+               history:&mut HashSet<(u64,u64)>,
                mut alpha:Score,beta:Score,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
-        let mut score = match env.transposition_table.get(zh).map(|tte| tte.deref().clone())  {
-            Some(TTPartialEntry {
-                depth,
-                score,
-                beta: _,
-                alpha: _,
-                best_move: _
-            }) if depth >= 0 => {
-                score
-            },
-            _ => {
-                Score::Value(evalutor.evalute(teban, state, mc)?)
-            }
-        };
 
-        if score >= beta {
-            return Ok(score);
-        }
+        let mut score = {
+            let mut tte = env.transposition_table.entry(&zh);
+            let tte = tte.or_default();
+
+            if tte.depth < 0 {
+                tte.depth = 0;
+                tte.score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            }
+            
+            tte.score
+        };
 
         if score > alpha {
             alpha = score;
+        }
+        
+        if score >= beta || history.contains(&zh.keys()) {
+            return Ok(alpha);
         }
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
@@ -239,11 +238,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut bestscore = Score::NEGINFINITE;
 
+        history.insert(zh.keys());
+
         for m in picker {
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
             } {
+                history.remove(&zh.keys());
                 return Ok(Score::INFINITE);
             }
 
@@ -256,10 +258,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,-beta,-alpha,evalutor,rng)?;
+            score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,history,-beta,-alpha,evalutor,rng)?;
 
             if score >= beta {
-                return Ok(score);
+                bestscore = score;
+                break;
             }
 
             if score > bestscore {
@@ -270,6 +273,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 alpha = score;
             }
         }
+
+        history.remove(&zh.keys());
 
         Ok(bestscore)
     }
@@ -713,7 +718,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         if gs.depth == 0 || gs.current_depth >= gs.max_depth {
-            let s = self.qsearch(gs.teban,&gs.state,&gs.mc,env,&gs.zh,gs.alpha,gs.beta,evalutor,gs.rng)?;
+            let s = self.qsearch(gs.teban,&gs.state,&gs.mc,env,&gs.zh,&mut HashSet::new(),gs.alpha,gs.beta,evalutor,gs.rng)?;
 
             let mut mvs = VecDeque::new();
 

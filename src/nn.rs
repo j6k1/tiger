@@ -813,8 +813,14 @@ impl EvalutorCreator {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            LinearLayerBuilder::<32, 1>::new().build(l, &device,
+            LinearLayerBuilder::<32, 32>::new().build(l, &device,
                                                      move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+        })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).try_add_layer(|l| {
+            let rnd = rnd.clone();
+            LinearLayerBuilder::<32, 1>::new().build(l, &device,
+                                                        move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
@@ -897,8 +903,14 @@ impl TrainerCreator {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            LinearLayerBuilder::<32, 1>::new().build(l, &device,
+            LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+        })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).try_add_layer(|l| {
+            let rnd = rnd.clone();
+            LinearLayerBuilder::<32, 1>::new().build(l, &device,
+                                                        move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
