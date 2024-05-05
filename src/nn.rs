@@ -788,7 +788,8 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
 
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -820,7 +821,7 @@ impl EvalutorCreator {
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                        move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+                                                        move || n4.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
@@ -878,7 +879,8 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
 
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceGpu::new(&memory_pool)?;
 
@@ -910,7 +912,7 @@ impl TrainerCreator {
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                        move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+                                                        move || n4.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer_train(|l| {
