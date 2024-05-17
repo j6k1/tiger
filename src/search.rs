@@ -208,17 +208,31 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                history:&mut HashSet<(u64,u64)>,
                mut alpha:Score,beta:Score,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
 
-        let mut score = {
+        let score = {
             let mut tte = env.transposition_table.entry(&zh);
             let tte = tte.or_default();
-
-            if tte.depth < 0 {
-                tte.depth = 0;
-                tte.score = Score::Value(evalutor.evalute(teban, state, mc)?);
-            }
             
-            tte.score
+            if tte.depth >= 0 {
+                Some(tte.score)
+            } else {
+                None
+            }
         };
+
+        let mut score = if let Some(s) = score {
+            s
+        } else {
+            Score::Value(evalutor.evalute(teban, state, mc)?)
+        };
+        
+        {
+            let mut tte = env.transposition_table.entry(&zh);
+            let tte = tte.or_default();
+            
+            if tte.depth < 0 {
+                tte.score = score;
+            }
+        }
 
         if score > alpha {
             alpha = score;
@@ -737,13 +751,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         for i in 0..3 {
             if i == 0 {
+                let r = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone());
+                
                 if let Some(TTPartialEntry {
                                 depth: _,
                                 score: _,
                                 beta: _,
                                 alpha: _,
                                 best_move: m
-                            }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
+                            }) = r {
                     if let Some(m) = m {
                         if self.is_obtained_ou(m)? {
                             let mut mvs = VecDeque::new();

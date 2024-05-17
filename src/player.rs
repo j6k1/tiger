@@ -248,7 +248,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
     fn set_position(&mut self,teban:Teban,banmen:Banmen,
                     ms:Mochigoma,mg:Mochigoma,_:u32,m:Vec<Move>)
                     -> Result<(),ApplicationError> {
-        let zh = ZobristHash::new(&self.hasher,teban,&banmen,&ms,&mg);
+        let zh = ZobristHash::new(&self.hasher,teban.opposite(),&banmen,&ms,&mg);
 
         let teban = teban;
         let state = State::new(banmen);
