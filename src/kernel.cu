@@ -28,6 +28,8 @@ __device__ void loss_input_transform_to_features(T *self_input, T *oppoent_input
     }
 }
 
+#define BLOCK_SHARED 1024
+
 template<typename T>
 
 __device__ void forward_transform_features_batch(const size_t *indexes, const size_t *boundaries,
@@ -49,7 +51,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         const size_t end_index = boundaries[batch_index + 1];
 
         if (tid < end_index - start_index) {
-            input_len = end_index - start_index;
+            size_t input_len = end_index - start_index;
 
             sdata_sum[tid] = 0.0;
             sdata_c[tid] = 0.0;
@@ -138,7 +140,7 @@ __device__ void transform_features_gradient_batch(const T *loss, const int *inpu
                                                   const size_t units_size, const size_t batch_size) {
     extern __shared__ char smem[];
 
-    T *sdata_sum = reinterpret_cast<T*>(&smem[0]);
+    T *sdata = reinterpret_cast<T*>(&smem[0]);
 
     if (blockIdx.x < units_size) {
         const size_t batch_index = blockIdx.x / input_len;
