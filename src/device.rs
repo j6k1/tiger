@@ -525,7 +525,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
 
         let mut kernel = ReduceLinearBatch::<f32,NO>::new();
 
-        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: (len as c_uint * 2) / 1024 },
+        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: (len as c_uint * 2 + 1023) / 1024 },
                       dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
 
         Ok(args.output)
