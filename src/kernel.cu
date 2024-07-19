@@ -20,7 +20,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         end_index = boundaries[batch_index + 1];
     }
 
-   if (blockIdx.x < output_len * batch_size &&
+    if (blockIdx.x < output_len * batch_size &&
         threadIdx.x < end_index - start_index) {
         const size_t out_index = blockIdx.x - batch_index * output_len;
 
