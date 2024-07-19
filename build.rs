@@ -28,6 +28,10 @@ fn main() {
 	if cfg!(target_os = "windows") {
 		Command::new("nvcc")
 			.args(&["-O3",
+				"--prec-div=true",
+				"--fmad=true",
+				"-cudart=shared",
+				"-arch=sm_60",
 				"src/kernel.cu",
 				// Output static library (.lib)
 				"-lib",
@@ -44,6 +48,8 @@ fn main() {
 	} else {
 		cc::Build::new()
 			.cuda(true)
+			.flag("--prec-div=true")
+			.flag("--fmad=true")
 			.flag("-cudart=shared")
 			.flag("-gencode")
 			.flag("arch=compute_87,code=sm_87")
