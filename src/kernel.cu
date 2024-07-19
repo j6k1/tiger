@@ -27,8 +27,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         const size_t tid = threadIdx.x;
         const size_t tid_warp = threadIdx.x % 32;
 
-        size_t input_len = end_index - start_index;
-
         if (tid < 32) {
             sdata_c[tid] = 0.0;
             sdata_sum[tid] = 0.0;
