@@ -9,7 +9,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
     extern __shared__ char smem[];
 
     T *sdata_sum = reinterpret_cast<T*>(&smem[0]);
-    T *sdata_c = reinterpret_cast<T*>(&smem[BLOCK_SHARED_SMALL * sizeof(T)]);
+    T *sdata_c = reinterpret_cast<T*>(&smem[2 * sizeof(T)]);
 
     const size_t batch_index = blockIdx.x / output_len;
     size_t start_index = 0;
