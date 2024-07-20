@@ -330,7 +330,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
         boundaries_ptr.memcpy(boundaries.as_ptr(), boundaries.len())?;
 
-        let output = CudaMemoryPoolPtr::new(NO * 2,self.get_memory_pool())?;
+        let output = CudaMemoryPoolPtr::new(NO * 2 * len,self.get_memory_pool())?;
 
         let mut args = TransformFeaturesForwardBatchArgs::new(
             indexes_ptr,
