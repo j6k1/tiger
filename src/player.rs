@@ -83,7 +83,7 @@ impl FromOption for String {
         }
     }
 }
-pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
+pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                              PreTrain<f32> + Send + Sync + 'static,
                           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
@@ -100,14 +100,14 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=A
     turn_limit:Option<u32>,
     model_name:String
 }
-impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
+impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                                          PreTrain<f32> + Send + Sync + 'static,
                                       <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tiger")
     }
 }
-impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
+impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                           PreTrain<f32> + Send + Sync + 'static,
                        <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
@@ -128,7 +128,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<
         }
     }
 }
-impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>, Output=Arr<f32, 1>> +
+impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                                                           PreTrain<f32> + Send + Sync + 'static,
                                                       <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     const ID: &'static str = "tiger";

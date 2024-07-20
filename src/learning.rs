@@ -23,7 +23,7 @@ use rand_xorshift::XorShiftRng;
 
 use nncombinator::arr::{Arr, SerializedVec};
 use nncombinator::device::DeviceGpu;
-use nncombinator::layer::{BatchForwardBase, BatchTrain, ForwardAll};
+use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 
 use crate::error::ApplicationError;
@@ -95,14 +95,14 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
     }
 }
 pub struct Learnener<M>
-    where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>,Output=Arr<f32,1>> +
-             BatchForwardBase<BatchInput=SerializedVec<f32,HalfKP<f32,FEATURES_NUM>>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
+    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
+             BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
              BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> {
              nn:PhantomData<M>
 }
 impl<M> Learnener<M>
-    where M: ForwardAll<Input=HalfKP<f32,FEATURES_NUM>,Output=Arr<f32,1>> +
-             BatchForwardBase<BatchInput=SerializedVec<f32,HalfKP<f32,FEATURES_NUM>>,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
+    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
+             BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
              BatchTrain<f32,DeviceGpu<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear>,
              [(); FEATURES_NUM * 2]:,
              [(); FEATURES_NUM * 256]: {

@@ -1,287 +1,223 @@
-use std::ffi::c_void;
-use nncombinator::arr::{Arr, ArrView, ArrViewMut, AsView, AsViewMut, MakeView, MakeViewMut, SerializedVec, SliceSize};
-use nncombinator::cuda::{AsPtr, AsVoidPtr};
-use nncombinator::error::SizeMismatchError;
-use nncombinator::layer::BatchDataType;
-use nncombinator::mem::AsRawSlice;
+use std::fmt::Debug;
+use libc::size_t;
+use nncombinator::layer::{BatchDataType, BatchSize};
+use rand_distr::num_traits::FromPrimitive;
 
 /// InputFeatures Implementaion
 #[derive(Debug)]
-pub struct HalfKP<T,const N:usize> where T: Default + Clone + Send {
-    arr:Box<[T]>
+pub struct HalfKP<const N:usize> {
+    s:Vec<usize>,
+    o:Vec<usize>
 }
-impl<T,const N:usize> BatchDataType for HalfKP<T,N> where T: Default + Clone + Send {
-    type Type = SerializedVec<T,HalfKP<T,N>>;
+impl<const N:usize> BatchDataType for HalfKP<N> {
+    type Type = HalfKPList<N>;
 }
-impl<T,const N:usize> HalfKP<T,N> where T: Default + Clone + Send {
+impl<const N:usize> HalfKP<N> {
     /// Create an instance of HalfKP
-    pub fn new(s:Arr<T,N>,o:Arr<T,N>) -> HalfKP<T,N> {
-        let mut arr = Vec::with_capacity(N * 2);
-        
-        arr.extend_from_slice(&s);
-        arr.extend_from_slice(&o);
-
+    pub fn new(s:Vec<usize>,o:Vec<usize>) -> HalfKP<N> {
         HalfKP {
-            arr:arr.into_boxed_slice()
+            s:s,
+            o:o
         }
     }
     /// Obtaining a immutable iterator
-    pub fn iter<'a>(&'a self) -> HalfKPIter<'a,T,N> {
-        HalfKPIter{ arr: &*self.arr }
-    }
-
-    /// Obtaining a mutable iterator
-    pub fn iter_mut<'a>(&'a mut self) -> HalfKPIterMut<'a,T,N> {
-        HalfKPIterMut{ arr: &mut *self.arr }
+    pub fn iter<'a>(&'a self) -> HalfKPIter<'a,N> {
+        HalfKPIter{ s: &self.s, o: &self.o, index: 0 }
     }
 }
-impl<T,const N:usize> Clone for HalfKP<T,N> where T: Default + Clone + Send {
+impl<const N:usize> Clone for HalfKP<N> {
     fn clone(&self) -> Self {
         HalfKP {
-            arr:self.arr.clone(),
+            s:self.s.clone(),
+            o:self.o.clone()
         }
-    }
-}
-impl<T,const N:usize> TryFrom<Box<[T]>> for HalfKP<T,N> where T: Default + Clone + Send {
-    type Error = SizeMismatchError;
-
-    fn try_from(arr: Box<[T]>) -> Result<Self, Self::Error> {
-        if arr.len() != N * 2 {
-            Err(SizeMismatchError(arr.len(),N * 2))
-        } else {
-            Ok(HalfKP {
-                arr:arr
-            })
-        }
-    }
-}
-impl<T,const N:usize> TryFrom<Vec<T>> for HalfKP<T,N> where T: Default + Clone + Send {
-    type Error = SizeMismatchError;
-
-    fn try_from(v: Vec<T>) -> Result<Self, Self::Error> {
-        if v.len() != N * 2 {
-            Err(SizeMismatchError(v.len(),N * 2))
-        } else {
-            let arr = v.into_boxed_slice();
-
-            Ok(HalfKP {
-                arr:arr
-            })
-        }
-    }
-}
-impl<T,const N:usize> Default for HalfKP<T,N> where T: Default + Clone + Send {
-    fn default() -> HalfKP<T,N> {
-        HalfKP {
-            arr: vec![T::default();N*2].into_boxed_slice()
-        }
-    }
-}
-impl<T,const N:usize> AsRawSlice<T> for HalfKP<T,N> where T: Default + Clone + Send + Sync {
-    fn as_raw_slice(&self) -> &[T] {
-        &self.arr
-    }
-}
-impl<T,const N:usize> AsPtr<T> for HalfKP<T,N> where T: Default + Clone + Send {
-    fn as_ptr(&self) -> *const T {
-        self.arr.as_ptr()
-    }
-}
-impl<T,const N:usize> AsVoidPtr for HalfKP<T,N> where T: Default + Clone + Send {
-    fn as_void_ptr(&self) -> *const c_void {
-        self.arr.as_ptr() as *const c_void
     }
 }
 /// Implementation of an immutable iterator for HalfKP
 #[derive(Debug,Eq,PartialEq)]
-pub struct HalfKPIter<'a,T,const N:usize> where T: Default + Clone + Send {
-    arr:&'a [T],
+pub struct HalfKPIter<'a,const N:usize> {
+    s: &'a Vec<usize>,
+    o: &'a Vec<usize>,
+    index: usize
 }
-impl<'a,T,const N:usize> HalfKPIter<'a,T,N> where T: Default + Clone + Send {
-    /// Number of elements encompassed by the iterator element
-    const fn element_size(&self) -> usize {
-        N
-    }
-}
-impl<'a,T,const N:usize> Iterator for HalfKPIter<'a,T,N> where T: Default + Clone + Send {
-    type Item = ArrView<'a,T,N>;
+impl<'a,const N:usize> Iterator for HalfKPIter<'a,N> {
+    type Item = &'a Vec<usize>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let slice = std::mem::replace(&mut self.arr, &mut []);
-        if slice.is_empty() {
-            None
+        if self.index == 0 {
+            self.index += 1;
+
+            Some(self.s)
+        } else if self.index == 1 {
+            self.index += 1;
+
+            Some(self.o)
         } else {
-            let (l,r) = slice.split_at(self.element_size());
-
-            self.arr = r;
-
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrView. The sizes do not match."))
+            None
         }
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        let slice = std::mem::replace(&mut self.arr, &mut []);
-        if slice.is_empty() {
-            None
-        } else if n == 0 {
-            let (l,r) = slice.split_at(self.element_size());
+        self.index += n;
 
-            self.arr = r;
+        if self.index == 0 {
+            self.index += 1;
 
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrView. The sizes do not match."))
+            Some(self.s)
+        } else if self.index == 1 {
+            self.index += 1;
+
+            Some(self.o)
         } else {
-            let (_,r) = slice.split_at(self.element_size() * n);
-            let (l,r) = r.split_at(self.element_size());
-
-            self.arr = r;
-
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrView. The sizes do not match."))
-        }
-    }
-}
-/// Implementation of an mutable iterator for HalfKP
-#[derive(Debug,Eq,PartialEq)]
-pub struct HalfKPIterMut<'a,T,const N:usize> where T: Default + Clone + Send {
-    arr:&'a mut [T],
-}
-impl<'a,T,const N:usize> HalfKPIterMut<'a,T,N> where T: Default + Clone + Send {
-    /// Number of elements encompassed by the iterator element
-    const fn element_size(&self) -> usize {
-        N
-    }
-}
-impl<'a,T,const N:usize> Iterator for HalfKPIterMut<'a,T,N> where T: Default + Clone + Send {
-    type Item = ArrViewMut<'a,T,N>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let slice = std::mem::replace(&mut self.arr, &mut []);
-        if slice.is_empty() {
             None
-        } else {
-            let (l,r) = slice.split_at_mut(self.element_size());
-
-            self.arr = r;
-
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrViewMut. The sizes do not match."))
-        }
-    }
-
-    fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        let slice = std::mem::replace(&mut self.arr, &mut []);
-        if slice.is_empty() {
-            None
-        } else if n == 0 {
-            let (l,r) = slice.split_at_mut(self.element_size());
-
-            self.arr = r;
-
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrViewMut. The sizes do not match."))
-        } else {
-            let (_,r) = slice.split_at_mut(self.element_size() * n);
-            let (l,r) = r.split_at_mut(self.element_size());
-
-            self.arr = r;
-
-            Some(l.try_into().expect("An error occurred in the conversion from Slice to ArrViewMut. The sizes do not match."))
         }
     }
 }
 /// Implementation of an immutable view of a HalfKP
 #[derive(Debug,Eq,PartialEq)]
-pub struct HalfKPView<'a,T,const N:usize> where T: Default + Clone + Send {
-    arr:&'a [T],
+pub struct HalfKPView<'a,const N:usize> {
+    s: &'a Vec<usize>,
+    o: &'a Vec<usize>
 }
-impl<'a,T,const N:usize> HalfKPView<'a,T,N> where T: Default + Clone + Send {
+impl<'a,const N:usize> HalfKPView<'a,N> {
     /// Obtaining a immutable iterator
-    pub fn iter(&'a self) -> HalfKPIter<'a,T,N> {
-        HalfKPIter { arr: &*self.arr }
+    pub fn iter(&'a self) -> HalfKPIter<'a,N> {
+        HalfKPIter { s: self.s, o: self.o, index: 0 }
+    }
+
+    pub fn to_vec<T>(&'a self) -> Box<[T]>
+        where T: Debug + Clone + Default + Send + Sync + FromPrimitive {
+        let mut arr = vec![T::default();N*2].into_boxed_slice();
+
+        for &i in self.s.iter() {
+            arr[i] = T::from_f64(1.).unwrap();
+        }
+
+        for &i in self.o.iter() {
+            arr[N + i] = T::from_f64(1.).unwrap();
+        }
+
+        arr
     }
 }
-impl<'a,T,const N:usize> Clone for HalfKPView<'a,T,N> where T: Default + Clone + Send {
+impl<'a,const N:usize> Clone for HalfKPView<'a,N> {
     fn clone(&self) -> Self {
-        HalfKPView{ arr: self.arr }
+        HalfKPView{ s: self.s, o: self.o }
     }
 }
-impl<'a,T,const N:usize> AsPtr<T> for HalfKPView<'a,T,N> where T: Default + Clone + Send {
-    fn as_ptr(&self) -> *const T {
-        self.arr.as_ptr()
-    }
-}
-impl<'a,T,const N:usize> AsVoidPtr for HalfKPView<'a,T,N> where T: Default + Clone + Send {
-    fn as_void_ptr(&self) -> *const c_void {
-        self.arr.as_ptr() as *const c_void
-    }
-}
-impl<'a,T,const N:usize> From<&'a HalfKP<T,N>> for HalfKPView<'a,T,N> where T: Default + Clone + Send {
-    fn from(value: &'a HalfKP<T,N>) -> Self {
+impl<'a,const N:usize> From<&'a HalfKP<N>> for HalfKPView<'a,N> {
+    fn from(value: &'a HalfKP<N>) -> Self {
         HalfKPView {
-            arr:&value.arr
+            s: &value.s,
+            o: &value.o
         }
     }
 }
-/// Implementation of an mutable view of a HalfKP
-#[derive(Debug,Eq,PartialEq)]
-pub struct HalfKPViewMut<'a,T,const N:usize> where T: Default + Clone + Send {
-    arr:&'a mut [T],
-}
-impl<'a,T,const N:usize> HalfKPViewMut<'a,T,N> where T: Default + Clone + Send {
-    /// Obtaining a immutable iterator
-    pub fn iter(&'a self) -> HalfKPIter<'a,T,N> {
-        HalfKPIter { arr: &*self.arr }
-    }
+impl<'a,const N:usize> From<&'a HalfKPView<'a,N>> for (Vec<size_t>,Vec<size_t>) {
+    fn from(value: &'a HalfKPView<'a, N>) -> Self {
+        let mut indexes = Vec::new();
+        let mut boundaries = vec![0];
 
-    /// Obtaining a mutable iterator
-    pub fn iter_mut(&'a mut self) -> HalfKPIterMut<'a,T,N> {
-        HalfKPIterMut { arr: &mut *self.arr }
+        let mut b = 0;
+
+        indexes.extend_from_slice(value.s);
+        b += value.s.len();
+        boundaries.push(b);
+        indexes.extend_from_slice(value.o);
+        b += value.o.len();
+        boundaries.push(b);
+
+        (indexes,boundaries)
     }
 }
-impl<T,const N:usize> SliceSize for HalfKP<T,N>
-    where T: Default + Clone + Send + Sync {
-    const SIZE: usize = N * 2;
+#[derive(Debug,Clone)]
+pub struct HalfKPList<const N: usize> {
+    items: Vec<HalfKP<N>>
 }
-impl<'a,T,const N:usize> AsView<'a> for HalfKP<T,N>
-    where T: Default + Clone + Send + Sync + 'a {
-    type ViewType = HalfKPView<'a,T,N>;
-
-    fn as_view(&'a self) -> Self::ViewType {
-        HalfKPView {
-            arr: &*self.arr
+impl<const N: usize> HalfKPList<N> {
+    pub fn new(items:Vec<HalfKP<N>>) -> HalfKPList<N> {
+        HalfKPList {
+            items
         }
     }
 }
-impl<'a,T,const N:usize> MakeView<'a,T> for HalfKP<T,N>
-    where T: Default + Clone + Send + Sync + 'a {
-
-    fn make_view(arr: &'a [T]) -> Result<Self::ViewType,SizeMismatchError> {
-        if arr.len() != HalfKP::<T,N>::slice_size() {
-            Err(SizeMismatchError(HalfKP::<T,N>::slice_size(),arr.len()))
-        } else {
-            Ok(HalfKPView {
-                arr: arr
-            })
+impl<const N: usize> From<Vec<HalfKP<N>>> for HalfKPList<N> {
+    fn from(value: Vec<HalfKP<N>>) -> Self {
+        HalfKPList {
+            items: value
         }
     }
 }
-impl<'a,T,const N:usize> AsViewMut<'a> for HalfKP<T,N>
-    where T: Default + Clone + Send + Sync + 'a {
-    type ViewType = HalfKPViewMut<'a,T,N>;
-
-    fn as_view(&'a mut self) -> Self::ViewType {
-        HalfKPViewMut {
-            arr:&mut *self.arr
+impl<const N: usize> BatchSize for HalfKPList<N> {
+    fn size(&self) -> usize {
+        self.items.len()
+    }
+}
+#[derive(Debug,Clone)]
+pub struct HalfKPListView<'a,const N: usize> {
+    items: &'a Vec<HalfKP<N>>
+}
+impl<'a,const N: usize> HalfKPListView<'a,N> {
+    pub fn new(items:&'a Vec<HalfKP<N>>) -> HalfKPListView<'a,N> {
+        HalfKPListView {
+            items
         }
     }
 }
-impl<'a,T,const N:usize> MakeViewMut<'a,T> for HalfKP<T,N>
-    where T: Default + Clone + Send + Sync + 'a {
-
-    fn make_view_mut(arr: &'a mut [T]) -> Result<Self::ViewType,SizeMismatchError> {
-        if arr.len() != HalfKP::<T,N>::slice_size() {
-            Err(SizeMismatchError(HalfKP::<T,N>::slice_size(),arr.len()))
-        } else {
-            Ok(HalfKPViewMut {
-                arr: arr
-            })
+impl<'a,const N: usize> BatchSize for HalfKPListView<'a,N> {
+    fn size(&self) -> usize {
+        self.items.len()
+    }
+}
+impl<'a,const N:usize> From<&'a HalfKPList<N>> for HalfKPListView<'a,N> {
+    fn from(value: &'a HalfKPList<N>) -> Self {
+        HalfKPListView {
+            items: &value.items
         }
+    }
+}
+impl<'a,const N:usize> From<&'a HalfKPListView<'a,N>> for (Vec<size_t>,Vec<size_t>) {
+    fn from(value: &'a HalfKPListView<'a,N>) -> Self {
+        let mut indexes = Vec::new();
+        let mut boundaries = vec![0];
+
+        let mut b = 0;
+
+        for HalfKP { s, o } in value.items.iter() {
+            indexes.extend_from_slice(s);
+            b += s.len();
+            boundaries.push(b);
+            indexes.extend_from_slice(o);
+            b += o.len();
+            boundaries.push(b);
+        }
+
+        (indexes,boundaries)
+    }
+}
+impl<'a,const N:usize> From<HalfKPListView<'a,N>> for &'a Vec<HalfKP<N>> {
+    fn from(value: HalfKPListView<'a, N>) -> Self {
+        value.items
+    }
+}
+impl<'a,T,const N:usize> From<&HalfKPListView<'a,N>> for Box<[T]>
+    where T: Default + Clone + Copy + Send + Sync + FromPrimitive {
+    fn from(value: &HalfKPListView<'a, N>) -> Self {
+        value.items.iter().map(| item | {
+            let mut arr = vec![T::default();N*2];
+
+            for &i in item.s.iter() {
+                arr[i] = T::from_f64(1.).unwrap();
+            }
+
+            for &i in item.o.iter() {
+                arr[N + i] = T::from_f64(1.).unwrap();
+            }
+
+            arr
+        }).fold(Vec::with_capacity(N * 2 * value.items.len()), | mut acc, i | {
+            acc.extend_from_slice(&i);
+            acc
+        }).into_boxed_slice()
     }
 }
