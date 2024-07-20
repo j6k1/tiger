@@ -102,52 +102,12 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         }
         __syncthreads();
 
-        if (tid < 32) {
+        if (tid < 2) {
             c = sdata_c[tid];
             acc = sdata_sum[tid];
 
             T dc = 0.0;
             T dacc = 0.0;
-
-            dc = __shfl_down_sync(0xffffffff,c,16);
-            dacc = __shfl_down_sync(0xffffffff,acc,16);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,8);
-            dacc = __shfl_down_sync(0xffffffff,acc,8);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,4);
-            dacc = __shfl_down_sync(0xffffffff,acc,4);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,2);
-            dacc = __shfl_down_sync(0xffffffff,acc,2);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
 
             dc = __shfl_down_sync(0xffffffff,c,1);
             dacc = __shfl_down_sync(0xffffffff,acc,1);

@@ -199,7 +199,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let mut kernel = TransformFeaturesForwardBatch::<f32,NI,NO>::new();
 
         kernel.launch(dim3 { x: NO as c_uint * 2, y: 1, z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
+                      dim3 { x: 64, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
 
         Ok(args.output.read_to_vec()?.try_into()?)
     }
@@ -343,7 +343,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let mut kernel = TransformFeaturesForwardBatch::<f32,NI,NO>::new();
 
         kernel.launch(dim3 { x: (NO * 2 * len) as c_uint, y: 1, z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
+                      dim3 { x: 64, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
 
         Ok(args.output.read_to_vec()?.try_into()?)
     }
