@@ -9,7 +9,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
     extern __shared__ char smem[];
 
     T *sdata_sum = reinterpret_cast<T*>(&smem[0]);
-    T *sdata_c = reinterpret_cast<T*>(&smem[2 * sizeof(T)]);
+    T *sdata_c = reinterpret_cast<T*>(&smem[BLOCK_SHARED_SMALL * sizeof(T)]);
 
     const size_t batch_index = blockIdx.x / output_len;
     size_t start_index = 0;
@@ -20,8 +20,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         end_index = boundaries[batch_index + 1];
     }
 
-    if (blockIdx.x < output_len * batch_size &&
-        threadIdx.x < end_index - start_index) {
+    if (blockIdx.x < output_len * batch_size) {
         const size_t out_index = blockIdx.x - batch_index * output_len;
 
         const size_t tid = threadIdx.x;
@@ -36,7 +35,9 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         T c = 0.0;
         T acc = 0.0;
 
-        acc = units[indexes[start_index + tid] * output_len + out_index];
+        if (threadIdx.x < end_index - start_index) {
+            acc = units[indexes[start_index + tid] * output_len + out_index];
+        }
 
         /**
          * Kahan summation algorithm
