@@ -23,6 +23,9 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
     if (blockIdx.x < output_len * batch_size) {
         const size_t out_index = blockIdx.x - batch_index * output_len;
 
+        T c = 0.0;
+        T acc = 0.0;
+
         const size_t tid = threadIdx.x;
         const size_t tid_warp = threadIdx.x % 32;
 
@@ -31,9 +34,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
             sdata_sum[tid] = 0.0;
         }
         __syncthreads();
-
-        T c = 0.0;
-        T acc = 0.0;
 
         if (threadIdx.x < end_index - start_index) {
             acc = units[indexes[start_index + tid] * output_len + out_index];
