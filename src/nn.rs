@@ -768,7 +768,10 @@ impl EvalutorCreator {
 
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder = MomentumSGDBuilder::with_params(&device,0.01,0.9,0.0001);
+        let optimizer_builder = MomentumSGDBuilder::new(&device)
+            .lr(0.01)
+            .mu(0.9)
+            .weight_decay(0.0001);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, ()> = InputLayer::new();
 
@@ -859,7 +862,10 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&memory_pool)?;
 
-        let optimizer_builder = MomentumSGDBuilder::with_params(&device,learning_rate,0.9,0.0001);
+        let optimizer_builder = MomentumSGDBuilder::new(&device)
+            .lr(learning_rate)
+            .mu(0.9)
+            .weight_decay(0.0001);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, ()> = InputLayer::new();
 
