@@ -23,7 +23,7 @@ use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
-use nncombinator::lossfunction::{CrossEntropy, LossFunction};
+use nncombinator::lossfunction::{LossFunction};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
 use nncombinator::optimizer::{MomentumSGDBuilder, Optimizer, OptimizerBuilder};
@@ -33,7 +33,7 @@ use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
-use usiagent::event::{EventQueue, GameEndState, UserEvent, UserEventKind};
+use usiagent::event::{GameEndState};
 use usiagent::math::Prng;
 use usiagent::movepick::RandomPicker;
 use usiagent::rule::{LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
@@ -837,7 +837,7 @@ impl<M> Evalutor<M>
 }
 pub struct Trainer<M>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>> {
-    nn:M,
+    pub nn:M,
     nn_path:String,
     nnsavedir:String,
     packed_sfen_reader:PackedSfenReader,
@@ -925,7 +925,7 @@ impl TrainerCreator {
 }
 impl<M> Trainer<M>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>> {
-    fn sigmoid(&self,x:i16) -> f32 {
+    fn sigmoid(x:i16) -> f32 {
         1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }
 
@@ -969,93 +969,91 @@ impl<M> Trainer<M>
         Ok(best_move)
     }
 
-    pub fn learning_by_packed_sfens<'a>(&mut self,
-                                        packed_sfens:Vec<Vec<u8>>,
-                                        _:&'a Mutex<EventQueue<UserEvent,UserEventKind>>)
-                                        -> Result<f32,ApplicationError> {
+    pub fn make_packed_sfens_parser<'a>()
+        -> impl FnMut(Vec<Vec<u8>>)
+                -> Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
+        let mut packed_sfen_reader = PackedSfenReader::new();
 
-        let lossf = CrossEntropy::new();
+        move | packed_sfens | {
+            let mut sfens_with_extended = Vec::with_capacity(packed_sfens.len());
 
-        let mut sfens_with_extended = Vec::with_capacity(packed_sfens.len());
+            for entry in packed_sfens.into_iter() {
+                let ((teban, banmen, mc), yaneuraou::haffman_code::ExtendFields {
+                    value: score,
+                    best_move: _,
+                    end_ply: _,
+                    game_result
+                }) = packed_sfen_reader.read_sfen_with_extended(entry)?;
 
-        for entry in packed_sfens.into_iter() {
-            let ((teban,banmen,mc),yaneuraou::haffman_code::ExtendFields {
-                value: score,
-                best_move: _,
-                end_ply: _,
-                game_result
-            }) = self.packed_sfen_reader.read_sfen_with_extended(entry)?;
+                sfens_with_extended.push((teban, banmen, mc, game_result, score));
+            }
 
-            sfens_with_extended.push((teban,banmen,mc,game_result,score));
-        }
+            let (sente_win_count, gote_win_count) = sfens_with_extended.iter()
+                .map(|(teban, _, _, es, _)| {
+                    let (s, g) = match (es, teban) {
+                        (&GameEndState::Draw, _) => {
+                            (0, 0)
+                        },
+                        (&GameEndState::Win, &Teban::Sente) | (&GameEndState::Lose, &Teban::Gote) => {
+                            (1, 0)
+                        },
+                        _ => {
+                            (0, 1)
+                        }
+                    };
 
-        let (sente_win_count,gote_win_count) = sfens_with_extended.iter()
-            .map(|(teban,_,_,es,_)| {
-                let (s,g) = match (es,teban) {
-                    (&GameEndState::Draw,_) => {
-                        (0,0)
-                    },
-                    (&GameEndState::Win,&Teban::Sente) | (&GameEndState::Lose,&Teban::Gote) => {
-                        (1,0)
-                    },
-                    _ => {
-                        (0,1)
-                    }
-                };
-
-                (s,g)
-            }).fold((0,0), |acc,(s,g)| {
+                    (s, g)
+                }).fold((0, 0), |acc, (s, g)| {
                 (acc.0 + s, acc.1 + g)
             });
 
-        let (sente_rate,gote_rate) = if sente_win_count >= gote_win_count {
-            (gote_win_count as f32 / sente_win_count as f32,1.)
-        } else {
-            (1.,sente_win_count as f32 / gote_win_count as f32)
-        };
+            let (sente_rate, gote_rate) = if sente_win_count >= gote_win_count {
+                (gote_win_count as f32 / sente_win_count as f32, 1.)
+            } else {
+                (1., sente_win_count as f32 / gote_win_count as f32)
+            };
 
-        let batch = sfens_with_extended.into_iter()
-            .map(|(teban,banmen,mc,es, score)| {
-                let state = State::new(banmen);
+            let batch = sfens_with_extended.into_iter()
+                .map(|(teban, banmen, mc, es, score)| {
+                    let state = State::new(banmen);
 
-                let input = HalfKP::new(
-                    InputCreator::make_input(teban, &state, &mc),
-                    InputCreator::make_input(teban.opposite(),&state,&mc)
-                );
+                    let input = HalfKP::new(
+                        InputCreator::make_input(teban, &state, &mc),
+                        InputCreator::make_input(teban.opposite(), &state, &mc)
+                    );
 
-                let mut t = Arr::<f32,1>::new();
+                    let mut t = Arr::<f32, 1>::new();
 
-                t[0] = {
-                    let t = match es {
-                        GameEndState::Win if teban == Teban::Sente => {
-                            sente_rate
-                        },
-                        GameEndState::Win => {
-                            gote_rate
-                        },
-                        GameEndState::Lose if teban == Teban::Sente => {
-                            0.5 - 0.5 * gote_rate
-                        },
-                        GameEndState::Lose => {
-                            0.5 - 0.5 * sente_rate
-                        },
-                        _ => 0.5f32
+                    t[0] = {
+                        let t = match es {
+                            GameEndState::Win if teban == Teban::Sente => {
+                                sente_rate
+                            },
+                            GameEndState::Win => {
+                                gote_rate
+                            },
+                            GameEndState::Lose if teban == Teban::Sente => {
+                                0.5 - 0.5 * gote_rate
+                            },
+                            GameEndState::Lose => {
+                                0.5 - 0.5 * sente_rate
+                            },
+                            _ => 0.5f32
+                        };
+
+                        t * 0.667 + Self::sigmoid(score) * 0.333
                     };
 
-                    t * 0.667 + self.sigmoid(score) * 0.333
-                };
+                    (t, input)
+                }).fold((Vec::new(), Vec::new()), |mut acc, (t, i)| {
+                acc.0.push(t);
+                acc.1.push(i);
 
-                (t,input)
-        }).fold((Vec::new(),Vec::new()),  | mut acc, (t,i) | {
-            acc.0.push(t);
-            acc.1.push(i);
+                acc
+            });
 
-            acc
-        });
-
-        let m = self.nn.batch_train(batch.0.into(),batch.1.into(),&lossf)?;
-
-        Ok(m)
+            Ok(Some(batch))
+        }
     }
 
     pub fn test_by_packed_sfens(&mut self,
@@ -1119,94 +1117,92 @@ impl<M> Trainer<M>
         Ok((game_result,r[0],same))
     }
 
-    pub fn learning_by_hcpe<'a>(&mut self,
-                                hcpes:Vec<Vec<u8>>,
-                                _:&'a Mutex<EventQueue<UserEvent,UserEventKind>>)
-                                -> Result<f32,ApplicationError> {
+    pub fn make_hcpe_parser<'a>()
+        -> impl FnMut(Vec<Vec<u8>>) ->
+                Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
+        let mut hcpe_reader = HcpeReader::new();
 
-        let lossf = CrossEntropy::new();
+        move | hcpes | {
+            let mut sfens_with_extended = Vec::with_capacity(hcpes.len());
 
-        let mut sfens_with_extended = Vec::with_capacity(hcpes.len());
+            for entry in hcpes.into_iter() {
+                let ((teban, banmen, mc), hcpe::haffman_code::ExtendFields {
+                    eval: score,
+                    best_move: _,
+                    game_result
+                }) = hcpe_reader.read_sfen_with_extended(entry)?;
 
-        for entry in hcpes.into_iter() {
-            let ((teban,banmen,mc),hcpe::haffman_code::ExtendFields {
-                eval: score,
-                best_move: _,
-                game_result
-            }) = self.hcpe_reader.read_sfen_with_extended(entry)?;
-
-            sfens_with_extended.push((teban, banmen, mc, game_result, score));
-        }
-
-        let (sente_win_count,gote_win_count) = sfens_with_extended.iter().map(|(_,_,_,es,_)| {
-            match es {
-                GameResult::Draw => (0,0),
-                GameResult::SenteWin => (1,0),
-                _ => (0,1)
+                sfens_with_extended.push((teban, banmen, mc, game_result, score));
             }
-        }).fold((0,0), |acc,(s,g)| {
-            (acc.0 + s, acc.1 + g)
-        });
 
-        let (sente_rate,gote_rate) = if sente_win_count >= gote_win_count {
-            (gote_win_count as f32 / sente_win_count as f32,1.)
-        } else {
-            (1.,sente_win_count as f32 / gote_win_count as f32)
-        };
+            let (sente_win_count, gote_win_count) = sfens_with_extended.iter().map(|(_, _, _, es, _)| {
+                match es {
+                    GameResult::Draw => (0, 0),
+                    GameResult::SenteWin => (1, 0),
+                    _ => (0, 1)
+                }
+            }).fold((0, 0), |acc, (s, g)| {
+                (acc.0 + s, acc.1 + g)
+            });
 
-        let batch = sfens_with_extended.into_iter()
-            .map(|(teban,banmen,mc,es,score)| {
-                let state = State::new(banmen);
+            let (sente_rate, gote_rate) = if sente_win_count >= gote_win_count {
+                (gote_win_count as f32 / sente_win_count as f32, 1.)
+            } else {
+                (1., sente_win_count as f32 / gote_win_count as f32)
+            };
 
-                let input = HalfKP::new(
-                            InputCreator::make_input(teban, &state, &mc),
-                            InputCreator::make_input(teban.opposite(),&state,&mc)
-                );
+            let batch = sfens_with_extended.into_iter()
+                .map(|(teban, banmen, mc, es, score)| {
+                    let state = State::new(banmen);
 
-                let (rate,es) = match (es,teban) {
-                    (GameResult::Draw,_) => {
-                        (1.,GameEndState::Draw)
-                    },
-                    (GameResult::SenteWin,Teban::Sente) => {
-                        (sente_rate,GameEndState::Win)
-                    },
-                    (GameResult::GoteWin,Teban::Gote) => {
-                        (gote_rate,GameEndState::Win)
-                    },
-                    (GameResult::SenteWin,Teban::Gote) => {
-                        (sente_rate,GameEndState::Lose)
-                    },
-                    (GameResult::GoteWin,Teban::Sente) => {
-                        (gote_rate,GameEndState::Lose)
-                    }
-                };
+                    let input = HalfKP::new(
+                        InputCreator::make_input(teban, &state, &mc),
+                        InputCreator::make_input(teban.opposite(), &state, &mc)
+                    );
 
-                let mut t = Arr::<f32,1>::new();
-
-                t[0] = {
-                    let t = match es {
-                        GameEndState::Win => {
-                            rate
-                        }
-                        GameEndState::Lose => {
-                            0.5 - 0.5 * rate
+                    let (rate, es) = match (es, teban) {
+                        (GameResult::Draw, _) => {
+                            (1., GameEndState::Draw)
                         },
-                        _ => 0.5f32
+                        (GameResult::SenteWin, Teban::Sente) => {
+                            (sente_rate, GameEndState::Win)
+                        },
+                        (GameResult::GoteWin, Teban::Gote) => {
+                            (gote_rate, GameEndState::Win)
+                        },
+                        (GameResult::SenteWin, Teban::Gote) => {
+                            (sente_rate, GameEndState::Lose)
+                        },
+                        (GameResult::GoteWin, Teban::Sente) => {
+                            (gote_rate, GameEndState::Lose)
+                        }
                     };
 
-                    t * 0.667 + self.sigmoid(score) * 0.333
-                };
+                    let mut t = Arr::<f32, 1>::new();
 
-                (t,input)
-            }).fold((Vec::new(),Vec::new()), | mut acc, (t,i) | {
+                    t[0] = {
+                        let t = match es {
+                            GameEndState::Win => {
+                                rate
+                            }
+                            GameEndState::Lose => {
+                                0.5 - 0.5 * rate
+                            },
+                            _ => 0.5f32
+                        };
+
+                        t * 0.667 + Self::sigmoid(score) * 0.333
+                    };
+
+                    (t, input)
+                }).fold((Vec::new(), Vec::new()), |mut acc, (t, i)| {
                 acc.0.push(t);
                 acc.1.push(i);
                 acc
             });
 
-        let m = self.nn.batch_train(batch.0.into(),batch.1.into(),&lossf)?;
-
-        Ok(m)
+            Ok(Some(batch))
+        }
     }
 
     pub fn test_by_packed_hcpe(&mut self,

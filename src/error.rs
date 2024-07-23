@@ -7,6 +7,7 @@ use std::sync::{MutexGuard, PoisonError};
 use nncombinator::error::{ConfigReadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use packedsfen::error::ReadError;
 use rayon::ThreadPoolBuildError;
+use shogi_dataloader::error::DataLoadError;
 use usiagent::error::{EventDispatchError, InfoSendError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
 
@@ -31,6 +32,7 @@ pub enum ApplicationError {
     DeviceError(DeviceError),
     LayerInstantiationError(LayerInstantiationError),
     PersistenceError(PersistenceError),
+    DataLoadError(DataLoadError),
     CudaError(CudaError),
     RecvError(RecvError),
     RecvTimeoutError(RecvTimeoutError),
@@ -64,6 +66,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::DeviceError(ref e) => write!(f,"{}",e),
             ApplicationError::LayerInstantiationError(ref e) => write!(f,"{}",e),
             ApplicationError::PersistenceError(ref e) => write!(f,"{}",e),
+            ApplicationError::DataLoadError(ref e) => write!(f,"{}",e),
             ApplicationError::CudaError(ref e) => write!(f, "An error occurred in the process of cuda. ({})",e),
             ApplicationError::RecvError(ref e) => write!(f, "{}",e),
             ApplicationError::RecvTimeoutError(ref e) => write!(f,"{}",e),
@@ -99,6 +102,7 @@ impl error::Error for ApplicationError {
             ApplicationError::DeviceError(_) => "An error occurred during device initialization.",
             ApplicationError::LayerInstantiationError(_) => "An unexpected error occurred during layer instantiation.",
             ApplicationError::PersistenceError(_) => "An error occurred when saving model information.",
+            ApplicationError::DataLoadError(_) => "An error occurred during the loading process of training data.",
             ApplicationError::CudaError(_) => "An error occurred in the process of cuda.",
             ApplicationError::RecvError(_) => "An error occurred while receiving the message.",
             ApplicationError::RecvTimeoutError(RecvTimeoutError::Disconnected) => "Disconnected while waiting for reception.",
@@ -134,6 +138,7 @@ impl error::Error for ApplicationError {
             ApplicationError::DeviceError(ref e) => Some(e),
             ApplicationError::LayerInstantiationError(ref e) => Some(e),
             ApplicationError::PersistenceError(ref e) => Some(e),
+            ApplicationError::DataLoadError(ref e) => Some(e),
             ApplicationError::CudaError(_) => None,
             ApplicationError::RecvError(ref e) => Some(e),
             ApplicationError::RecvTimeoutError(ref e) => Some(e),
@@ -274,13 +279,8 @@ impl From<BorrowMutError> for ApplicationError {
         ApplicationError::BorrowMutError(err)
     }
 }
-#[derive(Debug)]
-pub enum EvaluationError {
-    InternalError(ApplicationError),
-    Timeout,
-}
-impl From<ApplicationError> for EvaluationError {
-    fn from(err: ApplicationError) -> EvaluationError {
-        EvaluationError::InternalError(err)
+impl From<DataLoadError> for ApplicationError {
+    fn from(err: DataLoadError) -> ApplicationError {
+        ApplicationError::DataLoadError(err)
     }
 }

@@ -21,6 +21,7 @@ extern crate serde_derive;
 extern crate usiagent;
 extern crate nncombinator;
 extern crate packedsfen;
+extern crate shogi_dataloader;
 
 use std::env;
 use std::fs::{File, OpenOptions};
