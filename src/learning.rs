@@ -263,6 +263,9 @@ impl<M> Learnener<M>
 
         let lossf = CrossEntropy::<f32>::new();
 
+        let mut current_filename = String::from("");
+        let mut current_items = 0;
+
         'epochs: for _ in (0..).take_while(|&c| c < maxepoch + *extend.borrow()) {
             let mut dataloader_builder = DataLoaderBuilder::new(Path::new(&kifudir)
                 .join("training"))
@@ -276,16 +279,23 @@ impl<M> Learnener<M>
             if let Some(ref checkpoint) = checkpoint {
                 if resume {
                     dataloader_builder = dataloader_builder
-                        .current_filename(Some(checkpoint.filename.clone()))
-                        .current_items(checkpoint.item)
+                        .start_filename(Some(checkpoint.filename.clone()))
+                        .processed_items(checkpoint.item)
                 }
             }
 
             let mut dataloader = dataloader_builder.build(sfen_parser_builder())?;
 
-            while let Some(batch) = dataloader.load()? {
+            while let Some((filename,items,batch)) = dataloader.load()? {
                 if notify_quit.load(Ordering::Acquire) {
                     break 'epochs;
+                }
+
+                if filename != current_filename {
+                    print!("current_file = {}: items = {}\n", filename,items);
+
+                    current_filename = filename;
+                    current_items = items;
                 }
                 let loss = evalutor.nn.batch_train(batch.0.into(), batch.1.into(), &lossf)?;
 
@@ -297,20 +307,16 @@ impl<M> Learnener<M>
 
                 self.save(&mut evalutor,
                           &checkpoint_path,
-                          dataloader.current_filename().map_err(|e| {
-                              ApplicationError::InvalidStateError(format!("{}",e))
-                          })?.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                          dataloader.current_items(),
+                          current_filename.as_str(),
+                          current_items,
                           pending_count >= save_batch_count,
                           &mut pending_count)?;
             }
 
             self.save(&mut evalutor,
                       &checkpoint_path,
-                      dataloader.current_filename().map_err(|e| {
-                          ApplicationError::InvalidStateError(format!("{}",e))
-                      })?.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                      dataloader.current_items(),
+                      current_filename.as_str(),
+                      current_items,
                       pending_count >= save_batch_count,
                       &mut pending_count)?;
 
@@ -334,9 +340,9 @@ impl<M> Learnener<M>
             let mut same_moves = 0;
             let mut compare_moves = 0;
 
-            for packed in dataloader.load()?.into_iter().nth(0).ok_or(
+            for packed in dataloader.load()?.ok_or(
                 ApplicationError::InvalidStateError(String::from("Insufficient number of test data"))
-            )?.into_iter().take(100) {
+            )?.2.into_iter().take(100) {
                 let (s, score, same_move) = test_process(&mut evalutor, packed)?;
 
                 match same_move {
