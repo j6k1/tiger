@@ -328,7 +328,7 @@ impl<M> Learnener<M>
                 .join("tests"))
                 .shuffle(true)
                 .ext(ext.to_string())
-                .batch_size(learn_batch_size)
+                .batch_size(100)
                 .read_sfen_size(learn_sfen_read_size)
                 .sfen_size(item_size);
 
@@ -342,7 +342,7 @@ impl<M> Learnener<M>
 
             for packed in dataloader.load()?.ok_or(
                 ApplicationError::InvalidStateError(String::from("Insufficient number of test data"))
-            )?.2.into_iter().take(100) {
+            )?.2.into_iter() {
                 let (s, score, same_move) = test_process(&mut evalutor, packed)?;
 
                 match same_move {
