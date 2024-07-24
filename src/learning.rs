@@ -110,7 +110,7 @@ impl<M> Learnener<M>
     }
 
     fn start_read_stdinput_thread(&self, notify_run_test: Arc<AtomicBool>,
-                                  system_event_queue: Arc<Mutex<EventQueue<SystemEvent, SystemEventKind>>>,
+                                  notify_quit: Arc<AtomicBool>,
                                   on_error_handler: Arc<Mutex<OnErrorHandler<FileLogger>>>) {
         thread::spawn(move || {
             let mut input_reader = USIStdInputReader::new();
@@ -120,45 +120,20 @@ impl<M> Learnener<M>
                     Ok(Some(line)) => {
                         match line.trim_end() {
                             "quit" => {
-                                match system_event_queue.lock() {
-                                    Ok(mut system_event_queue) => {
-                                        notify_run_test.store(false, Ordering::Release);
-                                        system_event_queue.push(SystemEvent::Quit);
-                                        return;
-                                    },
-                                    Err(ref e) => {
-                                        let _ = on_error_handler.lock().map(|h| h.call(e));
-                                        return;
-                                    }
-                                }
+                                notify_run_test.store(false, Ordering::Release);
+                                notify_quit.store(true,Ordering::Release);
                             },
                             "test" => {
-                                match system_event_queue.lock() {
-                                    Ok(mut system_event_queue) => {
-                                        system_event_queue.push(SystemEvent::Quit);
-                                        return;
-                                    },
-                                    Err(ref e) => {
-                                        let _ = on_error_handler.lock().map(|h| h.call(e));
-                                        return;
-                                    }
-                                }
-                            }
+                                notify_quit.store(true,Ordering::Release);
+                            },
                             _ => (),
                         }
                     },
                     Ok(None) => {},
                     Err(ref e) => {
                         let _ = on_error_handler.lock().map(|h| h.call(e));
-                        match system_event_queue.lock() {
-                            Ok(mut system_event_queue) => {
-                                system_event_queue.push(SystemEvent::Quit);
-                            },
-                            Err(ref e) => {
-                                let _ = on_error_handler.lock().map(|h| h.call(e));
-                            }
-                        }
-                        return;
+
+                        notify_quit.store(true,Ordering::Release);
                     }
                 }
             }
@@ -229,20 +204,20 @@ impl<M> Learnener<M>
     ) -> Result<(), ApplicationError>
         where F: FnMut(&mut Trainer<M>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
               P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
-        let system_event_queue_arc: Arc<Mutex<EventQueue<SystemEvent, SystemEventKind>>> = Arc::new(Mutex::new(EventQueue::new()));
         let notify_quit_arc = Arc::new(AtomicBool::new(false));
 
         let mut evalutor = evalutor;
 
         print!("learning start... kifudir = {}\n", kifudir);
 
-        let on_error_handler = on_error_handler_arc.clone();
-        let system_event_queue = system_event_queue_arc.clone();
-
         let notify_run_test_arc = Arc::new(AtomicBool::new(true));
         let notify_run_test = notify_run_test_arc.clone();
 
-        self.start_read_stdinput_thread(notify_run_test, system_event_queue, on_error_handler);
+        let notify_quit = notify_quit_arc.clone();
+
+        let on_error_handler = on_error_handler_arc.clone();
+
+        self.start_read_stdinput_thread(notify_run_test, notify_quit, on_error_handler);
 
         let notify_quit = notify_quit_arc.clone();
 
