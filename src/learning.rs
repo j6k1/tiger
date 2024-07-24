@@ -273,13 +273,15 @@ impl<M> Learnener<M>
 
                     current_filename = filename;
                 }
+                let size = batch.0.len();
+
                 let loss = evalutor.nn.batch_train(batch.0.into(), batch.1.into(), &lossf)?;
 
                 println!("error_total: {}", loss);
 
                 pending_count += 1;
 
-                processed_count += learn_batch_size;
+                processed_count += size;
 
                 self.save(&mut evalutor,
                           &checkpoint_path,
