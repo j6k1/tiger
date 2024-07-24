@@ -266,11 +266,12 @@ impl<M> Learnener<M>
                     break 'epochs;
                 }
 
+                current_items = items;
+
                 if filename != current_filename {
                     print!("current_file = {}: items = {}\n", filename,items);
 
                     current_filename = filename;
-                    current_items = items;
                 }
                 let loss = evalutor.nn.batch_train(batch.0.into(), batch.1.into(), &lossf)?;
 
