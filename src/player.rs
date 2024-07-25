@@ -322,17 +322,26 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             Some(ref evalutor) => {
                 let _pinfo_sender = {
                     let nodes = env.nodes.clone();
-                    let think_start_time = think_start_time.clone();
+                    let mut prev_time = think_start_time.clone();
+                    let mut prev_nodes = 0;
                     let on_error_handler = env.on_error_handler.clone();
 
                     periodically_info.start(1000,move || {
                         let mut commands = vec![];
                         commands.push(UsiInfoSubCommand::Nodes(nodes.load(Ordering::Acquire)));
 
-                        let sec = (Instant::now() - think_start_time).as_secs();
+                        let now = Instant::now();
+                        let current_nodes = nodes.load(Ordering::Acquire);
 
-                        if sec > 0 {
-                            commands.push(UsiInfoSubCommand::Nps(nodes.load(Ordering::Acquire) / sec));
+                        let msec = (Instant::now() - prev_time).as_millis();
+
+                        if msec > 0 {
+                            commands.push(UsiInfoSubCommand::Nps(
+                                ((current_nodes - prev_nodes) as u128 * 1000 / msec) as u64
+                            ));
+
+                            prev_time = now;
+                            prev_nodes = current_nodes;
                         }
 
                         commands
