@@ -333,7 +333,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                         let now = Instant::now();
                         let current_nodes = nodes.load(Ordering::Acquire);
 
-                        let msec = (Instant::now() - prev_time).as_millis();
+                        let msec = (now - prev_time).as_millis();
 
                         if msec > 0 {
                             commands.push(UsiInfoSubCommand::Nps(
