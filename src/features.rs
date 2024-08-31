@@ -1,6 +1,10 @@
 use std::fmt::Debug;
 use libc::size_t;
+use nncombinator::cuda::ToCuda;
+use nncombinator::device::DeviceGpu;
+use nncombinator::error::TypeConvertError;
 use nncombinator::layer::{BatchDataType, BatchSize};
+use nncombinator::ope::UnitValue;
 use rand_distr::num_traits::FromPrimitive;
 
 /// InputFeatures Implementaion
@@ -11,6 +15,13 @@ pub struct HalfKP<const N:usize> {
 }
 impl<const N:usize> BatchDataType for HalfKP<N> {
     type Type = HalfKPList<N>;
+}
+impl<U,const N:usize> ToCuda<U> for HalfKP<N> where U: UnitValue<U> {
+    type Output = Self;
+
+    fn to_cuda(self, _: &DeviceGpu<U>) -> Result<Self::Output, TypeConvertError> {
+        Ok(self)
+    }
 }
 impl<const N:usize> HalfKP<N> {
     /// Create an instance of HalfKP
@@ -23,6 +34,21 @@ impl<const N:usize> HalfKP<N> {
     /// Obtaining a immutable iterator
     pub fn iter<'a>(&'a self) -> HalfKPIter<'a,N> {
         HalfKPIter{ s: &self.s, o: &self.o, index: 0 }
+    }
+
+    pub fn to_vec<T>(&self) -> Box<[T]>
+        where T: Debug + Clone + Default + Send + Sync + FromPrimitive {
+        let mut arr = vec![T::default();N*2].into_boxed_slice();
+
+        for &i in self.s.iter() {
+            arr[i] = T::from_f64(1.).unwrap();
+        }
+
+        for &i in self.o.iter() {
+            arr[N + i] = T::from_f64(1.).unwrap();
+        }
+
+        arr
     }
 }
 impl<const N:usize> Clone for HalfKP<N> {
@@ -151,6 +177,13 @@ impl<const N: usize> From<Vec<HalfKP<N>>> for HalfKPList<N> {
 impl<const N: usize> BatchSize for HalfKPList<N> {
     fn size(&self) -> usize {
         self.items.len()
+    }
+}
+impl<U,const N:usize> ToCuda<U> for HalfKPList<N> where U: UnitValue<U> {
+   type Output = Self;
+
+    fn to_cuda(self, _: &DeviceGpu<U>) -> Result<Self::Output, TypeConvertError> {
+        Ok(self)
     }
 }
 #[derive(Debug,Clone)]

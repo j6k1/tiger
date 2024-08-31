@@ -1,4 +1,6 @@
+use std::fmt::Debug;
 use std::mem;
+use std::ops::DerefMut;
 
 use libc::{c_int, size_t};
 use libc::c_uint;
@@ -8,33 +10,37 @@ use rcublas_sys::cublasSscal_v2;
 use rcublas_sys::{cublasStatus_t};
 
 use nncombinator::arr::SerializedVec;
-use nncombinator::arr::SerializedVecView;
-use nncombinator::cuda::kernel::device::{BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
+use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawMutSlice, AsRawSlice};
-use nncombinator::arr::{Arr, Arr2, ArrView};
-use nncombinator::cuda::{AsMutPtr, AsPtr, CudaConstPtr, CudaMemoryPoolPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, ffi, Kernel, Memory};
+use nncombinator::arr::{Arr, Arr2};
+use nncombinator::cuda::{AsMutPtr, AsPtr, CudaConstPtr, CudaMemoryPoolPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, ffi, Kernel, Memory, MemoryMoveTo};
 use nncombinator::device::{DeviceCpu, DeviceGpu, DeviceMemoryPool};
-use nncombinator::error::{EvaluateError, TrainingError};
-use nncombinator::layer::BatchSize;
+use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
+use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
 
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
-use crate::kernel::{TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs};
+use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs};
 
-pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize> where U: UnitValue<U> {
-    fn forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPView<'a,NI>) -> Result<Arr<U,{NO*2}>,EvaluateError>;
-    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:ArrView<'a,U,{NO*2}>) -> Result<T,TrainingError>;
-    fn backward_feature_transform_bias_gradient<'a>(&self,loss:ArrView<'a,U,{NO*2}>) -> Result<B,TrainingError>;
-    fn batch_forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPListView<'a,NI>) -> Result<SerializedVec<U,Arr<U,{NO*2}>>,TrainingError>;
-    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:SerializedVecView<'a,U,Arr<U,{NO*2}>>) -> Result<T,TrainingError>;
-    fn batch_feature_transform_bias_gradient<'a>(&self,loss:SerializedVecView<'a,U,Arr<U,{NO*2}>>) -> Result<B,TrainingError>;
+pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
+    where U: UnitValue<U>, [(); NO*2]: {
+    type Output: BatchDataType + Debug + 'static;
+    type BatchOutput: BatchSize + Debug + 'static;
+    fn forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPView<'a,NI>) -> Result<Self::Output,EvaluateError>;
+    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a Self::Output) -> Result<T,TrainingError>;
+    fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a Self::Output) -> Result<B,TrainingError>;
+    fn batch_forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPListView<'a,NI>) -> Result<Self::BatchOutput,TrainingError>;
+    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a Self::BatchOutput) -> Result<T,TrainingError>;
+    fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a Self::BatchOutput) -> Result<B,TrainingError>;
 }
 impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> for DeviceCpu<U> 
-    where U: UnitValue<U> {
+    where U: UnitValue<U>, [(); NO*2]: {
 
+    type Output = Arr<U,{NO*2}>;
+    type BatchOutput = SerializedVec<U,Arr<U,{NO*2}>>;
     #[inline]
     fn forward_feature_transform<'a>(&self,bias:&Arr<U,NO>,units:&Arr2<U,NI,NO>,input:HalfKPView<'a,NI>) 
-    -> Result<Arr<U,{NO*2}>,EvaluateError> {
+        -> Result<Arr<U,{NO*2}>,EvaluateError> {
         let mut r = Vec::with_capacity(NO*2);
 
         r.extend_from_slice(&bias);
@@ -54,7 +60,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:ArrView<'a,U,{NO*2}>) -> Result<Arr2<U,NI,NO>,TrainingError> {
+    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a Arr<U,{NO*2}>) -> Result<Arr2<U,NI,NO>,TrainingError> {
         let mut acc = Arr2::<U,NI,NO>::new();
 
         let d = U::from_f64(2.).unwrap();
@@ -82,7 +88,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn backward_feature_transform_bias_gradient<'a>(&self,loss:ArrView<'a,U,{NO*2}>) -> Result<Arr<U,NO>,TrainingError> {
+    fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a Arr<U,{NO*2}>) -> Result<Arr<U,NO>,TrainingError> {
         let mut acc = Arr::<U,NO>::new();
 
         {
@@ -114,15 +120,38 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:SerializedVecView<'a,U,Arr<U,{NO*2}>>)
+    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a SerializedVec<U,Arr<U,{NO*2}>>)
         -> Result<Arr2<U,NI,NO>,TrainingError> {
 
         <&'a Vec<HalfKP<NI>>>::from(input).par_iter().zip(loss.par_iter()).map(|(i,l)| {
-            self.backward_feature_transform_weight_gradient(i.into(), l)
+            let mut acc = Arr2::<U,NI,NO>::new();
+
+            let d = U::from_f64(2.).unwrap();
+
+            let loss = l.iter().map(|&l| l / d).collect::<Vec<U>>();
+            let (sl,ol) = loss.split_at(NO);
+
+            let sl = <&[U;NO]>::try_from(sl)?;
+            let ol = <&[U;NO]>::try_from(ol)?;
+
+            let input = i.to_vec::<U>();
+
+            let (si,oi) = input.split_at(NI);
+
+            for (input,loss) in [si,oi].into_iter()
+                .zip([sl,ol].into_iter()){
+                for (&input,mut acc) in input.iter().zip(acc.iter_mut()) {
+                    for (&loss,acc) in loss.iter().zip(acc.iter_mut()) {
+                        *acc += input * loss;
+                    }
+                }
+            }
+
+            Ok(acc)
         }).reduce(|| Ok(Arr2::new()), | acc, g | {
-            acc.and_then(|mut acc| g.and_then(|g| {
-                for (mut acc,g) in acc.iter_mut().zip(g.iter()) {
-                    for (acc,&g) in acc.iter_mut().zip(g.iter()) {
+            acc.and_then(| mut acc | g.and_then(|g| {
+                for (mut acc, g) in acc.iter_mut().zip(g.iter()) {
+                    for (acc, &g) in acc.iter_mut().zip(g.iter()) {
                         *acc += g;
                     }
                 }
@@ -133,7 +162,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn batch_feature_transform_bias_gradient<'a>(&self,loss:SerializedVecView<'a,U,Arr<U,{NO*2}>>) -> Result<Arr<U,NO>,TrainingError> {
+    fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a SerializedVec<U,Arr<U,{NO*2}>>) -> Result<Arr<U,NO>,TrainingError> {
         let g = loss.par_iter().fold(|| Arr::<U,{NO*2}>::new(), | mut acc, loss | {
             for (acc,&loss) in acc.iter_mut().zip(loss.iter()) {
                 *acc += loss;
@@ -170,14 +199,19 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 }
 impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,NI,NO>,CudaTensor1dPtr<f32,NO>,NI,NO> for DeviceGpu<f32>
-    where for<'a> TransformFeaturesForwardBatch::<'a,f32,NI,NO>: Kernel<Args=TransformFeaturesForwardBatchArgs<'a,f32,NI,NO>>,
+    where for<'a> CudaVecView<'a,f32,CudaTensor1dPtr<f32,NI>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,NI>>,Error=TypeConvertError>,
+          for<'a> CudaVecView<'a,f32,CudaTensor1dPtr<f32,NO>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,NO>>,Error=TypeConvertError>,
+          for<'a> TransformFeaturesForward::<'a,f32,NI,NO>: Kernel<Args=TransformFeaturesForwardArgs<'a,f32,NI,NO>>,
+          for<'a> BackwardLinear::<'a,f32,NI,NO>: Kernel<Args=BackwardLinearArgs<'a,f32,NI,NO>>,
+          for<'b> LinearGradientBatch::<'b,f32,NI,NO>: Kernel<Args=LinearGradientBatchArgs<'b,f32,NI,NO>>,
+          for<'a> TransformFeaturesForwardBatch::<'a,f32,NI,NO>: Kernel<Args=TransformFeaturesForwardBatchArgs<'a,f32,NI,NO>>,
           for<'a> BackwardLinearBatch::<'a,f32,NI,NO>: Kernel<Args=BackwardLinearBatchArgs<'a,f32,NI,NO>>,
-          LinearGradientBatch::<f32,NI,NO>: Kernel<Args=LinearGradientBatchArgs<f32,NI,NO>>,
-          ReduceLinearBatch::<f32,NO>: Kernel<Args=ReduceLinearBatchArgs<f32,NO>> {
-        
+          for<'b> ReduceLinearBatch::<'b,f32,NO>: Kernel<Args=ReduceLinearBatchArgs<'b,f32,NO>>, [(); NO*2]: {
+    type Output = CudaTensor1dPtr<f32,{NO*2}>;
+    type BatchOutput = CudaVec<f32,CudaTensor1dPtr<f32,{NO*2}>>;
     #[inline]
     fn forward_feature_transform<'a>(&self,bias:&CudaTensor1dPtr<f32,NO>,units:&CudaTensor2dPtr<f32,NI,NO>,input:HalfKPView<'a,NI>)
-        -> Result<Arr<f32,{NO*2}>,EvaluateError> {
+        -> Result<CudaTensor1dPtr<f32,{NO*2}>,EvaluateError> {
         let (indexes,boundaries):(Vec<size_t>,Vec<size_t>) = (&input).into();
 
         let mut indexes_ptr = CudaMemoryPoolPtr::new(indexes.len(),self.get_memory_pool())?;
@@ -186,36 +220,35 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
         boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;
 
-        let output = CudaMemoryPoolPtr::new(NO * 2,self.get_memory_pool())?;
+        let output = CudaTensor1dPtr::<f32,{NO*2}>::new(self.get_memory_pool())?;
 
-        let mut args = TransformFeaturesForwardBatchArgs::new(
+        let mut args = TransformFeaturesForwardArgs::new(
                                                    indexes_ptr,
                                                    boundaries_ptr,
                                                    CudaConstPtr::new(units),
                                                    CudaConstPtr::new(bias),
-                                                   output,
-                                                   2);
+                                                   output);
 
-        let mut kernel = TransformFeaturesForwardBatch::<f32,NI,NO>::new();
+        let mut kernel = TransformFeaturesForward::<f32,NI,NO>::new();
 
         kernel.launch(dim3 { x: NO as c_uint * 2, y: 1, z: 1 },
                       dim3 { x: 64, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
 
-        Ok(args.output.read_to_vec()?.try_into()?)
+        Ok(args.output)
     }
 
     #[inline]
-    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:ArrView<'a,f32,{NO*2}>)
+    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a CudaTensor1dPtr<f32,{NO*2}>)
         -> Result<CudaTensor2dPtr<f32,NI,NO>,TrainingError> {
         
-        let mut input_ptr = CudaMemoryPoolPtr::new(NI * 2,self.get_memory_pool())?;
-        let mut loss_ptr = CudaMemoryPoolPtr::new(NO * 2,self.get_memory_pool())?;
+        let mut input_ptr = CudaVec::<f32,CudaTensor1dPtr::<f32,NI>>::new(2,self.get_memory_pool())?;
+        let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(2,self.get_memory_pool())?;
         let output_ptr = CudaTensor2dPtr::<f32,NI,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
         let input = input.to_vec();
 
         input_ptr.memcpy(input.as_ptr(),NI * 2)?;
-        loss_ptr.memcpy(loss.as_raw_slice().as_ptr(),NO * 2)?;
+        loss.memcpy_to(loss_ptr.deref_mut(),NO * 2)?;
 
         let m = CudaPtr::try_from(0.5)?;
 
@@ -250,25 +283,29 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
 
         ffi::device_synchronize()?;
 
+        let loss_ptr = (&loss_ptr).try_into()?;
+        let input_ptr = (&input_ptr).try_into()?;
+
         let mut args = LinearGradientBatchArgs::new(
-            loss_ptr,
-            input_ptr,
+            &loss_ptr,
+            &input_ptr,
             output_ptr,
             2
         );
 
         let mut kernel = LinearGradientBatch::<f32,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NI * NO) as c_uint, y: 1, z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16, z: 1 },
+                      dim3 { x: 16, y: 16, z: 1 },&mut args,
+                      2 * 256 * mem::size_of::<f32>() / 2 + 256 * mem::size_of::<f32>())?;
 
         Ok(args.output)
     }
 
     #[inline]
-    fn backward_feature_transform_bias_gradient<'a>(&self,loss:ArrView<'a,f32,{NO*2}>) -> Result<CudaTensor1dPtr<f32,NO>,TrainingError> {
-        let mut loss_ptr = CudaPtr::new(NO * 2).unwrap();
-        loss_ptr.memcpy(loss.as_raw_slice().as_ptr(),NO * 2).unwrap();
+    fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a CudaTensor1dPtr<f32,{NO*2}>) -> Result<CudaTensor1dPtr<f32,NO>,TrainingError> {
+        let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(2,self.get_memory_pool())?;
+        loss.memcpy_to(loss_ptr.deref_mut(),NO*2)?;
 
         let m = CudaPtr::try_from(0.5)?;
 
@@ -305,11 +342,13 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
 
         let output_ptr = CudaTensor1dPtr::<f32,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
-        let mut args = ReduceLinearBatchArgs::new(loss_ptr,output_ptr,NO,2);
+        let loss_ptr = (&loss_ptr).try_into()?;
+
+        let mut args = ReduceLinearBatchArgs::new(&loss_ptr,output_ptr,NO,2);
 
         let mut kernel = ReduceLinearBatch::<f32,NO>::new();
 
-        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: 1},
+        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: 1 },
                       dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
 
         Ok(args.output)
@@ -319,7 +358,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
     #[inline]
     fn batch_forward_feature_transform<'a>(&self,bias:&CudaTensor1dPtr<f32,NO>,units:&CudaTensor2dPtr<f32,NI,NO>,
                                             input:HalfKPListView<'a,NI>)
-         -> Result<SerializedVec<f32,Arr<f32,{NO*2}>>,TrainingError> {
+         -> Result<CudaVec<f32,CudaTensor1dPtr<f32,{NO*2}>>,TrainingError> {
         let (indexes,boundaries):(Vec<size_t>,Vec<size_t>) = (&input).into();
 
         let len = input.size();
@@ -330,7 +369,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
         boundaries_ptr.memcpy(boundaries.as_ptr(), boundaries.len())?;
 
-        let output = CudaMemoryPoolPtr::new(NO * 2 * len,self.get_memory_pool())?;
+        let output = CudaVec::<f32,CudaTensor1dPtr<f32,{NO*2}>>::new(len,self.get_memory_pool())?;
 
         let mut args = TransformFeaturesForwardBatchArgs::new(
             indexes_ptr,
@@ -345,22 +384,22 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         kernel.launch(dim3 { x: (NO * 2 * len) as c_uint, y: 1, z: 1 },
                       dim3 { x: 64, y: 1, z: 1 },&mut args,2 * 2 * mem::size_of::<f32>())?;
 
-        Ok(args.output.read_to_vec()?.try_into()?)
+        Ok(args.output)
     }
 
     #[inline]
-    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:SerializedVecView<'a,f32,Arr<f32,{NO*2}>>)
+    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a CudaVec<f32,CudaTensor1dPtr<f32,{NO*2}>>)
         -> Result<CudaTensor2dPtr<f32,NI,NO>,TrainingError> {
         let len = input.size();
 
         let input = <Box<[f32]>>::from(&input);
 
-        let mut input_ptr = CudaMemoryPoolPtr::new(NI * 2 * len,self.get_memory_pool())?;
-        let mut loss_ptr = CudaMemoryPoolPtr::new(NO * 2 * len,self.get_memory_pool())?;
+        let mut input_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NI>>::new(len * 2,self.get_memory_pool())?;
+        let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(len * 2,self.get_memory_pool())?;
         let output_ptr = CudaTensor2dPtr::<f32,NI,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
         input_ptr.memcpy(input.as_ptr(),NI * 2 * len)?;
-        loss_ptr.memcpy(loss.as_raw_slice().as_ptr(),NO * 2 * len)?;
+        loss.memcpy_to(loss_ptr.deref_mut(),NO * 2 * len)?;
 
         let m = CudaPtr::try_from(0.5)?;
 
@@ -395,27 +434,31 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
 
         ffi::device_synchronize()?;
 
+        let loss_ptr = (&loss_ptr).try_into()?;
+        let input_ptr =(&input_ptr).try_into()?;
+
         let mut args = LinearGradientBatchArgs::new(
-            loss_ptr,
-            input_ptr,
+            &loss_ptr,
+            &input_ptr,
             output_ptr,
             len * 2
         );
 
         let mut kernel = LinearGradientBatch::<f32,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NI * NO) as c_uint, y: 1, z: (len as c_uint * 2 + 1023) / 1024 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16, z: 1 },
+                      dim3 { x: 16, y: 16, z: 1 },&mut args,
+                      2 * 256 * mem::size_of::<f32>() / 2 + 256 * mem::size_of::<f32>())?;
 
         Ok(args.output)
     }
 
     #[inline]
-    fn batch_feature_transform_bias_gradient<'a>(&self,loss:SerializedVecView<'a,f32,Arr<f32,{NO*2}>>) -> Result<CudaTensor1dPtr<f32,NO>,TrainingError> {
-        let len = loss.len();
+    fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a CudaVec<f32,CudaTensor1dPtr<f32,{NO*2}>>) -> Result<CudaTensor1dPtr<f32,NO>,TrainingError> {
+        let len = loss.size();
 
-        let mut loss_ptr = CudaPtr::new(NO * 2 * len).unwrap();
-        loss_ptr.memcpy(loss.as_raw_slice().as_ptr(),NO * 2 * len).unwrap();
+        let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(len * 2,self.get_memory_pool())?;
+        loss.memcpy_to(loss_ptr.deref_mut(),len * 2 * NO)?;
 
         let m = CudaPtr::try_from(0.5)?;
 
@@ -452,7 +495,9 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
 
         let output_ptr = CudaTensor1dPtr::<f32,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
-        let mut args = ReduceLinearBatchArgs::new(loss_ptr,output_ptr,NO,2 * len);
+        let loss_ptr = (&loss_ptr).try_into()?;
+
+        let mut args = ReduceLinearBatchArgs::new(&loss_ptr,output_ptr,NO,2 * len);
 
         let mut kernel = ReduceLinearBatch::<f32,NO>::new();
 
