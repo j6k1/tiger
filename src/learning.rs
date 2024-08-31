@@ -249,7 +249,8 @@ impl<M> Learnener<M>
                 .ext(ext.to_string())
                 .batch_size(learn_batch_size)
                 .read_sfen_size(learn_sfen_read_size)
-                .sfen_size(item_size);
+                .sfen_size(item_size)
+                .send_buffer_size(100);
 
             if let Some(ref checkpoint) = checkpoint {
                 if resume {
@@ -308,7 +309,8 @@ impl<M> Learnener<M>
                 .ext(ext.to_string())
                 .batch_size(100)
                 .read_sfen_size(learn_sfen_read_size)
-                .sfen_size(item_size);
+                .sfen_size(item_size)
+                .send_buffer_size(100);
 
             let mut dataloader:UnifiedDataLoader<Vec<Vec<u8>>, ApplicationError> = dataloader_builder.build(| sfens | Ok(Some(sfens)))?;
             let mut successed = 0;
