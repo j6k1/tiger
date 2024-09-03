@@ -203,10 +203,10 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
           for<'a> CudaVecView<'a,f32,CudaTensor1dPtr<f32,NO>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,NO>>,Error=TypeConvertError>,
           for<'a> TransformFeaturesForward::<'a,f32,NI,NO>: Kernel<Args=TransformFeaturesForwardArgs<'a,f32,NI,NO>>,
           for<'a> BackwardLinear::<'a,f32,NI,NO>: Kernel<Args=BackwardLinearArgs<'a,f32,NI,NO>>,
-          for<'b> LinearGradientBatch::<'b,f32,NI,NO>: Kernel<Args=LinearGradientBatchArgs<'b,f32,NI,NO>>,
+          for<'a> LinearGradientBatch::<'a,f32,NI,NO>: Kernel<Args=LinearGradientBatchArgs<'a,f32,NI,NO>>,
           for<'a> TransformFeaturesForwardBatch::<'a,f32,NI,NO>: Kernel<Args=TransformFeaturesForwardBatchArgs<'a,f32,NI,NO>>,
           for<'a> BackwardLinearBatch::<'a,f32,NI,NO>: Kernel<Args=BackwardLinearBatchArgs<'a,f32,NI,NO>>,
-          for<'b> ReduceLinearBatch::<'b,f32,NO>: Kernel<Args=ReduceLinearBatchArgs<'b,f32,NO>>, [(); NO*2]: {
+          for<'a> ReduceLinearBatch::<'a,f32,NO>: Kernel<Args=ReduceLinearBatchArgs<'a,f32,NO>>, [(); NO*2]: {
     type Output = CudaTensor1dPtr<f32,{NO*2}>;
     type BatchOutput = CudaVec<f32,CudaTensor1dPtr<f32,{NO*2}>>;
     #[inline]
@@ -377,7 +377,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
             CudaConstPtr::new(units),
             CudaConstPtr::new(bias),
             output,
-            len * 2);
+            len);
 
         let mut kernel = TransformFeaturesForwardBatch::<f32,NI,NO>::new();
 
