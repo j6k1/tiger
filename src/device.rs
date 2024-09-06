@@ -250,6 +250,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         input_ptr.memcpy(input.as_ptr(),NI * 2)?;
         loss.memcpy_to(loss_ptr.deref_mut(),NO * 2)?;
 
+        /*
         let m = CudaPtr::try_from(0.5)?;
 
         match unsafe {
@@ -282,7 +283,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         }
 
         ffi::device_synchronize()?;
-
+        */
         let loss_ptr = (&loss_ptr).try_into()?;
         let input_ptr = (&input_ptr).try_into()?;
 
@@ -307,6 +308,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(2,self.get_memory_pool())?;
         loss.memcpy_to(loss_ptr.deref_mut(),NO*2)?;
 
+        /*
         let m = CudaPtr::try_from(0.5)?;
 
         match unsafe {
@@ -339,7 +341,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         }
 
         ffi::device_synchronize()?;
-
+        */
         let output_ptr = CudaTensor1dPtr::<f32,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
         let loss_ptr = (&loss_ptr).try_into()?;
@@ -401,6 +403,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         input_ptr.memcpy(input.as_ptr(),NI * 2 * len)?;
         loss.memcpy_to(loss_ptr.deref_mut(),NO * 2 * len)?;
 
+        /*
         let m = CudaPtr::try_from(0.5)?;
 
         match unsafe {
@@ -433,7 +436,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         }
 
         ffi::device_synchronize()?;
-
+        */
         let loss_ptr = (&loss_ptr).try_into()?;
         let input_ptr =(&input_ptr).try_into()?;
 
@@ -460,6 +463,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(len * 2,self.get_memory_pool())?;
         loss.memcpy_to(loss_ptr.deref_mut(),len * 2 * NO)?;
 
+        /*
         let m = CudaPtr::try_from(0.5)?;
 
         match unsafe {
@@ -492,7 +496,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         }
 
         ffi::device_synchronize()?;
-
+        */
         let output_ptr = CudaTensor1dPtr::<f32,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
         let loss_ptr = (&loss_ptr).try_into()?;
