@@ -105,6 +105,7 @@ fn run() -> Result<(),ApplicationError> {
     opts.optflag("", "yaneuraou", "YaneuraOu format teacher phase.");
     opts.optflag("", "hcpe", "hcpe format teacher phase.");
     opts.optopt("e", "maxepoch", "Number of epochs in batch learning.", "number of epoch");
+    opts.optopt("", "eval", "Test only the evaluation of learned models. The argument is the path to the directory containing the teacher phase for testing", "path string.");
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -154,6 +155,30 @@ fn run() -> Result<(),ApplicationError> {
         }
 
         r
+    } else if let Some(testdir) = matches.opt_str("eval") {
+        let config = ConfigLoader::new("settings.toml")?.load()?;
+
+        let mut evalutor = TrainerCreator::create(String::from("data"),
+                                              String::from("nn.bin"),
+                                              config.learning_rate.unwrap_or(0.01))?;
+
+        if matches.opt_present("yaneuraou") {
+            Learnener::new().eval_test(testdir,"bin",40,
+               &mut evalutor,
+               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+               |evalutor, packed| {
+                   evalutor.test_by_packed_sfens(packed)
+               })?;
+        } else {
+            Learnener::new().eval_test(testdir,"hcpe",38,
+               &mut evalutor,
+               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+               |evalutor, packed| {
+                   evalutor.test_by_packed_hcpe(packed)
+               })?;
+        }
+
+        Ok(())
     } else {
         let agent = UsiAgent::new(Tiger::new(| model_name | EvalutorCreator::create(String::from("data"),model_name.clone())));
 

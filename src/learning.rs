@@ -189,7 +189,7 @@ impl<M> Learnener<M>
                             })
     }
 
-    pub fn learning_batch<'a, F, P>(&mut self, kifudir: String,
+    pub fn learning_batch<F, P>(&mut self, kifudir: String,
                                     testdir: String,
                                     ext: &str,
                                     item_size: usize,
@@ -200,7 +200,7 @@ impl<M> Learnener<M>
                                     save_batch_count: usize,
                                     maxepoch: usize,
                                     sfen_parser_builder: fn() -> P,
-                                    mut test_process: F
+                                    test_process: F
     ) -> Result<(), ApplicationError>
         where F: FnMut(&mut Trainer<M>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
               P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
@@ -303,77 +303,7 @@ impl<M> Learnener<M>
         }
 
         if notify_run_test_arc.load(Ordering::Acquire) {
-            let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
-                .join("tests"))
-                .shuffle(true)
-                .ext(ext.to_string())
-                .batch_size(100)
-                .read_sfen_size(learn_sfen_read_size)
-                .sfen_size(item_size)
-                .send_buffer_size(100);
-
-            let mut dataloader:UnifiedDataLoader<Vec<Vec<u8>>, ApplicationError> = dataloader_builder.build(| sfens | Ok(Some(sfens)))?;
-            let mut successed = 0;
-            let mut estimated_win = 0;
-            let mut win = 0;
-            let mut count = 0;
-            let mut same_moves = 0;
-            let mut compare_moves = 0;
-
-            for packed in dataloader.load()?.ok_or(
-                ApplicationError::InvalidStateError(String::from("Insufficient number of test data"))
-            )?.2.into_iter() {
-                let (s, score, same_move) = test_process(&mut evalutor, packed)?;
-
-                match same_move {
-                    Some(true) => {
-                        compare_moves += 1;
-                        same_moves += 1;
-                    },
-                    Some(false) => {
-                        compare_moves += 1;
-                    },
-                    _ => ()
-                }
-
-                if score >= 0.5 {
-                    estimated_win += 1;
-                }
-
-                let success = match s {
-                    GameEndState::Draw => {
-                        true
-                    },
-                    GameEndState::Win => {
-                        win += 1;
-                        score >= 0.5
-                    },
-                    _ => {
-                        score < 0.5
-                    }
-                };
-
-                match s {
-                    GameEndState::Win => println!("結果　勝ち"),
-                    GameEndState::Lose => println!("結果　負け"),
-                    _ => println!("結果　引き分け")
-                };
-
-                if success {
-                    successed += 1;
-                    println!("勝率{} 正解!", score);
-                } else {
-                    println!("勝率{} 不正解...", score);
-                }
-
-                count += 1;
-            }
-
-            println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
-            println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
-                     (count - estimated_win) as f32 / count as f32 * 100.);
-            println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
-            println!("正解率(指し手の一致率) {}%", same_moves as f32 / compare_moves as f32 * 100.);
+            self.eval_test(testdir,ext,item_size,&mut evalutor,learn_sfen_read_size,test_process)?;
         }
 
         print!("{}局面を学習しました。\n", processed_count);
@@ -402,6 +332,90 @@ impl<M> Learnener<M>
             })?;
             *pending_count = 0;
         }
+
+        Ok(())
+    }
+
+    pub fn eval_test<F>(&mut self,
+                        testdir: String,
+                        ext: &str,
+                        item_size: usize,
+                        evalutor: &mut Trainer<M>,
+                        learn_sfen_read_size: usize,
+                        mut test_process: F
+    ) -> Result<(), ApplicationError>
+        where F: FnMut(&mut Trainer<M>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static, {
+        let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
+            .join("tests"))
+            .shuffle(true)
+            .ext(ext.to_string())
+            .batch_size(100)
+            .read_sfen_size(learn_sfen_read_size)
+            .sfen_size(item_size)
+            .send_buffer_size(100);
+
+        let mut dataloader:UnifiedDataLoader<Vec<Vec<u8>>, ApplicationError> = dataloader_builder.build(| sfens | Ok(Some(sfens)))?;
+        let mut successed = 0;
+        let mut estimated_win = 0;
+        let mut win = 0;
+        let mut count = 0;
+        let mut same_moves = 0;
+        let mut compare_moves = 0;
+
+        for packed in dataloader.load()?.ok_or(
+            ApplicationError::InvalidStateError(String::from("Insufficient number of test data"))
+        )?.2.into_iter() {
+            let (s, score, same_move) = test_process(evalutor, packed)?;
+
+            match same_move {
+                Some(true) => {
+                    compare_moves += 1;
+                    same_moves += 1;
+                },
+                Some(false) => {
+                    compare_moves += 1;
+                },
+                _ => ()
+            }
+
+            if score >= 0.5 {
+                estimated_win += 1;
+            }
+
+            let success = match s {
+                GameEndState::Draw => {
+                    true
+                },
+                GameEndState::Win => {
+                    win += 1;
+                    score >= 0.5
+                },
+                _ => {
+                    score < 0.5
+                }
+            };
+
+            match s {
+                GameEndState::Win => println!("結果　勝ち"),
+                GameEndState::Lose => println!("結果　負け"),
+                _ => println!("結果　引き分け")
+            };
+
+            if success {
+                successed += 1;
+                println!("勝率{} 正解!", score);
+            } else {
+                println!("勝率{} 不正解...", score);
+            }
+
+            count += 1;
+        }
+
+        println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
+        println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
+                 (count - estimated_win) as f32 / count as f32 * 100.);
+        println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
+        println!("正解率(指し手の一致率) {}%", same_moves as f32 / compare_moves as f32 * 100.);
 
         Ok(())
     }
