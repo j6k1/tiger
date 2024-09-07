@@ -349,7 +349,7 @@ impl<M> Learnener<M>
             .join("tests"))
             .shuffle(true)
             .ext(ext.to_string())
-            .batch_size(100)
+            .batch_size(128)
             .read_sfen_size(learn_sfen_read_size)
             .sfen_size(item_size)
             .send_buffer_size(100);
@@ -362,53 +362,57 @@ impl<M> Learnener<M>
         let mut same_moves = 0;
         let mut compare_moves = 0;
 
-        for packed in dataloader.load()?.ok_or(
-            ApplicationError::InvalidStateError(String::from("Insufficient number of test data"))
-        )?.2.into_iter() {
-            let (s, score, same_move) = test_process(evalutor, packed)?;
+        'outer: while let Some((_,_,batch)) = dataloader.load()? {
+            for packed in batch.into_iter() {
+                let (s, score, same_move) = test_process(evalutor, packed)?;
 
-            match same_move {
-                Some(true) => {
-                    compare_moves += 1;
-                    same_moves += 1;
-                },
-                Some(false) => {
-                    compare_moves += 1;
-                },
-                _ => ()
-            }
-
-            if score >= 0.5 {
-                estimated_win += 1;
-            }
-
-            let success = match s {
-                GameEndState::Draw => {
-                    true
-                },
-                GameEndState::Win => {
-                    win += 1;
-                    score >= 0.5
-                },
-                _ => {
-                    score < 0.5
+                match same_move {
+                    Some(true) => {
+                        compare_moves += 1;
+                        same_moves += 1;
+                    },
+                    Some(false) => {
+                        compare_moves += 1;
+                    },
+                    _ => ()
                 }
-            };
 
-            match s {
-                GameEndState::Win => println!("結果　勝ち"),
-                GameEndState::Lose => println!("結果　負け"),
-                _ => println!("結果　引き分け")
-            };
+                if score >= 0.5 {
+                    estimated_win += 1;
+                }
 
-            if success {
-                successed += 1;
-                println!("勝率{} 正解!", score);
-            } else {
-                println!("勝率{} 不正解...", score);
+                let success = match s {
+                    GameEndState::Draw => {
+                        true
+                    },
+                    GameEndState::Win => {
+                        win += 1;
+                        score >= 0.5
+                    },
+                    _ => {
+                        score < 0.5
+                    }
+                };
+
+                match s {
+                    GameEndState::Win => println!("結果　勝ち"),
+                    GameEndState::Lose => println!("結果　負け"),
+                    _ => println!("結果　引き分け")
+                };
+
+                if success {
+                    successed += 1;
+                    println!("勝率{} 正解!", score);
+                } else {
+                    println!("勝率{} 不正解...", score);
+                }
+
+                count += 1;
+
+                if count >= 1000 {
+                    break 'outer;
+                }
             }
-
-            count += 1;
         }
 
         println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
