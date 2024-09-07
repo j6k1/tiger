@@ -409,7 +409,7 @@ impl<M> Learnener<M>
 
                 count += 1;
 
-                if count >= 1000 {
+                if count >= 300 {
                     break 'outer;
                 }
             }
