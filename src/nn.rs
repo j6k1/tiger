@@ -999,6 +999,7 @@ impl<M> Trainer<M>
                 sfens_with_extended.push((teban, banmen, mc, game_result, score));
             }
 
+            /*
             let (sente_win_count, gote_win_count) = sfens_with_extended.iter()
                 .map(|(teban, _, _, es, _)| {
                     let (s, g) = match (es, teban) {
@@ -1023,7 +1024,7 @@ impl<M> Trainer<M>
             } else {
                 (1., sente_win_count as f32 / gote_win_count as f32)
             };
-
+            */
             let batch = sfens_with_extended.into_iter()
                 .map(|(teban, banmen, mc, es, score)| {
                     let state = State::new(banmen);
@@ -1038,16 +1039,20 @@ impl<M> Trainer<M>
                     t[0] = {
                         let t = match es {
                             GameEndState::Win if teban == Teban::Sente => {
-                                sente_rate
+                                //sente_rate
+                                1.
                             },
                             GameEndState::Win => {
-                                gote_rate
+                                //gote_rate
+                                1.
                             },
                             GameEndState::Lose if teban == Teban::Sente => {
-                                0.5 - 0.5 * gote_rate
+                                //0.5 - 0.5 * gote_rate
+                                0.
                             },
                             GameEndState::Lose => {
-                                0.5 - 0.5 * sente_rate
+                                //0.5 - 0.5 * sente_rate
+                                0.
                             },
                             _ => 0.5f32
                         };
@@ -1146,6 +1151,7 @@ impl<M> Trainer<M>
                 sfens_with_extended.push((teban, banmen, mc, game_result, score));
             }
 
+            /*
             let (sente_win_count, gote_win_count) = sfens_with_extended.iter().map(|(_, _, _, es, _)| {
                 match es {
                     GameResult::Draw => (0, 0),
@@ -1161,7 +1167,7 @@ impl<M> Trainer<M>
             } else {
                 (1., sente_win_count as f32 / gote_win_count as f32)
             };
-
+            */
             let batch = sfens_with_extended.into_iter()
                 .map(|(teban, banmen, mc, es, score)| {
                     let state = State::new(banmen);
@@ -1176,16 +1182,20 @@ impl<M> Trainer<M>
                             (1., GameEndState::Draw)
                         },
                         (GameResult::SenteWin, Teban::Sente) => {
-                            (sente_rate, GameEndState::Win)
+                            //(sente_rate, GameEndState::Win)
+                            (1., GameEndState::Win)
                         },
                         (GameResult::GoteWin, Teban::Gote) => {
-                            (gote_rate, GameEndState::Win)
+                            //(gote_rate, GameEndState::Win)
+                            (1., GameEndState::Win)
                         },
                         (GameResult::SenteWin, Teban::Gote) => {
-                            (sente_rate, GameEndState::Lose)
+                            //(sente_rate, GameEndState::Lose)
+                            (1., GameEndState::Lose)
                         },
                         (GameResult::GoteWin, Teban::Sente) => {
-                            (gote_rate, GameEndState::Lose)
+                            //(gote_rate, GameEndState::Lose)
+                            (1., GameEndState::Lose)
                         }
                     };
 
@@ -1197,7 +1207,8 @@ impl<M> Trainer<M>
                                 rate
                             }
                             GameEndState::Lose => {
-                                0.5 - 0.5 * rate
+                                //0.5 - 0.5 * rate
+                                0.
                             },
                             _ => 0.5f32
                         };
