@@ -940,8 +940,7 @@ impl<M> Trainer<M>
 
         Rule::legal_moves_all_by_strategy::<NonEvasionsAll>(teban,state,&mc,&mut picker)?;
 
-        let mut best_score = None;
-        let mut best_move = None;
+        let (mut batch,mut mvs) = (vec![],vec![]);
 
         for m in &mut picker {
             let next = Rule::apply_move_none_check(state, teban, &mc, m.to_applied_move());
@@ -949,25 +948,32 @@ impl<M> Trainer<M>
             match next {
                 (state, mc, _) => {
                     let input = HalfKP::new(
-                                    InputCreator::make_input(teban.opposite(),&state,&mc),
-                                    InputCreator::make_input(teban,&state,&mc)
+                        InputCreator::make_input(teban.opposite(), &state, &mc),
+                        InputCreator::make_input(teban, &state, &mc)
                     );
 
-                    let r = self.nn.forward_all(input)?;
-                    let r = r[0].clone() - 0.5;
-
-                    match best_score {
-                        None => {
-                            best_score = Some(-r);
-                            best_move = Some(m);
-                        },
-                        Some(s) if -r > s => {
-                            best_score = Some(-r);
-                            best_move = Some(m);
-                        },
-                        _ => ()
-                    }
+                    batch.push(input);
+                    mvs.push(m);
                 }
+            }
+        }
+
+        let mut best_score = None;
+        let mut best_move = None;
+
+        for (r,m) in self.nn.batch_forward(batch.into())?.iter().zip(mvs) {
+            let r = r[0] - 0.5;
+
+            match best_score {
+                None => {
+                    best_score = Some(-r);
+                    best_move = Some(m);
+                },
+                Some(s) if -r > s => {
+                    best_score = Some(-r);
+                    best_move = Some(m);
+                },
+                _ => ()
             }
         }
 
