@@ -256,7 +256,7 @@ impl<M> Learnener<M>
                 if resume {
                     dataloader_builder = dataloader_builder
                         .start_filename(Some(checkpoint.filename.clone()))
-                        .processed_items(checkpoint.item + 1)
+                        .processed_items(checkpoint.item)
                 }
             }
 
