@@ -2,18 +2,16 @@ use std::fmt::Debug;
 use std::mem;
 use std::ops::DerefMut;
 
-use libc::{c_int, size_t};
+use libc::{size_t};
 use libc::c_uint;
 use cuda_runtime_sys::dim3;
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
-use rcublas_sys::cublasSscal_v2;
-use rcublas_sys::{cublasStatus_t};
 
 use nncombinator::arr::SerializedVec;
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawMutSlice, AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{AsMutPtr, AsPtr, CudaConstPtr, CudaMemoryPoolPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, ffi, Kernel, Memory, MemoryMoveTo};
+use nncombinator::cuda::{CudaConstPtr, CudaMemoryPoolPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, Memory, MemoryMoveTo};
 use nncombinator::device::{DeviceCpu, DeviceGpu, DeviceMemoryPool};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
