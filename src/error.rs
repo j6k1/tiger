@@ -35,6 +35,7 @@ pub enum ApplicationError {
     DataLoadError(DataLoadError),
     CudaError(CudaError),
     RecvError(RecvError),
+    CrossbeamChannelRecvError(crossbeam_channel::RecvError),
     RecvTimeoutError(RecvTimeoutError),
     PoisonError(String),
     InfoSendError(InfoSendError),
@@ -69,6 +70,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::DataLoadError(ref e) => write!(f,"{}",e),
             ApplicationError::CudaError(ref e) => write!(f, "An error occurred in the process of cuda. ({})",e),
             ApplicationError::RecvError(ref e) => write!(f, "{}",e),
+            ApplicationError::CrossbeamChannelRecvError(ref e) => write!(f,"{}",e),
             ApplicationError::RecvTimeoutError(ref e) => write!(f,"{}",e),
             ApplicationError::PoisonError(ref s) => write!(f,"{}",s),
             ApplicationError::InfoSendError(ref e) => write!(f,"{}",e),
@@ -105,6 +107,7 @@ impl error::Error for ApplicationError {
             ApplicationError::DataLoadError(_) => "An error occurred during the loading process of training data.",
             ApplicationError::CudaError(_) => "An error occurred in the process of cuda.",
             ApplicationError::RecvError(_) => "An error occurred while receiving the message.",
+            ApplicationError::CrossbeamChannelRecvError(_) => "An error occurred while receiving a message using crossbeam-channel.",
             ApplicationError::RecvTimeoutError(RecvTimeoutError::Disconnected) => "Disconnected while waiting for reception.",
             ApplicationError::RecvTimeoutError(RecvTimeoutError::Timeout) => "Timeout occurred while waiting to receive.",
             ApplicationError::PoisonError(_) => "panic occurred during thread execution.",
@@ -141,6 +144,7 @@ impl error::Error for ApplicationError {
             ApplicationError::DataLoadError(ref e) => Some(e),
             ApplicationError::CudaError(_) => None,
             ApplicationError::RecvError(ref e) => Some(e),
+            ApplicationError::CrossbeamChannelRecvError(ref e) => Some(e),
             ApplicationError::RecvTimeoutError(ref e) => Some(e),
             ApplicationError::PoisonError(_) => None,
             ApplicationError::InfoSendError(ref e) => Some(e),
@@ -232,6 +236,11 @@ impl From<CudaError> for ApplicationError {
 impl From<RecvError> for ApplicationError {
     fn from(err: RecvError) -> ApplicationError {
         ApplicationError::RecvError(err)
+    }
+}
+impl From<crossbeam_channel::RecvError> for ApplicationError {
+    fn from(err: crossbeam_channel::RecvError) -> ApplicationError {
+        ApplicationError::CrossbeamChannelRecvError(err)
     }
 }
 impl From<RecvTimeoutError> for ApplicationError {
