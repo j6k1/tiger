@@ -67,7 +67,7 @@ impl<T> ZobristHash<T>
         ZobristHash {
             mhash:mhash,
             shash:shash,
-            teban:teban
+            teban:teban.opposite()
         }
     }
 

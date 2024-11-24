@@ -268,7 +268,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 _ => None
             };
 
-            let zh = zh.updated(&env.hasher, teban.opposite(), state.get_banmen(), mc, m.to_applied_move(), &o);
+            let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
@@ -634,7 +634,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             depth += 1;
         }
 
-        let zh = gs.zh.updated(&env.hasher, gs.teban.opposite(), gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
+        let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
         let next = Rule::apply_move_none_check(&gs.state, gs.teban, gs.mc, m.to_applied_move());
 

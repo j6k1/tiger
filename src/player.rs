@@ -264,7 +264,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
 
                                                   let zh = match m {
                                                       &Some(m) => {
-                                                          zh = zh.updated(&self.hasher,t.opposite(),&banmen,&mc,m,&o);
+                                                          zh = zh.updated(&self.hasher,t,&banmen,&mc,m,&o);
                                                           zh
                                                       },
                                                       &None => {
