@@ -205,7 +205,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     fn qsearch(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
                env:&mut Environment<L,S>,
                zh: &ZobristHash<u64>,
-               history:&mut HashSet<(u64,u64)>,
+               history:&mut HashSet<(Teban,u64,u64)>,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
 
         let score = {
@@ -237,8 +237,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if score > alpha {
             alpha = score;
         }
-        
-        if score >= beta || history.contains(&zh.keys()) {
+
+        let (mk,sk) = zh.keys();
+
+        if score >= beta || history.contains(&(teban.opposite(),mk,sk)) {
             return Ok(score);
         }
 
@@ -250,16 +252,19 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             return Ok(score);
         }
 
-        let mut bestscore = Score::NEGINFINITE;
+        let (mk,sk) = zh.keys();
 
-        history.insert(zh.keys());
+        history.insert((teban.opposite(),mk,sk));
+
+        let mut bestscore = Score::NEGINFINITE;
 
         for m in picker {
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
             } {
-                history.remove(&zh.keys());
+                history.remove(&(teban.opposite(),mk,sk));
+
                 if depth == 0 {
                     return Ok(Score::INFINITE);
                 } else {
@@ -292,7 +297,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             }
         }
 
-        history.remove(&zh.keys());
+        history.remove(&(teban.opposite(),mk,sk));
 
         Ok(bestscore)
     }

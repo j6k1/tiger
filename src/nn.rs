@@ -26,7 +26,7 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{AdagradBuilder, Optimizer, OptimizerBuilder};
+use nncombinator::optimizer::{AdamBuilder, Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
@@ -773,7 +773,7 @@ impl EvalutorCreator {
 
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder = AdagradBuilder::new(&device)
+        let optimizer_builder = AdamBuilder::new(&device)
             .lr(0.001)
             .weight_decay(0.0001);
 
@@ -866,7 +866,7 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&memory_pool)?;
 
-        let optimizer_builder = AdagradBuilder::new(&device)
+        let optimizer_builder = AdamBuilder::new(&device)
             .lr(learning_rate)
             .weight_decay(0.0001);
 
