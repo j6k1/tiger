@@ -339,8 +339,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransform
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
     type LossInput = <DeviceCpu<U> as DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::Output;
     type LossOutput = ();
@@ -374,8 +374,8 @@ for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,D
           DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
           [(); NO * 2]: {
     type LossInput = <DeviceGpu<U> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO>>::Output;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
@@ -407,8 +407,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransfor
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr<U,NO>> {
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>> {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Arr2<U,NI,NO>,Arr<U,NO>)>;
 
     #[inline]
@@ -430,8 +430,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> UpdateWeight<U>
           OP: Optimizer<U,DeviceGpu<U>> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor2dPtr<U,NI,NO>> {
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>> {
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>)>;
 
     #[inline]
@@ -452,8 +452,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {}
 impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U>
     for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
@@ -466,8 +466,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U>
           DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
           [(); NO * 2]: {}
 impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> + Loss<U> +
@@ -561,8 +561,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
           <I as BatchDataType>::Type: Debug + BatchSize,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
     type BatchLossInput = <DeviceCpu<U> as DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::BatchOutput;
     type BatchLossOutput = ();
@@ -599,8 +599,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
           <I as BatchDataType>::Type: Debug + BatchSize,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
           [(); NO * 2]: {
     type BatchLossInput = <DeviceGpu<U> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO>>::BatchOutput;
     type BatchLossOutput = ();
@@ -634,8 +634,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLa
           <I as BatchDataType>::Type: Debug + BatchSize,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a mut Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
 }
 impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U>
@@ -651,8 +651,8 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U>
           <I as BatchDataType>::Type: Debug + BatchSize,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a mut <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
           [(); NO * 2]: {
 }
 /// Trait for LinearLayer instance creation

@@ -9,7 +9,7 @@ use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelI
 
 use nncombinator::arr::SerializedVec;
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
-use nncombinator::mem::{AsRawMutSlice, AsRawSlice};
+use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::cuda::{CudaConstPtr, CudaMemoryPoolPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, Memory, MemoryMoveTo};
 use nncombinator::device::{DeviceCpu, DeviceGpu, DeviceMemoryPool};
@@ -92,16 +92,14 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         {
             let d = U::from_f64(2.).unwrap();
 
-            let acc = <&mut [U;NO]>::try_from(acc.as_raw_mut_slice())?;
-
             let (sl,ol) = loss.as_raw_slice().split_at(NO);
 
-            for i in 0..NO {
-                acc[i] += sl[i] / d;
+            for (acc,s) in acc.iter_mut().zip(sl.iter()) {
+                *acc += *s / d;
             }
 
-            for i in 0..NO {
-                acc[i] += ol[i] / d;
+            for (acc,o) in acc.iter_mut().zip(ol.iter()) {
+                *acc += *o / d;
             }        
         }
 
@@ -180,16 +178,14 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         {
             let d = U::from_f64(2.).unwrap();
 
-            let acc = <&mut [U;NO]>::try_from(acc.as_raw_mut_slice())?;
-
             let (sl,ol) = g.as_raw_slice().split_at(NO);
 
-            for i in 0..NO {
-                acc[i] += sl[i] / d;
+            for (acc,s) in acc.iter_mut().zip(sl.iter()) {
+                *acc += *s / d;
             }
 
-            for i in 0..NO {
-                acc[i] += ol[i] / d;
+            for (acc,o) in acc.iter_mut().zip(ol.iter()) {
+                *acc += *o / d;
             }        
         }
 
