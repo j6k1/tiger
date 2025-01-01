@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 use std::mem;
-use std::ops::DerefMut;
 
 use libc::{size_t};
 use libc::c_uint;
@@ -11,7 +10,7 @@ use nncombinator::arr::SerializedVec;
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{CudaConstPtr, CudaMemoryPoolPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, Memory, MemoryMoveTo};
+use nncombinator::cuda::{CudaConstPtr, CudaMemoryPoolPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo};
 use nncombinator::device::{DeviceCpu, DeviceGpu, DeviceMemoryPool};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
@@ -242,7 +241,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let input = input.to_vec();
 
         input_ptr.memcpy(input.as_ptr(),NI * 2)?;
-        loss.memcpy_to(loss_ptr.deref_mut(),NO * 2)?;
+        loss.memcpy_to(&mut loss_ptr,NO * 2)?;
 
         /*
         let m = CudaPtr::try_from(0.5)?;
@@ -300,7 +299,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
     #[inline]
     fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a CudaTensor1dPtr<f32,{NO*2}>) -> Result<CudaTensor1dPtr<f32,NO>,TrainingError> {
         let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(2,self.get_memory_pool())?;
-        loss.memcpy_to(loss_ptr.deref_mut(),NO*2)?;
+        loss.memcpy_to(&mut loss_ptr,NO*2)?;
 
         /*
         let m = CudaPtr::try_from(0.5)?;
@@ -395,7 +394,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let output_ptr = CudaTensor2dPtr::<f32,NI,NO>::with_initializer(self.get_memory_pool(),Default::default)?;
 
         input_ptr.memcpy(input.as_ptr(),NI * 2 * len)?;
-        loss.memcpy_to(loss_ptr.deref_mut(),NO * 2 * len)?;
+        loss.memcpy_to(&mut loss_ptr,NO * 2 * len)?;
 
         /*
         let m = CudaPtr::try_from(0.5)?;
@@ -455,7 +454,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<
         let len = loss.size();
 
         let mut loss_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,NO>>::new(len * 2,self.get_memory_pool())?;
-        loss.memcpy_to(loss_ptr.deref_mut(),len * 2 * NO)?;
+        loss.memcpy_to(&mut loss_ptr,len * 2 * NO)?;
 
         /*
         let m = CudaPtr::try_from(0.5)?;

@@ -14,7 +14,7 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ReLu, Sigmoid};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
-use nncombinator::cuda::{CudaTensor1dPtr, CudaTensor2dPtr, Memory};
+use nncombinator::cuda::{CudaTensor1dPtr, CudaTensor2dPtr, ReadMemory, WriteMemory};
 use nncombinator::cuda::mem::{Alloctype, MemoryPool};
 use nncombinator::device::{Device, DeviceCpu, DeviceGpu, DeviceMemoryPool};
 use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
