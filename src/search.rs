@@ -256,7 +256,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 LegalMove::To(m) => m.obtained(),
                 _ => None
             } {
-                history.remove(&(teban.opposite(),mk,sk));
+                history.remove(&(teban,mk,sk));
 
                 return Ok(Score::INFINITE);
             }
