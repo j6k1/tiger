@@ -217,26 +217,40 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
-        //if Rule::in_check(teban.opposite(),state) {
-        //    Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+        let checked = Rule::in_check(teban.opposite(),state);
 
-        //    if picker.len() == 0 {
-        //        return Ok(Score::NEGINFINITE);
-        //    }
-        //} else {
+        if checked {
+            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+
+            if picker.len() == 0 {
+                return Ok(Score::NEGINFINITE);
+            }
+        } else {
             Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban, state, &mut picker)?;
 
             if picker.len() == 0 {
                 score = Score::Value(evalutor.evalute(teban, state, mc)?);
                 return Ok(score);
             }
-        //}
+        }
 
         let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
 
         for m in picker {
+            if checked {
+                match m {
+                    LegalMove::To(m) if m.obtained().is_none() => {
+                        continue;
+                    },
+                    LegalMove::Put(m) => {
+                        continue;
+                    },
+                    _ => ()
+                }
+            }
+
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
