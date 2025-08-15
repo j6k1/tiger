@@ -8,9 +8,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
                                                  const size_t batch_size) {
     extern __shared__ char smem[];
 
-    T *sdata_sum = reinterpret_cast<T*>(&smem[0]);
-    T *sdata_c = reinterpret_cast<T*>(&smem[2 * sizeof(T)]);
-
     const size_t batch_index = blockIdx.x / output_len;
     size_t start_index = 0;
     size_t end_index = 0;
@@ -23,112 +20,22 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
     if (blockIdx.x < output_len * batch_size) {
         const size_t out_index = blockIdx.x - batch_index * output_len;
 
-        T c = 0.0;
         T acc = 0.0;
 
         const size_t tid = threadIdx.x;
-        const size_t tid_warp = threadIdx.x % 32;
 
-        if (tid < 2) {
-            sdata_c[tid] = 0.0;
-            sdata_sum[tid] = 0.0;
-        }
-        __syncthreads();
-
-        if (threadIdx.x < end_index - start_index) {
-            acc = units[indexes[start_index + tid] * output_len + out_index];
+        for (size_t i = tid; i < end_index - start_index; i += 32) {
+            acc += units[indexes[start_index + i] * output_len + out_index];
         }
 
-        /**
-         * Kahan summation algorithm
-         */
-        {
-            T dc = 0.0;
-            T dacc = 0.0;
-
-            dc = __shfl_down_sync(0xffffffff,c,16);
-            dacc = __shfl_down_sync(0xffffffff,acc,16);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,8);
-            dacc = __shfl_down_sync(0xffffffff,acc,8);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,4);
-            dacc = __shfl_down_sync(0xffffffff,acc,4);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,2);
-            dacc = __shfl_down_sync(0xffffffff,acc,2);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-
-            dc = __shfl_down_sync(0xffffffff,c,1);
-            dacc = __shfl_down_sync(0xffffffff,acc,1);
-
-            {
-                const T y = dacc - c - dc;
-                const T t = acc + y;
-                c = (t - acc) - y;
-                acc = t;
-            }
-        }
-
-        if (tid_warp == 0) {
-            sdata_c[tid / 32] = c;
-            sdata_sum[tid / 32] = acc;
-        }
-        __syncthreads();
-
-        c = 0.0;
-        acc = 0.0;
-
-        if (tid < 2) {
-            c = sdata_c[tid];
-            acc = sdata_sum[tid];
-        }
-        __syncthreads();
-
-        T dc = 0.0;
-        T dacc = 0.0;
-
-        dc = __shfl_down_sync(0xffffffff,c,1);
-        dacc = __shfl_down_sync(0xffffffff,acc,1);
-
-        {
-            const T y = dacc - c - dc;
-            const T t = acc + y;
-            c = (t - acc) - y;
-            acc = t;
-        }
+        acc += __shfl_down_sync(0xffffffff,acc,16);
+        acc += __shfl_down_sync(0xffffffff,acc,8);
+        acc += __shfl_down_sync(0xffffffff,acc,4);
+        acc += __shfl_down_sync(0xffffffff,acc,2);
+        acc += __shfl_down_sync(0xffffffff,acc,1);
 
         if (tid == 0) {
-            const T y = bias[out_index] - c;
-            const T t = acc + y;
-            output[blockIdx.x] = t;
+            output[blockIdx.x] = acc + bias[out_index];
         }
     }
 }

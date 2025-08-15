@@ -26,13 +26,14 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{AdamBuilder, Optimizer, OptimizerBuilder};
+use nncombinator::optimizer::{AdamBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
+use rayon::prelude::{ParallelIterator,IntoParallelIterator};
 use usiagent::event::{GameEndState};
 use usiagent::math::Prng;
 use usiagent::movepick::RandomPicker;
@@ -856,7 +857,7 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let memory_pool = Arc::new(Mutex::new(MemoryPool::with_size(1024 * 1024 * 1024 * 4,Alloctype::Device)?));
+        let memory_pool = Arc::new(Mutex::new(MemoryPool::with_size(1024 * 1024 * 1024 * 8,Alloctype::Device)?));
 
         let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
 
@@ -866,7 +867,8 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&memory_pool)?;
 
-        let optimizer_builder = AdamBuilder::new(&device)
+//        let optimizer_builder = AdamBuilder::new(&device)
+        let optimizer_builder = SGDBuilder::new(&device)
             .lr(learning_rate)
             .weight_decay(0.0001);
 
@@ -936,7 +938,7 @@ impl<M> Trainer<M>
         let mut rnd = rand::thread_rng();
         let mut picker = RandomPicker::new(Prng::new(rnd.gen()));
 
-        Rule::legal_moves_all_by_strategy::<NonEvasionsAll>(teban,state,&mc,&mut picker)?;
+        Rule::generate_moves::<NonEvasionsAll>(teban,state,&mc,&mut picker)?;
 
         let (mut batch,mut mvs) = (vec![],vec![]);
 
@@ -981,49 +983,26 @@ impl<M> Trainer<M>
     pub fn make_packed_sfens_parser<'a>()
         -> impl FnMut(Vec<Vec<u8>>)
                 -> Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
-        let mut packed_sfen_reader = PackedSfenReader::new();
-
         move | packed_sfens | {
-            let mut sfens_with_extended = Vec::with_capacity(packed_sfens.len());
+            let sfens_with_extended = packed_sfens.into_par_iter().map(|entry|  {
+                let mut packed_sfen_reader = PackedSfenReader::new();
 
-            for entry in packed_sfens.into_iter() {
                 let ((teban, banmen, mc), yaneuraou::haffman_code::ExtendFields {
                     value: score,
                     best_move: _,
                     end_ply: _,
                     game_result
-                }) = packed_sfen_reader.read_sfen_with_extended(entry)?;
+                }) = match packed_sfen_reader.read_sfen_with_extended(entry) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return Err(e)
+                    }
+                };
 
-                sfens_with_extended.push((teban, banmen, mc, game_result, score));
-            }
+                Ok((teban, banmen, mc, game_result, score))
+            }).collect::<Result<Vec<_>,_>>()?;
 
-            /*
-            let (sente_win_count, gote_win_count) = sfens_with_extended.iter()
-                .map(|(teban, _, _, es, _)| {
-                    let (s, g) = match (es, teban) {
-                        (&GameEndState::Draw, _) => {
-                            (0, 0)
-                        },
-                        (&GameEndState::Win, &Teban::Sente) | (&GameEndState::Lose, &Teban::Gote) => {
-                            (1, 0)
-                        },
-                        _ => {
-                            (0, 1)
-                        }
-                    };
-
-                    (s, g)
-                }).fold((0, 0), |acc, (s, g)| {
-                (acc.0 + s, acc.1 + g)
-            });
-
-            let (sente_rate, gote_rate) = if sente_win_count >= gote_win_count {
-                (gote_win_count as f32 / sente_win_count as f32, 1.)
-            } else {
-                (1., sente_win_count as f32 / gote_win_count as f32)
-            };
-            */
-            let batch = sfens_with_extended.into_iter()
+            let batch = sfens_with_extended.into_par_iter()
                 .map(|(teban, banmen, mc, es, score)| {
                     let state = State::new(banmen);
 
@@ -1059,12 +1038,16 @@ impl<M> Trainer<M>
                     };
 
                     (t, input)
-                }).fold((Vec::new(), Vec::new()), |mut acc, (t, i)| {
-                acc.0.push(t);
-                acc.1.push(i);
+                }).fold(|| (Vec::new(), Vec::new()), |mut acc, (t, i)| {
+                    acc.0.push(t);
+                    acc.1.push(i);
 
-                acc
-            });
+                    acc
+                }).reduce(|| (Vec::new(),Vec::new()), | mut acc, (mut t,mut i)| {
+                    acc.0.append(&mut t);
+                    acc.1.append(&mut i);
+                    acc
+                });
 
             Ok(Some(batch))
         }
@@ -1134,39 +1117,25 @@ impl<M> Trainer<M>
     pub fn make_hcpe_parser<'a>()
         -> impl FnMut(Vec<Vec<u8>>) ->
                 Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
-        let mut hcpe_reader = HcpeReader::new();
-
         move | hcpes | {
-            let mut sfens_with_extended = Vec::with_capacity(hcpes.len());
+            let sfens_with_extended = hcpes.into_par_iter().map(|entry| {
+                let mut hcpe_reader = HcpeReader::new();
 
-            for entry in hcpes.into_iter() {
                 let ((teban, banmen, mc), hcpe::haffman_code::ExtendFields {
                     eval: score,
                     best_move: _,
                     game_result
-                }) = hcpe_reader.read_sfen_with_extended(entry)?;
+                }) = match hcpe_reader.read_sfen_with_extended(entry) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
 
-                sfens_with_extended.push((teban, banmen, mc, game_result, score));
-            }
+                Ok((teban, banmen, mc, game_result, score))
+            }).collect::<Result<Vec<_>,_>>()?;
 
-            /*
-            let (sente_win_count, gote_win_count) = sfens_with_extended.iter().map(|(_, _, _, es, _)| {
-                match es {
-                    GameResult::Draw => (0, 0),
-                    GameResult::SenteWin => (1, 0),
-                    _ => (0, 1)
-                }
-            }).fold((0, 0), |acc, (s, g)| {
-                (acc.0 + s, acc.1 + g)
-            });
-
-            let (sente_rate, gote_rate) = if sente_win_count >= gote_win_count {
-                (gote_win_count as f32 / sente_win_count as f32, 1.)
-            } else {
-                (1., sente_win_count as f32 / gote_win_count as f32)
-            };
-            */
-            let batch = sfens_with_extended.into_iter()
+            let batch = sfens_with_extended.into_par_iter()
                 .map(|(teban, banmen, mc, es, score)| {
                     let state = State::new(banmen);
 
@@ -1215,11 +1184,15 @@ impl<M> Trainer<M>
                     };
 
                     (t, input)
-                }).fold((Vec::new(), Vec::new()), |mut acc, (t, i)| {
-                acc.0.push(t);
-                acc.1.push(i);
-                acc
-            });
+                }).fold(|| (Vec::new(), Vec::new()), | mut acc, (t, i)| {
+                    acc.0.push(t);
+                    acc.1.push(i);
+                    acc
+                }).reduce(|| (Vec::new(),Vec::new()), | mut acc, (mut t,mut i)| {
+                    acc.0.append(&mut t);
+                    acc.1.append(&mut i);
+                    acc
+                });
 
             Ok(Some(batch))
         }

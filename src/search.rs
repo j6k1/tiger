@@ -19,7 +19,7 @@ use usiagent::math::Prng;
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
 use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
@@ -246,7 +246,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
-        Rule::legal_moves_from_banmen_by_strategy::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
+        if Rule::in_check(teban.opposite(),state) {
+            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+        } else {
+            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban, state, &mut picker)?;
+        }
 
         if picker.len() == 0 {
             return Ok(score);
@@ -730,7 +734,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let prev_move = gs.m.clone();
 
-        if Rule::is_mate(gs.teban,&gs.state) {
+        if Rule::in_check(gs.teban,&gs.state) {
             if let Some(m) = prev_move.clone() {
                 let mut mvs = VecDeque::new();
 
@@ -758,10 +762,16 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
-        for i in 0..3 {
+        let count = if Rule::in_check(gs.teban.opposite(),gs.state) {
+            2
+        } else {
+            3
+        };
+
+        for i in 0..count {
             if i == 0 {
                 let r = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone());
-                
+
                 if let Some(TTPartialEntry {
                                 depth: _,
                                 score: _,
@@ -776,7 +786,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             mvs.push_front(m);
                             prev_move.map(|m| mvs.push_front(m));
 
-                            return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                            return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
                         }
 
                         match self.search_child_node(env, gs, m, alpha, event_dispatcher, evalutor)? {
@@ -814,10 +824,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
 
                 continue;
+            } else if i == 1 && Rule::in_check(gs.teban.opposite(),gs.state) {
+                Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             } else if i == 1 {
-                Rule::legal_moves_all_by_strategy::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             } else {
-                Rule::legal_moves_all_by_strategy::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
             for m in &mut picker {
