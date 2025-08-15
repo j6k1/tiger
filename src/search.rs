@@ -212,7 +212,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let (mk,sk) = zh.keys();
 
-        if score >= beta || history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached(env) {
+        if score >= beta {
+            return Ok(score);
+        } else if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached(env) {
+            score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
 
@@ -239,6 +242,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.insert((teban,mk,sk));
 
+        let mut count = 0;
+
         for m in picker {
             if checked {
                 match m {
@@ -251,6 +256,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     _ => ()
                 }
             }
+
+            count += 1;
 
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
@@ -283,6 +290,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         }
 
         history.remove(&(teban,mk,sk));
+
+        if count == 0 {
+            score = Score::Value(evalutor.evalute(teban, state, mc)?);
+        }
 
         Ok(score)
     }
