@@ -192,7 +192,7 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     sender:Sender<Result<RootEvaluationResult, ApplicationError>>,
     thread_pool:ThreadPool
 }
-const TIMELIMIT_MARGIN:u64 = 5;
+const TIMELIMIT_MARGIN:u64 = 50;
 const QSEARCH_LIMIT:usize = 8;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
@@ -286,6 +286,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             if score > alpha {
                 alpha = score;
+            }
+
+            if self.timelimit_reached(env) {
+                break;
             }
         }
 
