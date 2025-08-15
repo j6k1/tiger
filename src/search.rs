@@ -212,7 +212,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let (mk,sk) = zh.keys();
 
-        if score >= beta || history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT {
+        if score >= beta || history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached(env) {
             return Ok(score);
         }
 
