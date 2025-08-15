@@ -192,7 +192,8 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     sender:Sender<Result<RootEvaluationResult, ApplicationError>>,
     thread_pool:ThreadPool
 }
-const TIMELIMIT_MARGIN:u64 = 50;
+const TIMELIMIT_MARGIN:u64 = 5;
+const QSEARCH_LIMIT:usize = 8;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -211,7 +212,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let (mk,sk) = zh.keys();
 
-        if score >= beta || history.contains(&(teban,mk,sk)) {
+        if score >= beta || history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT {
             return Ok(score);
         }
 
@@ -281,7 +282,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             }
         }
 
-        history.remove(&(teban.opposite(),mk,sk));
+        history.remove(&(teban,mk,sk));
 
         Ok(score)
     }
