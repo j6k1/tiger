@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use libc::size_t;
+use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::cuda::ToCuda;
 use nncombinator::device::DeviceGpu;
 use nncombinator::error::TypeConvertError;
@@ -16,10 +17,12 @@ pub struct HalfKP<const N:usize> {
 impl<const N:usize> BatchDataType for HalfKP<N> {
     type Type = HalfKPList<N>;
 }
-impl<U,const N:usize> ToCuda<U> for HalfKP<N> where U: UnitValue<U> {
+impl<U,A,const N:usize> ToCuda<U,A> for HalfKP<N>
+    where U: UnitValue<U>,
+          A: CudaAllocator {
     type Output = Self;
 
-    fn to_cuda(self, _: &DeviceGpu<U>) -> Result<Self::Output, TypeConvertError> {
+    fn to_cuda(self, _: &DeviceGpu<U,A>) -> Result<Self::Output, TypeConvertError> {
         Ok(self)
     }
 }
@@ -179,10 +182,12 @@ impl<const N: usize> BatchSize for HalfKPList<N> {
         self.items.len()
     }
 }
-impl<U,const N:usize> ToCuda<U> for HalfKPList<N> where U: UnitValue<U> {
+impl<U,A,const N:usize> ToCuda<U,A> for HalfKPList<N>
+    where U: UnitValue<U>,
+          A: CudaAllocator {
    type Output = Self;
 
-    fn to_cuda(self, _: &DeviceGpu<U>) -> Result<Self::Output, TypeConvertError> {
+    fn to_cuda(self, _: &DeviceGpu<U,A>) -> Result<Self::Output, TypeConvertError> {
         Ok(self)
     }
 }

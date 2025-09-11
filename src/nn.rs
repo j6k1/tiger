@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::ops::{DerefMut};
 use std::path::{Path};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::fs;
 use std::marker::PhantomData;
 use libc::size_t;
@@ -14,9 +13,9 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ReLu, Sigmoid};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
-use nncombinator::cuda::{CudaTensor1dPtr, CudaTensor2dPtr, ReadMemory, WriteMemory};
-use nncombinator::cuda::mem::{Alloctype, MemoryPool};
-use nncombinator::device::{Device, DeviceCpu, DeviceGpu, DeviceMemoryPool};
+use nncombinator::cuda::{CudaMutPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
+use nncombinator::cuda::allocator::{CudaAllocator};
+use nncombinator::device::{Device, DeviceAllocator, DeviceCpu, DeviceGpu};
 use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use nncombinator::layer::{AddLayer, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, BatchTrain, Forward, ForwardAll, Loss, PreTrain, TryAddLayer, UpdateWeight};
 use nncombinator::layer::input::InputLayer;
@@ -153,26 +152,30 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,Arr2<U,
         })
     }
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where U: UnitValue<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-          PreTrain<U>,
-          DeviceGpu<U>: Device<U> + 'static,
+             PreTrain<U>,
+             DeviceGpu<U,A>: Device<U> + 'static,
           I: Debug + Send + Sync,
-          OP: Optimizer<U,DeviceGpu<U>> {
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>>,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> {
     #[inline]
-    pub fn new<UI,BI,OB: OptimizerBuilder<U,DeviceGpu<U>,Output=OP>>(parent:P,device:&DeviceGpu<U>,ui: UI, bi: BI, b:&OB)
-        -> Result<FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>, LayerInstantiationError>
+    pub fn new<UI,BI,OB: OptimizerBuilder<U,DeviceGpu<U,A>,Output=OP>>(parent:P,device:&DeviceGpu<U,A>,ui: UI, bi: BI, b:&OB)
+        -> Result<FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>, LayerInstantiationError>
         where U: UnitValue<U>,
               UI: FnMut() -> U,
               BI: FnMut() -> U {
-        let memory_pool = device.get_memory_pool();
+        let get_allocator = device.get_allocator();
 
         Ok(FeatureTransformLayer {
             parent: parent,
             device: device.clone(),
-            units: CudaTensor2dPtr::with_initializer(memory_pool,ui)?,
-            bias: CudaTensor1dPtr::with_initializer(memory_pool,bi)?,
+            units: CudaTensor2dPtr::with_initializer(get_allocator,ui)?,
+            bias: CudaTensor1dPtr::with_initializer(get_allocator,bi)?,
             unit_optimizer: b.build(NI*NO)?,
             bias_optimizer: b.build(NO)?,
             i:PhantomData::<I>,
@@ -219,15 +222,19 @@ impl<T,U,P,I,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear> for Featu
         Ok(())
     }
 }
-impl<T,U,P,I,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<T,U,P,I,A,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where T: LinearPersistence<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> + Persistence<U,T,Linear> +
              BackwardAll<U,LossInput=()> + PreTrain<U> + Loss<U>,
-          DeviceGpu<U>: Device<U>,
+          DeviceGpu<U,A>: Device<U>,
           U: UnitValue<U>,
           I: Debug + Send + Sync,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static {
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
+          CudaPtr<U,A>: ReadMemory<U> + WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: ReadMemory<U> + WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: ReadMemory<U> + WriteMemory<U> {
     fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
         self.parent.load(persistence)?;
 
@@ -364,21 +371,25 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransform
         Ok(((),Cons(s,(g,bg))))
     }
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> BackwardAll<U>
-for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> BackwardAll<U>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> +
              ForwardAll<Input=I,Output=HalfKP<NI>> +
              BackwardAll<U,LossInput=()> + Loss<U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>>,
           [(); NO * 2]: {
-    type LossInput = <DeviceGpu<U> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO>>::Output;
+    type LossInput = <DeviceGpu<U,A> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO>>::Output;
     type LossOutput = <P as BackwardAll<U>>::LossOutput;
 
     #[inline]
@@ -422,18 +433,22 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransfor
         Ok(self.parent.update_weight(s)?)
     }
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> UpdateWeight<U>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> UpdateWeight<U>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + UpdateWeight<U> + 'static,
-          DeviceGpu<U>: Device<U> + 'static,
+          DeviceGpu<U,A>: Device<U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>> {
-    type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>)>;
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
+          A: CudaAllocator,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>> {
+    type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>)>;
 
     #[inline]
     fn update_weight(&mut self, stack: Self::GradientStack) -> Result<(), TrainingError> {
@@ -456,19 +471,23 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U
           for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {}
-impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> Loss<U>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> +
              BackwardAll<U,LossInput=()> + Loss<U> + 'static,
-          DeviceGpu<U>: Device<U> + 'static,
+          DeviceGpu<U,A>: Device<U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
+          A: CudaAllocator,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>>,
           [(); NO * 2]: {}
 impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BatchForwardBase for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> + Loss<U> +
@@ -586,24 +605,28 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
         Ok(((),Cons(s,(g,bg))))
     }
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> BatchBackward<U>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchBackward<U>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchForward +
              BatchPreTrainBase<U> +
              BatchPreTrain<U,BatchPreOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=()> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static,
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
+          A: CudaAllocator,
           <I as BatchDataType>::Type: Debug + BatchSize,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>>,
           [(); NO * 2]: {
-    type BatchLossInput = <DeviceGpu<U> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO>>::BatchOutput;
+    type BatchLossInput = <DeviceGpu<U,A> as DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO>>::BatchOutput;
     type BatchLossOutput = ();
 
     #[inline]
@@ -639,21 +662,25 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLa
           for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchLoss<U>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> + Loss<U> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U,BatchPreOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=()> + 'static,
-          DeviceGpu<U>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,NI,NO> + 'static,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
-          OP: Optimizer<U,DeviceGpu<U>> + 'static,
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           <I as BatchDataType>::Type: Debug + BatchSize,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor1dPtr<U,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U>>>::InternalType: From<&'a CudaTensor2dPtr<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceGpu<U>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,NI,NO>>,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>>,
           [(); NO * 2]: {
 }
 /// Trait for LinearLayer instance creation
@@ -700,17 +727,21 @@ impl<const NI:usize,const NO:usize> FeatureTransformLayerBuilder<NI,NO> {
         }
     }
 }
-impl<U,P,I,OP,const NI:usize,const NO:usize> FeatureTransformLayerInstantiation<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
-    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>
+impl<U,P,I,A,OP,const NI:usize,const NO:usize> FeatureTransformLayerInstantiation<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync,
-          OP: Optimizer<U,DeviceGpu<U>>,
-          DeviceGpu<U>: Device<U> {
-    fn instantiation<B: OptimizerBuilder<U,DeviceGpu<U>,Output=OP>>(parent: P, device:&DeviceGpu<U>,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b: &B)
-                                                                    -> Result<FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,OP,NI,NO>,LayerInstantiationError> {
-        FeatureTransformLayer::<_,_,_,CudaTensor2dPtr<U,NI,NO>,CudaTensor1dPtr<U,NO>,DeviceGpu<U>,_,NI,NO>::new(parent,device,ui,bi,b)
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>>,
+          CudaPtr<U,A>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          DeviceGpu<U,A>: Device<U> {
+    fn instantiation<B: OptimizerBuilder<U,DeviceGpu<U,A>,Output=OP>>(parent: P, device:&DeviceGpu<U,A>,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b: &B)
+                                                                    -> Result<FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>,LayerInstantiationError> {
+        FeatureTransformLayer::<_,_,_,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,_,NI,NO>::new(parent,device,ui,bi,b)
     }
 }
 impl<const NI:usize,const NO:usize> FeatureTransformLayerBuilder<NI,NO> {
@@ -840,8 +871,9 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
-pub struct Trainer<M>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>> {
+pub struct Trainer<M,A>
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,
+          A:CudaAllocator {
     pub nn:M,
     nn_path:String,
     nnsavedir:String,
@@ -851,13 +883,14 @@ pub struct Trainer<M>
 pub struct TrainerCreator {
 }
 impl TrainerCreator {
-    pub fn create(save_dir:String, nn_path:String, learning_rate:f32)
-        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>>, ApplicationError> {
+    pub fn create<A: CudaAllocator + MemoryType + 'static>(save_dir:String, nn_path:String, learning_rate:f32, allocator:A)
+        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,A>, ApplicationError>
+        where for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
+                                      WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
+              CudaPtr<usize,A>: WriteMemory<usize> {
 
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
-
-        let memory_pool = Arc::new(Mutex::new(MemoryPool::with_size(1024 * 1024 * 1024 * 8,Alloctype::Device)?));
 
         let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
 
@@ -865,7 +898,7 @@ impl TrainerCreator {
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
         let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
-        let device = DeviceGpu::new(&memory_pool)?;
+        let device = DeviceGpu::new(&allocator)?;
 
 //        let optimizer_builder = AdamBuilder::new(&device)
         let optimizer_builder = SGDBuilder::new(&device)
@@ -921,6 +954,7 @@ impl TrainerCreator {
 
         Ok(Trainer {
             nn:nn,
+            allocator,
             nn_path: nn_path,
             nnsavedir: save_dir,
             packed_sfen_reader:PackedSfenReader::new(),
@@ -928,8 +962,9 @@ impl TrainerCreator {
         })
     }
 }
-impl<M> Trainer<M>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>> {
+impl<M,A> Trainer<M,A>
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,
+          A: CudaAllocator {
     fn sigmoid(x:i16) -> f32 {
         1. / (1. + (-0.00173873964459554 * x as f32).exp())
     }

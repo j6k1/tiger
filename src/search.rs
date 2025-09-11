@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::ops::{Add, Deref, Neg, Sub};
+use std::ops::{Add, Neg, Sub};
 use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -24,7 +24,7 @@ use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, TTPartialEntry, ZobristHash};
+use crate::transposition_table::{TT, ZobristHash};
 
 pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;

@@ -17,6 +17,7 @@ use usiagent::logger::*;
 use usiagent::input::*;
 
 use nncombinator::arr::{Arr, SerializedVec};
+use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::DeviceGpu;
 use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll};
 use nncombinator::lossfunction::{CrossEntropy};
@@ -91,21 +92,25 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
         }
     }
 }
-pub struct Learnener<M>
+pub struct Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> {
-             nn:PhantomData<M>
+             BatchTrain<f32,DeviceGpu<f32,A>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear>,
+          A: CudaAllocator {
+          nn:PhantomData<M>,
+          allocator:PhantomData<A>
 }
-impl<M> Learnener<M>
+impl<M,A> Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> + 'static,
-             [(); FEATURES_NUM * 2]:,
-             [(); FEATURES_NUM * 256]: {
-    pub fn new() -> Learnener<M> {
+             BatchTrain<f32,DeviceGpu<f32,A>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> + 'static,
+          A: CudaAllocator,
+          [(); FEATURES_NUM * 2]:,
+          [(); FEATURES_NUM * 256]: {
+    pub fn new() -> Learnener<M,A> {
         Learnener {
-            nn: PhantomData::<M>
+            nn: PhantomData::<M>,
+            allocator: PhantomData::<A>
         }
     }
 
@@ -142,7 +147,7 @@ impl<M> Learnener<M>
 
     pub fn learning_from_yaneuraou_bin(&mut self, kifudir: String,
                                        testdir: String,
-                                       evalutor: Trainer<M>,
+                                       evalutor: Trainer<M,A>,
                                        on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                        learn_sfen_read_size: usize,
                                        learn_batch_size: usize,
@@ -158,7 +163,7 @@ impl<M> Learnener<M>
                             learn_batch_size,
                             save_batch_count,
                             maxepoch,
-                            Trainer::<M>::make_packed_sfens_parser,
+                            Trainer::<M,A>::make_packed_sfens_parser,
                             |evalutor, packed| {
                                 evalutor.test_by_packed_sfens(packed)
                             })
@@ -166,7 +171,7 @@ impl<M> Learnener<M>
 
     pub fn learning_from_hcpe(&mut self, kifudir: String,
                               testdir: String,
-                              evalutor: Trainer<M>,
+                              evalutor: Trainer<M,A>,
                               on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                               learn_sfen_read_size: usize,
                               learn_batch_size: usize,
@@ -183,7 +188,7 @@ impl<M> Learnener<M>
                             learn_batch_size,
                             save_batch_count,
                             maxepoch,
-                            Trainer::<M>::make_hcpe_parser,
+                            Trainer::<M,A>::make_hcpe_parser,
                             |evalutor, packed| {
                                 evalutor.test_by_packed_hcpe(packed)
                             })
@@ -193,7 +198,7 @@ impl<M> Learnener<M>
                                     testdir: String,
                                     ext: &str,
                                     item_size: usize,
-                                    evalutor: Trainer<M>,
+                                    evalutor: Trainer<M,A>,
                                     on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                     learn_sfen_read_size: usize,
                                     learn_batch_size: usize,
@@ -202,7 +207,7 @@ impl<M> Learnener<M>
                                     sfen_parser_builder: fn() -> P,
                                     test_process: F
     ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
+        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
               P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
         let notify_quit_arc = Arc::new(AtomicBool::new(false));
 
@@ -311,7 +316,7 @@ impl<M> Learnener<M>
         Ok(())
     }
 
-    fn save(&self, evalutor: &mut Trainer<M>,
+    fn save(&self, evalutor: &mut Trainer<M,A>,
             checkpoint_path: &PathBuf,
             current_filename: &str,
             current_item: usize,
@@ -340,11 +345,11 @@ impl<M> Learnener<M>
                         testdir: String,
                         ext: &str,
                         item_size: usize,
-                        evalutor: &mut Trainer<M>,
+                        evalutor: &mut Trainer<M,A>,
                         learn_sfen_read_size: usize,
                         mut test_process: F
     ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static, {
+        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static, {
         let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
             .join("tests"))
             .shuffle(true)
