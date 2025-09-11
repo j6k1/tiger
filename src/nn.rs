@@ -875,6 +875,7 @@ pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,
           A:CudaAllocator {
     pub nn:M,
+    a:PhantomData<A>,
     nn_path:String,
     nnsavedir:String,
     packed_sfen_reader:PackedSfenReader,
@@ -954,7 +955,7 @@ impl TrainerCreator {
 
         Ok(Trainer {
             nn:nn,
-            allocator,
+            a:PhantomData::<A>,
             nn_path: nn_path,
             nnsavedir: save_dir,
             packed_sfen_reader:PackedSfenReader::new(),
