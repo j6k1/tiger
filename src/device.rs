@@ -264,7 +264,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         let mut kernel = TransformFeaturesGradient::<f32,A,NI,NO>::new();
 
         kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,0)?;
+                      dim3 { x: 1024, y: 1, z: 1 },&mut args,1024)?;
 
         Ok(args.output)
     }
@@ -348,7 +348,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         let mut kernel = TransformFeaturesGradientBatch::<f32,A,NI,NO>::new();
 
         kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,0)?;
+                      dim3 { x: 1024, y: 1, z: 1 },&mut args,1024)?;
 
         Ok(args.output)
     }
