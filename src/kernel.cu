@@ -128,8 +128,8 @@ __device__ void transform_features_gradient_batch(const T *loss,
         g += acc;
     }
 
-    if (tid == 0) {
-        output[unit_index] += g;
+    if (tid == 0 && input_index < input_len && out_index < output_len) {
+        output[unit_index] = g;
     }
 }
 
