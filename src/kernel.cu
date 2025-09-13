@@ -60,6 +60,7 @@ __device__ void transform_features_gradient_batch(const T *loss,
                                                   const size_t output_len,
                                                   const size_t batch_size) {
     extern __shared__ char smem[];
+
     T *sdata = reinterpret_cast<T*>(smem);
 
     const size_t tid = threadIdx.x;
@@ -87,11 +88,11 @@ __device__ void transform_features_gradient_batch(const T *loss,
         int skip = batch_index >= batch_size ||
                    input_index >= input_len ||
                    out_index >= output_len ||
-                   end_index - start_index <= input_index_index ||
+                   input_index_index >= (end_index - start_index) ||
                    indexes[start_index + input_index_index] != input_index;
 
         if (!skip) {
-            sdata[tid] += loss[batch_index * output_len + out_index];
+            sdata[tid] = loss[batch_index * output_len + out_index];
         }
         __syncthreads();
 
@@ -142,11 +143,12 @@ extern "C" {
     }
 
     __global__ void transform_features_gradient_batch_float(const float *loss,
-                                                           const size_t *indexes, const size_t *boundaries,
-                                                           float *output,
-                                                           const size_t input_len,
-                                                           const size_t output_len,
-                                                           const size_t batch_size) {
+                                                            const size_t *indexes,
+                                                            const size_t *boundaries,
+                                                            float *output,
+                                                            const size_t input_len,
+                                                            const size_t output_len,
+                                                            const size_t batch_size) {
         transform_features_gradient_batch(loss,indexes,boundaries,output,input_len,output_len,batch_size);
     }
 }

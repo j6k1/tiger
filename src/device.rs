@@ -331,7 +331,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         let loss = CudaVecView::<f32,CudaTensor1dPtrView<f32,{NO*2}>>::try_from(loss)?;
 
         let mut indexes_ptr = CudaPtr::new(indexes.len(),self.get_allocator())?;
-        let mut boundaries_ptr = CudaPtr::new(3,self.get_allocator())?;
+        let mut boundaries_ptr = CudaPtr::new(boundaries.len(),self.get_allocator())?;
 
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
         boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;

@@ -378,6 +378,6 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatch<'a,T,A
 impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBatch<'a,f32,A,NI,NO>
     where A: CudaAllocator + 'a,
           [(); NO*2]: {
-    const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
+    const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>;
 }
