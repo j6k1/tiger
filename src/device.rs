@@ -19,7 +19,7 @@ use nncombinator::ope::UnitValue;
 use rcublas_sys::{cublasOperation_t, cublasSgemm_v2, cublasStatus_t};
 
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
-use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs};
+use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs};
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     where U: UnitValue<U>, [(); NO*2]: {
@@ -198,12 +198,16 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
           CudaPtr<usize,A>: WriteMemory<usize>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>: AsCudaMutPtr<Pointee=f32,Allocator=A>,
           for<'a> CudaPtr<f32,A>: WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
+          for<'a> CudaTensor1dPtrView<'a,f32,{NO*2}>: From<&'a CudaTensor1dPtr<f32,A,{NO*2}>>,
           for<'a> CudaVecView<'a,f32,CudaTensor1dPtrView<'a,f32,NI>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,A,NI>,A>,Error=TypeConvertError>,
           for<'a> CudaVecView<'a,f32,CudaTensor1dPtrView<'a,f32,NO>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>,Error=TypeConvertError>,
+          for<'a> CudaVecView<'a,f32,CudaTensor1dPtrView<'a,f32,{NO*2}>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,A,{NO*2}>,A>,Error=TypeConvertError>,
           for<'a> TransformFeaturesForward::<'a,f32,A,NI,NO>: Kernel<Args=TransformFeaturesForwardArgs<'a,f32,A,NI,NO>>,
+          for<'a> TransformFeaturesGradient::<'a,f32,A,NI,NO>: Kernel<Args=TransformFeaturesGradientArgs<'a,f32,A,NI,NO>>,
           for<'a> BackwardLinear::<'a,f32,A,NI,NO>: Kernel<Args=BackwardLinearArgs<'a,f32,A,NI,NO>>,
           for<'a> LinearGradientBatch::<'a,f32,A,NI,NO>: Kernel<Args=LinearGradientBatchArgs<'a,f32,A,NI,NO>>,
           for<'a> TransformFeaturesForwardBatch::<'a,f32,A,NI,NO>: Kernel<Args=TransformFeaturesForwardBatchArgs<'a,f32,A,NI,NO>>,
+          for<'a> TransformFeaturesGradientBatch::<'a,f32,A,NI,NO>: Kernel<Args=TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>>,
           for<'a> BackwardLinearBatch::<'a,f32,A,NI,NO>: Kernel<Args=BackwardLinearBatchArgs<'a,f32,A,NI,NO>>,
           for<'a> ReduceLinearBatch::<'a,f32,A,NO>: Kernel<Args=ReduceLinearBatchArgs<'a,f32,A,NO>>, [(); NO*2]: {
     type Output = CudaTensor1dPtr<f32,A,{NO*2}>;
@@ -239,55 +243,30 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
     #[inline]
     fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a CudaTensor1dPtr<f32,A,{NO*2}>)
         -> Result<CudaTensor2dPtr<f32,A,NI,NO>,TrainingError> {
+        let (indexes,boundaries):(Vec<size_t>,Vec<size_t>) = (&input).into();
 
-        let mut input_ptr = CudaVec::<f32,CudaTensor1dPtr::<f32,A,NI>,A>::new(2,self.get_allocator())?;
-        let mut output_ptr = CudaTensor2dPtr::<f32,A,NI,NO>::with_initializer(self.get_allocator(),Default::default)?;
+        let loss = CudaTensor1dPtrView::<f32,{NO*2}>::from(loss);
 
-        let input = input.to_vec();
+        let mut indexes_ptr = CudaPtr::new(indexes.len(),self.get_allocator())?;
+        let mut boundaries_ptr = CudaPtr::new(3,self.get_allocator())?;
 
-        input_ptr.memcpy(input.as_ptr(),NI * 2)?;
+        indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
+        boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;
 
-        let alpha = CudaPtr::try_from(1.0f32)?;
-        let beta = CudaPtr::try_from(0.0f32)?;
+        let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
 
-        match unsafe {
-            cublasSgemm_v2(*self.cublas().id_c(),
-                           cublasOperation_t::CUBLAS_OP_N,
-                           cublasOperation_t::CUBLAS_OP_T,
-                           NO as ::libc::c_int,
-                           NI as libc::c_int,
-                           2 as ::libc::c_int,
-                           alpha.as_ptr(),
-                           loss.as_ptr(),
-                           NO as libc::c_int,
-                           input_ptr.as_ptr(),
-                           NI as libc::c_int,
-                           beta.as_ptr(),
-                           output_ptr.as_mut_ptr(),
-                           NO as ::libc::c_int
-            )
-        } {
-            cublasStatus_t::CUBLAS_STATUS_SUCCESS => {
-                Ok(output_ptr)
-            },
-            cublasStatus_t::CUBLAS_STATUS_NOT_INITIALIZED => {
-                return Err(TrainingError::CublasError(rcublas::Error::NotInitialized));
-            },
-            cublasStatus_t::CUBLAS_STATUS_INVALID_VALUE => {
-                return Err(TrainingError::CublasError(rcublas::Error::InvalidValue(
-                    "Parameters m or n are less than 0, or incx or incy was specified as 0."
-                )));
-            },
-            cublasStatus_t::CUBLAS_STATUS_EXECUTION_FAILED => {
-                return Err(TrainingError::CublasError(rcublas::Error::ExecutionFailed));
-            },
-            status => {
-                return Err(TrainingError::CublasError(rcublas::Error::Unknown(
-                    "Unable to get cuBLAS cublasSgemm_v2",
-                    status as i32 as u64
-                )));
-            }
-        }
+        let mut args = TransformFeaturesGradientArgs::new(
+            CudaConstPtr::new(&loss),
+            indexes_ptr,
+            boundaries_ptr,
+            output);
+
+        let mut kernel = TransformFeaturesGradient::<f32,A,NI,NO>::new();
+
+        kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
+                      dim3 { x: 1024, y: 1, z: 1 },&mut args,0)?;
+
+        Ok(args.output)
     }
 
     #[inline]
@@ -347,54 +326,31 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         -> Result<CudaTensor2dPtr<f32,A,NI,NO>,TrainingError> {
         let len = input.size();
 
-        let input = <Box<[f32]>>::from(&input);
+        let (indexes,boundaries):(Vec<size_t>,Vec<size_t>) = (&input).into();
 
-        let mut input_ptr = CudaVec::<f32,CudaTensor1dPtr<f32,A,NI>,A>::new(len * 2,self.get_allocator())?;
-        let mut output_ptr = CudaTensor2dPtr::<f32,A,NI,NO>::with_initializer(self.get_allocator(),Default::default)?;
+        let loss = CudaVecView::<f32,CudaTensor1dPtrView<f32,{NO*2}>>::try_from(loss)?;
 
-        input_ptr.memcpy(input.as_ptr(),NI * 2 * len)?;
+        let mut indexes_ptr = CudaPtr::new(indexes.len(),self.get_allocator())?;
+        let mut boundaries_ptr = CudaPtr::new(3,self.get_allocator())?;
 
-        let alpha = CudaPtr::try_from(1.0f32)?;
-        let beta = CudaPtr::try_from(0.0f32)?;
+        indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
+        boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;
 
-        match unsafe {
-            cublasSgemm_v2(*self.cublas().id_c(),
-                           cublasOperation_t::CUBLAS_OP_N,
-                           cublasOperation_t::CUBLAS_OP_T,
-                           NO as ::libc::c_int,
-                           NI as libc::c_int,
-                           (2 * len) as ::libc::c_int,
-                           alpha.as_ptr(),
-                           loss.as_ptr(),
-                           NO as libc::c_int,
-                           input_ptr.as_ptr(),
-                           NI as libc::c_int,
-                           beta.as_ptr(),
-                           output_ptr.as_mut_ptr(),
-                           NO as ::libc::c_int
-            )
-        } {
-            cublasStatus_t::CUBLAS_STATUS_SUCCESS => {
-                Ok(output_ptr)
-            },
-            cublasStatus_t::CUBLAS_STATUS_NOT_INITIALIZED => {
-                return Err(TrainingError::CublasError(rcublas::Error::NotInitialized));
-            },
-            cublasStatus_t::CUBLAS_STATUS_INVALID_VALUE => {
-                return Err(TrainingError::CublasError(rcublas::Error::InvalidValue(
-                    "Parameters m or n are less than 0, or incx or incy was specified as 0."
-                )));
-            },
-            cublasStatus_t::CUBLAS_STATUS_EXECUTION_FAILED => {
-                return Err(TrainingError::CublasError(rcublas::Error::ExecutionFailed));
-            },
-            status => {
-                return Err(TrainingError::CublasError(rcublas::Error::Unknown(
-                    "Unable to get cuBLAS cublasSgemm_v2",
-                    status as i32 as u64
-                )));
-            }
-        }
+        let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
+
+        let mut args = TransformFeaturesGradientBatchArgs::new(
+            CudaConstPtr::new(&loss),
+            indexes_ptr,
+            boundaries_ptr,
+            output,
+            len);
+
+        let mut kernel = TransformFeaturesGradientBatch::<f32,A,NI,NO>::new();
+
+        kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
+                      dim3 { x: 1024, y: 1, z: 1 },&mut args,0)?;
+
+        Ok(args.output)
     }
 
     #[inline]
