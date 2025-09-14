@@ -118,13 +118,15 @@ __device__ void transform_features_gradient_batch(const T *loss,
 
         T acc = (T)0;
 
-        if (!skip && tid < 32) {
-            acc += __shfl_down_sync(0xffffffff,acc,16);
-            acc += __shfl_down_sync(0xffffffff,acc,8);
-            acc += __shfl_down_sync(0xffffffff,acc,4);
-            acc += __shfl_down_sync(0xffffffff,acc,2);
-            acc += __shfl_down_sync(0xffffffff,acc,1);
+        if (tid < 32) {
+            acc = sdata[tid];
         }
+
+        acc += __shfl_down_sync(0xffffffff,acc,16);
+        acc += __shfl_down_sync(0xffffffff,acc,8);
+        acc += __shfl_down_sync(0xffffffff,acc,4);
+        acc += __shfl_down_sync(0xffffffff,acc,2);
+        acc += __shfl_down_sync(0xffffffff,acc,1);
 
         g += acc;
     }
