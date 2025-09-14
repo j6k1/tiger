@@ -1,8 +1,29 @@
+#include<cmath>
+#include<mma.h>
+#include<cuda.h>
+#include<cuda_runtime.h>
+
+using namespace nvcuda;
+
+static __device__ half _to_half(float x) {
+    return __float2half(x);
+}
+
+static __device__ half _to_half(double x) {
+    return __double2half(x);
+}
+
+static __device__ size_t calc_index(size_t x, size_t y, size_t leading_dimension) {
+    return y * leading_dimension + x;
+}
+
 #define BLOCK_SHARED_SMALL 32
+#define TILE_SIZE 16
+#define TILE_SIZE_2D 256
 
 template<typename T>
 
-__device__ void warp_reduce(volatile T *sdata, int tid) {
+static __device__ void warp_reduce(volatile T *sdata, int tid) {
     sdata[tid] += sdata[tid+32];
     sdata[tid] += sdata[tid+16];
     sdata[tid] += sdata[tid+8];
@@ -62,74 +83,65 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
                                                   const size_t batch_size) {
     extern __shared__ char smem[];
 
-    T *sdata = reinterpret_cast<T*>(smem);
+    float *sdata_c = reinterpret_cast<float*>(&smem[0]);
+    half *sdata_a = reinterpret_cast<half*>(&smem[TILE_SIZE_2D * sizeof(float)]);
+    half *sdata_b = reinterpret_cast<half*>(&smem[TILE_SIZE_2D * sizeof(float) + TILE_SIZE_2D * sizeof(half)]);
 
-    const size_t tid = threadIdx.x;
-    const size_t warp_id = tid / 32;
-    const size_t unit_index = blockIdx.x * blockIdx.y;
-    const size_t input_index = blockIdx.x;
-    const size_t out_index = blockIdx.y;
-    const size_t input_index_index = blockIdx.z;
+    wmma::fragment<wmma::matrix_a, TILE_SIZE, TILE_SIZE, TILE_SIZE, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, TILE_SIZE, TILE_SIZE, TILE_SIZE, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, TILE_SIZE, TILE_SIZE, TILE_SIZE, float> c_frag;
 
-    const size_t end = (batch_size + blockDim.x - 1) / blockDim.x * blockDim.x;
+    size_t tx = threadIdx.x;
+    size_t ty = threadIdx.y;
+    size_t bx = blockIdx.x * TILE_SIZE;
+    size_t by = blockIdx.y * TILE_SIZE;
 
-    T g = (T)0;
+    wmma::fill_fragment(c_frag, 0.0f);
 
-    for (size_t batch_index = tid; batch_index < end; batch_index += blockDim.x) {
-        if (tid < 32) {
-            sdata[tid] = (T)0;
-        }
-        __syncthreads();
+    __syncthreads();
+
+    for (int k = 0; k < batch_size; k += TILE_SIZE) {
+        sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
 
         size_t start_index = 0;
         size_t end_index = 0;
 
-        if (batch_index < batch_size) {
-            start_index = boundaries[batch_index];
-            end_index = boundaries[batch_index+1];
+        if (k+ty < batch_size) {
+            start_index = boundaries[k+ty];
+            end_index =  boundaries[k+ty+1];
         }
 
-        int skip = batch_index >= batch_size ||
-                   input_index >= input_len ||
-                   out_index >= output_len ||
-                   input_index_index >= (end_index - start_index) ||
-                   indexes[start_index + input_index_index] != input_index;
-
-        T local_acc = (T)0;
-
-        if (!skip) {
-            local_acc = loss[batch_index * output_len + out_index];
+        for (size_t i = start_index; i < end_index; i++) {
+            if (indexes[i] == by + tx) {
+                sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0);
+                break;
+            }
         }
+
+        if (k + ty < batch_size && bx + tx < output_len) {
+            sdata_b[ty * TILE_SIZE + tx] = _to_half(loss[calc_index(bx+tx,k+ty,output_len)]);
+        } else {
+            sdata_b[ty * TILE_SIZE + tx] = __float2half(0.0f);
+        }
+
         __syncthreads();
 
-        local_acc += __shfl_down_sync(0xffffffff,local_acc,16);
-        local_acc += __shfl_down_sync(0xffffffff,local_acc,8);
-        local_acc += __shfl_down_sync(0xffffffff,local_acc,4);
-        local_acc += __shfl_down_sync(0xffffffff,local_acc,2);
-        local_acc += __shfl_down_sync(0xffffffff,local_acc,1);
+        wmma::load_matrix_sync(a_frag, sdata_a, TILE_SIZE);
+        wmma::load_matrix_sync(b_frag, sdata_b, TILE_SIZE);
 
-        if (tid % 32 == 0) {
-            sdata[warp_id] = local_acc;
-        }
+        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+
         __syncthreads();
-
-        T acc = (T)0;
-
-        if (tid < 32) {
-            acc = sdata[tid];
-        }
-
-        acc += __shfl_down_sync(0xffffffff,acc,16);
-        acc += __shfl_down_sync(0xffffffff,acc,8);
-        acc += __shfl_down_sync(0xffffffff,acc,4);
-        acc += __shfl_down_sync(0xffffffff,acc,2);
-        acc += __shfl_down_sync(0xffffffff,acc,1);
-
-        g += acc;
     }
 
-    if (tid == 0 && input_index < input_len && out_index < output_len) {
-        output[unit_index] = g;
+    if (ty < 2) {
+        wmma::store_matrix_sync(sdata_c, c_frag, TILE_SIZE, wmma::mem_row_major);
+    }
+
+    __syncthreads();
+
+    if (tx + bx < output_len && ty + by < input_len) {
+        output[calc_index(tx+bx,ty+by,output_len)] = (T)sdata_c[ty * TILE_SIZE + tx];
     }
 }
 

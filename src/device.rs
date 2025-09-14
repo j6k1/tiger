@@ -263,8 +263,9 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesGradient::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16 , z: 1 },
+                      dim3 { x: 16, y: 16, z: 1 },&mut args,256 * mem::size_of::<f32>() / 2 * 2 +
+                          256 * mem::size_of::<f32>())?;
 
         Ok(args.output)
     }
@@ -347,8 +348,9 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesGradientBatch::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: NI as c_uint, y: NO as c_uint , z: 40 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16 , z: 1 },
+                      dim3 { x: 16, y: 16, z: 1 },&mut args,256 * mem::size_of::<f32>() / 2 * 2 +
+                          256 * mem::size_of::<f32>())?;
 
         Ok(args.output)
     }
