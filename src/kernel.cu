@@ -53,8 +53,9 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
 
 template<typename T>
 
-__device__ void transform_features_gradient_batch(const T *loss,
-                                                  const size_t *indexes, const size_t *boundaries,
+__device__ void transform_features_gradient_batch(const T * __restrict__ loss,
+                                                  const size_t * __restrict__ indexes,
+                                                  const size_t * __restrict__ boundaries,
                                                   T *output,
                                                   const size_t input_len,
                                                   const size_t output_len,
@@ -64,6 +65,7 @@ __device__ void transform_features_gradient_batch(const T *loss,
     T *sdata = reinterpret_cast<T*>(smem);
 
     const size_t tid = threadIdx.x;
+    const size_t warp_id = tid / 32;
     const size_t unit_index = blockIdx.x * blockIdx.y;
     const size_t input_index = blockIdx.x;
     const size_t out_index = blockIdx.y;
@@ -74,7 +76,9 @@ __device__ void transform_features_gradient_batch(const T *loss,
     T g = (T)0;
 
     for (size_t batch_index = tid; batch_index < end; batch_index += blockDim.x) {
-        sdata[tid] = (T)0;
+        if (tid < 32) {
+            sdata[tid] = (T)0;
+        }
         __syncthreads();
 
         size_t start_index = 0;
@@ -91,28 +95,21 @@ __device__ void transform_features_gradient_batch(const T *loss,
                    input_index_index >= (end_index - start_index) ||
                    indexes[start_index + input_index_index] != input_index;
 
+        T local_acc = (T)0;
+
         if (!skip) {
-            sdata[tid] = loss[batch_index * output_len + out_index];
+            local_acc = loss[batch_index * output_len + out_index];
         }
         __syncthreads();
 
-        if (!skip && blockDim.x >= 1024 && tid < 512) {
-            sdata[tid] += sdata[tid + 512];
-        }
-        __syncthreads();
+        local_acc += __shfl_down_sync(0xffffffff,local_acc,16);
+        local_acc += __shfl_down_sync(0xffffffff,local_acc,8);
+        local_acc += __shfl_down_sync(0xffffffff,local_acc,4);
+        local_acc += __shfl_down_sync(0xffffffff,local_acc,2);
+        local_acc += __shfl_down_sync(0xffffffff,local_acc,1);
 
-        if (!skip && blockDim.x >= 512 && tid < 256) {
-            sdata[tid] += sdata[tid + 256];
-        }
-        __syncthreads();
-
-        if (!skip && blockDim.x >= 256 && tid < 128) {
-            sdata[tid] += sdata[tid + 128];
-        }
-        __syncthreads();
-
-        if (!skip && blockDim.x >= 128 && tid < 64) {
-            sdata[tid] += sdata[tid + 64];
+        if (tid % 32 == 0) {
+            sdata[warp_id] = local_acc;
         }
         __syncthreads();
 
