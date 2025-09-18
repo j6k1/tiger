@@ -10,13 +10,12 @@ use nncombinator::arr::SerializedVec;
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, AsPtr, AsMutPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr};
+use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
-use rcublas_sys::{cublasOperation_t, cublasSgemm_v2, cublasStatus_t};
 
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
 use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs};
@@ -318,7 +317,6 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         kernel.launch(dim3 { x: (NO * 2 * len) as c_uint, y: 1, z: 1 },
                       dim3 { x: 32, y: 1, z: 1 },&mut args,0)?;
-
         Ok(args.output)
     }
 
@@ -335,7 +333,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         let mut boundaries_ptr = CudaPtr::new(boundaries.len(),self.get_allocator())?;
 
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
-        boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;
+        boundaries_ptr.memcpy(boundaries.as_ptr(),boundaries.len())?;
 
         let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
 
