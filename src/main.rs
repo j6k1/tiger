@@ -30,7 +30,7 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use getopts::Options;
-use nncombinator::cuda::allocator::DeviceAllocator;
+use nncombinator::cuda::allocator::{DeviceAlloc, DeviceAllocator, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
 use usiagent::logger::FileLogger;
 use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
@@ -132,7 +132,7 @@ fn run() -> Result<(),ApplicationError> {
                                                          TrainerCreator::create(String::from("data"),
                                                                                 String::from("nn.bin"),
                                                                                 config.learning_rate.unwrap_or(0.01),
-                                                                                DeviceAllocator::new())?,
+                                                                                MemoryPoolAllocator::with_size(1024 * 1024 * 1024,DeviceAlloc::new())?)?,
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
@@ -144,7 +144,7 @@ fn run() -> Result<(),ApplicationError> {
                                                 TrainerCreator::create(String::from("data"),
                                                                        String::from("nn.bin"),
                                                                        config.learning_rate.unwrap_or(0.01),
-                                                                       DeviceAllocator::new())?,
+                                                                       MemoryPoolAllocator::with_size(1024 * 1024 * 1024,DeviceAlloc::new())?)?,
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
@@ -165,7 +165,7 @@ fn run() -> Result<(),ApplicationError> {
         let mut evalutor = TrainerCreator::create(String::from("data"),
                                               String::from("nn.bin"),
                                               config.learning_rate.unwrap_or(0.01),
-                                              DeviceAllocator::new())?;
+                                                  MemoryPoolAllocator::with_size(1024 * 1024 * 1024,DeviceAlloc::new())?)?;
 
         if matches.opt_present("yaneuraou") {
             Learnener::new().eval_test(testdir,"bin",40,
