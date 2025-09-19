@@ -111,10 +111,23 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
             end_index =  boundaries[k+ty+1];
         }
 
-        for (size_t i = start_index; i < end_index; i++) {
-            if (indexes[i] == by + tx) {
-                sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0);
-                break;
+        if (start_index < end_index && by + tx >= indexes[start_index] && by + tx < indexes[end_index]) {
+            int left = start_index;
+            int right = end_index - 1;
+
+            while (left <= right) {
+                int mid = (left + right) / 2;
+
+                size_t i = indexes[mid];
+
+                if (i == by + tx) {
+                    sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0);
+                    break;
+                } else if (i < by + tx) {
+                    left = mid + 1;
+                } else {
+                    right = mid - 1;
+                }
             }
         }
 
