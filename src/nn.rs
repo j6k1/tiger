@@ -904,7 +904,7 @@ impl TrainerCreator {
 //        let optimizer_builder = AdamBuilder::new(&device)
         let optimizer_builder = SGDBuilder::new(&device)
             .lr(learning_rate)
-            .weight_decay(0.0001);
+            .weight_decay(0.001);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
