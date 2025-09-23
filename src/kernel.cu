@@ -20,17 +20,8 @@ static __device__ size_t calc_index(size_t x, size_t y, size_t leading_dimension
 #define BLOCK_SHARED_SMALL 32
 #define TILE_SIZE 16
 #define TILE_SIZE_2D 256
-
-template<typename T>
-
-static __device__ void warp_reduce(volatile T *sdata, int tid) {
-    sdata[tid] += sdata[tid+32];
-    sdata[tid] += sdata[tid+16];
-    sdata[tid] += sdata[tid+8];
-    sdata[tid] += sdata[tid+4];
-    sdata[tid] += sdata[tid+2];
-    sdata[tid] += sdata[tid+1];
-}
+#define BSEARCH_PART_LEN 10
+#define HALFKP_ACTIVE_INPUTS 40
 
 template<typename T>
 
@@ -40,17 +31,17 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
                                                  const size_t batch_size) {
     extern __shared__ char smem[];
 
-    const size_t batch_index = blockIdx.x / output_len;
+    const size_t index = blockIdx.x * blockDim.y + threadIdx.y;
+
+    const size_t batch_index = index / output_len;
     size_t start_index = 0;
     size_t end_index = 0;
 
-    if (blockIdx.x < output_len * batch_size) {
+    if (batch_index < batch_size) {
         start_index = boundaries[batch_index];
         end_index = boundaries[batch_index + 1];
-    }
 
-    if (blockIdx.x < output_len * batch_size) {
-        const size_t out_index = blockIdx.x - batch_index * output_len;
+        const size_t out_index = index - batch_index * output_len;
 
         T acc = 0.0;
 
@@ -66,8 +57,8 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         acc += __shfl_down_sync(0xffffffff,acc,2);
         acc += __shfl_down_sync(0xffffffff,acc,1);
 
-        if (tid == 0) {
-            output[blockIdx.x] = acc + bias[out_index];
+        if (tid == 0 && index < batch_size * output_len) {
+            output[index] = acc + bias[out_index];
         }
     }
 }
@@ -111,7 +102,7 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
             end_index =  boundaries[k+ty+1];
         }
 
-        if (start_index < end_index && by + tx >= indexes[start_index] && by + tx < indexes[end_index]) {
+        if (start_index < end_index && by + tx >= indexes[start_index] && by + tx <= indexes[end_index - 1]) {
             int left = start_index;
             int right = end_index - 1;
 
@@ -166,10 +157,27 @@ extern "C" {
         forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
     }
 
+    __global__ void forward_transform_features_batch_double(const size_t *indexes, const size_t *boundaries,
+                                                     const double *units, const double *bias, double *output,
+                                                     const size_t output_len,
+                                                     const size_t batch_size) {
+        forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
+    }
+
     __global__ void transform_features_gradient_batch_float(const float *loss,
                                                             const size_t *indexes,
                                                             const size_t *boundaries,
                                                             float *output,
+                                                            const size_t input_len,
+                                                            const size_t output_len,
+                                                            const size_t batch_size) {
+        transform_features_gradient_batch(loss,indexes,boundaries,output,input_len,output_len,batch_size);
+    }
+
+    __global__ void transform_features_gradient_batch_double(const double *loss,
+                                                            const size_t *indexes,
+                                                            const size_t *boundaries,
+                                                            double *output,
                                                             const size_t input_len,
                                                             const size_t output_len,
                                                             const size_t batch_size) {

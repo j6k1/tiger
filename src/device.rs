@@ -233,8 +233,8 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesForward::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: NO as c_uint * 2, y: 1, z: 1 },
-                      dim3 { x: 32, y: 1, z: 1 },&mut args,0)?;
+        kernel.launch(dim3 { x: (NO as c_uint * 2 + 8 - 1) / 8, y: 1, z: 1 },
+                      dim3 { x: 32, y: 1, z: 8 },&mut args,0)?;
 
         Ok(args.output)
     }
@@ -315,8 +315,8 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesForwardBatch::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NO * 2 * len) as c_uint, y: 1, z: 1 },
-                      dim3 { x: 32, y: 1, z: 1 },&mut args,0)?;
+        kernel.launch(dim3 { x: (NO * 2 * len + 8 - 1) as c_uint / 8, y: 1, z: 1 },
+                      dim3 { x: 32, y: 1, z: 8 },&mut args,0)?;
         Ok(args.output)
     }
 

@@ -1375,8 +1375,13 @@ impl InputCreator {
         let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
 
         for &k in &MOCHIGOMA_KINDS {
-            inputs.push((s + SELF_INDEX_MAP[k as usize] + ms.get(k)) as size_t);
-            inputs.push((s + OPPONENT_INDEX_MAP[k as usize] + mg.get(k)) as size_t);
+            for i in 0..ms.get(k) {
+                inputs.push((s + SELF_INDEX_MAP[k as usize] + i) as size_t);
+            }
+
+            for i in 0..mg.get(k) {
+                inputs.push((s + OPPONENT_INDEX_MAP[k as usize] + i) as size_t);
+            }
         }
         inputs
     }
