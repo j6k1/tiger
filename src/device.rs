@@ -247,15 +247,13 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let loss = CudaTensor1dPtrView::<f32,{NO*2}>::from(loss);
 
-        let input = indexes.chunks(40).map(|c| {
-            c.iter().fold(vec![0u8; (NI + 7) / 8], | mut acc, &i | {
-                let chunk_index = i / 8;
-                let bit_index = i - chunk_index * 8;
+        let input = indexes.iter().fold(vec![0u8; (NI + 7) / 8], | mut acc, &i | {
+            let chunk_index = i / 8;
+            let bit_index = i - chunk_index * 8;
 
-                acc[chunk_index] |= 1 << bit_index;
-                acc
-            })
-        }).flatten().collect::<Vec<u8>>();
+            acc[chunk_index] |= 1 << bit_index;
+            acc
+        });
 
         let mut input_ptr = CudaPtr::new((NI + 7) / 8,self.get_allocator())?;
         let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
@@ -336,7 +334,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let loss = CudaVecView::<f32,CudaTensor1dPtrView<f32,{NO*2}>>::try_from(loss)?;
 
-        let input = indexes.chunks(40).map(|c| {
+        let input = indexes.par_iter().chunks(40).map(|c| {
             c.iter().fold(vec![0u8; (NI + 7) / 8], | mut acc, &i | {
                 let chunk_index = i / 8;
                 let bit_index = i - chunk_index * 8;
