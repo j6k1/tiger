@@ -16,6 +16,11 @@ extern "C" {
                                                input_len: size_t,
                                                output_len: size_t,
                                                batch_size: size_t) -> c_void;
+    fn transform_features_input_to_bits(indexes: *const size_t,
+                                        boundaries: *const size_t,
+                                        bits: *mut u8,
+                                        input_len: size_t,
+                                        batch_size: size_t) -> c_void;
 }
 /// Defines the list that is passed to the cuda kernel function as arguments for the computation
 /// of Forward propagation of linear layers specialized for processing HalfKP.
@@ -370,4 +375,68 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBat
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>;
+}
+/// Expand sparse inputs into bit vector format inputs.
+pub struct TransformFeaturesInputToBitsArgs<A,const NI:usize>
+    where A: CudaAllocator {
+    indexes: CudaPtr<size_t,A>,
+    boundaries: CudaPtr<size_t,A>,
+    pub bits: CudaPtr<u8,A>,
+    input_len: usize,
+    batch_size: usize
+}
+/// Create an instance of an object representing the argument list passed to a CUDA kernel that expands sparse inputs into bit vectors.
+impl<A,const NI:usize> TransformFeaturesInputToBitsArgs<A,NI>
+    where A: CudaAllocator {
+    /// Create a TransformFeaturesInputToBitsArgs instance
+    /// # Arguments
+    /// * `indexes` - Indexes at which the input resides
+    /// * `boundaries` - Index Boundaries
+    /// * `bits` - Input bits
+    /// * `input_len` - Input size
+    /// * `batch_len` - batch_count
+    pub fn new(indexes:CudaPtr<size_t,A>,
+               boundaries:CudaPtr<size_t,A>,
+               bits:CudaPtr<u8,A>,
+               batch_size: usize) -> TransformFeaturesInputToBitsArgs<A,NI> {
+        TransformFeaturesInputToBitsArgs {
+            indexes: indexes,
+            boundaries: boundaries,
+            bits: bits,
+            input_len: NI,
+            batch_size: batch_size
+        }
+    }
+}
+impl<A,const NI:usize> KernelArgs for TransformFeaturesInputToBitsArgs<A,NI>
+    where A: CudaAllocator {
+    fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
+        vec![
+            &mut self.indexes,
+            &mut self.boundaries,
+            &mut self.bits,
+            &mut self.input_len,
+            &mut self.batch_size
+        ]
+    }
+}
+/// Implementation of sparse input conversion to bit vectors
+pub struct TransformFeaturesInputToBits<A,const NI:usize> {
+    a:PhantomData<A>,
+    ni:PhantomData<[();NI]>
+}
+impl<A,const NI:usize> TransformFeaturesInputToBits<A,NI>
+    where A: CudaAllocator {
+    /// Create a TransformFeaturesInputToBits instance
+    pub fn new() -> TransformFeaturesInputToBits<A,NI> {
+        TransformFeaturesInputToBits {
+            a: PhantomData::<A>,
+            ni:PhantomData::<[();NI]>
+        }
+    }
+}
+impl<A,const NI:usize> Kernel for TransformFeaturesInputToBits<A,NI>
+    where A: CudaAllocator {
+    const FUNC_PTR: *const c_void = transform_features_input_to_bits as *const c_void;
+    type Args = TransformFeaturesInputToBitsArgs<A,NI>;
 }

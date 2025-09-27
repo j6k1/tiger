@@ -160,4 +160,27 @@ extern "C" {
                                                              const size_t batch_size) {
         transform_features_gradient_batch(loss,input,output,input_len,output_len,batch_size);
     }
+
+    __global__ void transform_features_input_to_bits(const size_t * __restrict__ indexes,
+                                                     const size_t * __restrict__ boundaries,
+                                                     uint8_t * bits,
+                                                     const size_t input_len,
+                                                     const size_t batch_size) {
+        size_t batch_index = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (batch_index < batch_size) {
+            size_t start_index = boundaries[batch_index];
+            size_t end_index = boundaries[batch_index + 1];
+
+            for (size_t j = start_index; j < end_index; j++) {
+                size_t input_index = indexes[j];
+
+                size_t chunk_offset = (input_len + 7) / 8 * batch_index;
+                size_t chunk_index = input_index / 8;
+                size_t bit_index = input_index - chunk_index * 8;
+
+                bits[chunk_offset + chunk_index] |= 1 << bit_index;
+            }
+        }
+    }
 }
