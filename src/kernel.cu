@@ -66,8 +66,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
 template<typename T>
 
 __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
-                                                  const size_t * __restrict__ indexes,
-                                                  const size_t * __restrict__ boundaries,
+                                                  const uint8_t * __restrict__ input,
                                                   T *output,
                                                   const size_t input_len,
                                                   const size_t output_len,
@@ -92,34 +91,14 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
     __syncthreads();
 
     for (int k = 0; k < batch_size; k += TILE_SIZE) {
-        sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
+        size_t chunk_offset = (input_len + 7) / 8 * (k + ty);
+        size_t chunk_index = (by + tx) / 8;
+        size_t bit_index = (by + tx) - chunk_index * 8;
 
-        size_t start_index = 0;
-        size_t end_index = 0;
-
-        if (k+ty < batch_size) {
-            start_index = boundaries[k+ty];
-            end_index =  boundaries[k+ty+1];
-        }
-
-        if (start_index < end_index && by + tx >= indexes[start_index] && by + tx <= indexes[end_index - 1]) {
-            int left = start_index;
-            int right = end_index - 1;
-
-            while (left <= right) {
-                int mid = (left + right) / 2;
-
-                size_t i = indexes[mid];
-
-                if (i == by + tx) {
-                    sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0);
-                    break;
-                } else if (i < by + tx) {
-                    left = mid + 1;
-                } else {
-                    right = mid - 1;
-                }
-            }
+        if (input[chunk_offset  + chunk_index] & (1 << bit_index) != 0) {
+            sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0f);
+        } else {
+            sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
 
         if (k + ty < batch_size && bx + tx < output_len) {
@@ -164,23 +143,21 @@ extern "C" {
         forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
     }
 
-    __global__ void transform_features_gradient_batch_float(const float *loss,
-                                                            const size_t *indexes,
-                                                            const size_t *boundaries,
+    __global__ void transform_features_gradient_batch_float(const float * __restrict__ loss,
+                                                            const uint8_t * __restrict__ input,
                                                             float *output,
                                                             const size_t input_len,
                                                             const size_t output_len,
                                                             const size_t batch_size) {
-        transform_features_gradient_batch(loss,indexes,boundaries,output,input_len,output_len,batch_size);
+        transform_features_gradient_batch(loss,input,output,input_len,output_len,batch_size);
     }
 
-    __global__ void transform_features_gradient_batch_double(const double *loss,
-                                                            const size_t *indexes,
-                                                            const size_t *boundaries,
-                                                            double *output,
-                                                            const size_t input_len,
-                                                            const size_t output_len,
-                                                            const size_t batch_size) {
-        transform_features_gradient_batch(loss,indexes,boundaries,output,input_len,output_len,batch_size);
+    __global__ void transform_features_gradient_batch_double(const double * __restrict__ loss,
+                                                             const uint8_t * __restrict__ input,
+                                                             double *output,
+                                                             const size_t input_len,
+                                                             const size_t output_len,
+                                                             const size_t batch_size) {
+        transform_features_gradient_batch(loss,input,output,input_len,output_len,batch_size);
     }
 }

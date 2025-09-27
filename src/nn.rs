@@ -888,7 +888,8 @@ impl TrainerCreator {
         -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,A>, ApplicationError>
         where for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
-              CudaPtr<usize,A>: WriteMemory<usize> {
+              CudaPtr<usize,A>: WriteMemory<usize>,
+              CudaPtr<u8,A>: WriteMemory<u8> {
 
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));

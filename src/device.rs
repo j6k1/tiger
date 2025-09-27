@@ -195,6 +195,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
 impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,A,NI,NO>,CudaTensor1dPtr<f32,A,NO>,NI,NO> for DeviceGpu<f32,A>
     where A: CudaAllocator + 'static,
           CudaPtr<usize,A>: WriteMemory<usize>,
+          CudaPtr<u8,A>: WriteMemory<u8>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>: AsCudaMutPtr<Pointee=f32,Allocator=A>,
           for<'a> CudaPtr<f32,A>: WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
           for<'a> CudaTensor1dPtrView<'a,f32,{NO*2}>: From<&'a CudaTensor1dPtr<f32,A,{NO*2}>>,
@@ -246,18 +247,24 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let loss = CudaTensor1dPtrView::<f32,{NO*2}>::from(loss);
 
-        let mut indexes_ptr = CudaPtr::new(indexes.len(),self.get_allocator())?;
-        let mut boundaries_ptr = CudaPtr::new(3,self.get_allocator())?;
+        let input = indexes.chunks(40).map(|c| {
+            c.iter().fold(vec![0u8; (NI + 7) / 8], | mut acc, &i | {
+                let chunk_index = i / 8;
+                let bit_index = i - chunk_index * 8;
 
-        indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
-        boundaries_ptr.memcpy(boundaries.as_ptr(),3)?;
+                acc[chunk_index] |= 1 << bit_index;
+                acc
+            })
+        }).flatten().collect::<Vec<u8>>();
 
+        let mut input_ptr = CudaPtr::new((NI + 7) / 8,self.get_allocator())?;
         let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
+
+        input_ptr.memcpy(input.as_ptr(),input.len())?;
 
         let mut args = TransformFeaturesGradientArgs::new(
             CudaConstPtr::new(&loss),
-            indexes_ptr,
-            boundaries_ptr,
+            input_ptr,
             output);
 
         let mut kernel = TransformFeaturesGradient::<f32,A,NI,NO>::new();
@@ -329,18 +336,24 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let loss = CudaVecView::<f32,CudaTensor1dPtrView<f32,{NO*2}>>::try_from(loss)?;
 
-        let mut indexes_ptr = CudaPtr::new(indexes.len(),self.get_allocator())?;
-        let mut boundaries_ptr = CudaPtr::new(boundaries.len(),self.get_allocator())?;
+        let input = indexes.chunks(40).map(|c| {
+            c.iter().fold(vec![0u8; (NI + 7) / 8], | mut acc, &i | {
+                let chunk_index = i / 8;
+                let bit_index = i - chunk_index * 8;
 
-        indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
-        boundaries_ptr.memcpy(boundaries.as_ptr(),boundaries.len())?;
+                acc[chunk_index] |= 1 << bit_index;
+                acc
+            })
+        }).flatten().collect::<Vec<u8>>();
 
         let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
+        let mut input_ptr = CudaPtr::new(input.len(),self.get_allocator())?;
+
+        input_ptr.memcpy(input.as_ptr(), input.len())?;
 
         let mut args = TransformFeaturesGradientBatchArgs::new(
             CudaConstPtr::new(&loss),
-            indexes_ptr,
-            boundaries_ptr,
+            input_ptr,
             output,
             len);
 

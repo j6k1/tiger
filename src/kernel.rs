@@ -206,8 +206,7 @@ pub struct TransformFeaturesGradientArgs<'a,T,A,const NI:usize,const NO:usize>
           A: CudaAllocator + 'a,
           [(); NO*2]: {
     loss: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{NO*2}>>,
-    indexes: CudaPtr<size_t,A>,
-    boundaries: CudaPtr<size_t,A>,
+    input: CudaPtr<u8,A>,
     pub output: CudaTensor2dPtr<T,A,NI,NO>,
     input_len: usize,
     output_len: usize,
@@ -222,20 +221,17 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientArgs<'a,T,A,
     /// Create a TransformFeaturesForwardBatchArgs instance
     /// # Arguments
     /// * `loss` - loss
-    /// * `indexes` - Indexes at which the input resides
-    /// * `boundaries` - Index Boundaries
+    /// * `input` - input (bits)
     /// * `output` - output
     /// * `input_len` - input size
     /// * `output_len` - output size
     /// * `batch_len` - batch_count
     pub fn new(loss: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{NO*2}>>,
-               indexes:CudaPtr<size_t,A>,
-               boundaries:CudaPtr<size_t,A>,
+               input: CudaPtr<u8,A>,
                output:CudaTensor2dPtr<T,A,NI,NO>) -> TransformFeaturesGradientArgs<'a,T,A,NI,NO> {
         TransformFeaturesGradientArgs {
             loss: loss,
-            indexes: indexes,
-            boundaries: boundaries,
+            input: input,
             output: output,
             input_len: NI,
             output_len: NO,
@@ -250,8 +246,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesGradi
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
             &mut self.loss,
-            &mut self.indexes,
-            &mut self.boundaries,
+            &mut self.input,
             &mut self.output,
             &mut self.input_len,
             &mut self.output_len,
@@ -296,8 +291,7 @@ pub struct TransformFeaturesGradientBatchArgs<'a,T,A,const NI:usize,const NO:usi
           A: CudaAllocator + 'a,
           [(); NO*2]: {
     loss: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{NO*2}>>>,
-    indexes: CudaPtr<size_t,A>,
-    boundaries: CudaPtr<size_t,A>,
+    input: CudaPtr<u8,A>,
     pub output: CudaTensor2dPtr<T,A,NI,NO>,
     input_len: usize,
     output_len: usize,
@@ -311,21 +305,18 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatchArgs<'a
           [(); NO*2]: {
     /// Create a TransformFeaturesGradientBatchArgs instance
     /// * `loss` - loss
-    /// * `indexes` - Indexes at which the input resides
-    /// * `boundaries` - Index Boundaries
+    /// * `input` - input (bits)
     /// * `output` - output
     /// * `input_len` - input size
     /// * `output_len` - output size
     /// * `batch_len` - batch_count
     pub fn new(loss: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{NO*2}>>>,
-               indexes:CudaPtr<size_t,A>,
-               boundaries:CudaPtr<size_t,A>,
+               input: CudaPtr<u8,A>,
                output:CudaTensor2dPtr<T,A,NI,NO>,
                batch_size: usize) -> TransformFeaturesGradientBatchArgs<'a,T,A,NI,NO> {
         TransformFeaturesGradientBatchArgs {
             loss: loss,
-            indexes: indexes,
-            boundaries: boundaries,
+            input: input,
             output: output,
             input_len: NI,
             output_len: NO,
@@ -340,8 +331,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesGradi
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
             &mut self.loss,
-            &mut self.indexes,
-            &mut self.boundaries,
+            &mut self.input,
             &mut self.output,
             &mut self.input_len,
             &mut self.output_len,
