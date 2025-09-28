@@ -234,8 +234,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesForward::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NO as c_uint * 2 + 32 - 1) / 32, y: 1, z: 1 },
-                      dim3 { x: 32, y: 1, z: 32 },&mut args,0)?;
+        kernel.launch(&mut args)?;
 
         Ok(args.output)
     }
@@ -267,9 +266,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesGradient::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16 , z: 1 },
-                      dim3 { x: 16, y: 16, z: 1 },&mut args,256 * mem::size_of::<f32>() / 2 * 2 +
-                          256 * mem::size_of::<f32>())?;
+        kernel.launch(&mut args)?;
 
         Ok(args.output)
     }
@@ -287,8 +284,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = ReduceLinearBatch::<f32,A,NO>::new();
 
-        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(&mut args)?;
 
         Ok(args.output)
     }
@@ -320,8 +316,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesForwardBatch::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NO * 2 * len + 32 - 1) as c_uint / 32, y: 1, z: 1 },
-                      dim3 { x: 32, y: 1, z: 32 },&mut args,0)?;
+        kernel.launch(&mut args)?;
         Ok(args.output)
     }
 
@@ -344,8 +339,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesInputToBits::<A,NI>::new();
 
-        kernel.launch(dim3 { x: (len as c_uint + 1023) / 1024, y: 1 , z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,0)?;
+        kernel.launch(&mut args)?;
 
         let input_ptr = args.bits;
         let loss = CudaVecView::<f32,CudaTensor1dPtrView<f32,{NO*2}>>::try_from(loss)?;
@@ -360,9 +354,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = TransformFeaturesGradientBatch::<f32,A,NI,NO>::new();
 
-        kernel.launch(dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16 , z: 1 },
-                      dim3 { x: 16, y: 16, z: 1 },&mut args,256 * mem::size_of::<f32>() / 2 * 2 +
-                          256 * mem::size_of::<f32>())?;
+        kernel.launch(&mut args)?;
 
         Ok(args.output)
     }
@@ -382,8 +374,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
 
         let mut kernel = ReduceLinearBatch::<f32,A,NO>::new();
 
-        kernel.launch(dim3 { x: NO as c_uint, y: 1, z: 1 },
-                      dim3 { x: 1024, y: 1, z: 1 },&mut args,32 * mem::size_of::<f32>())?;
+        kernel.launch(&mut args)?;
 
         Ok(args.output)
     }

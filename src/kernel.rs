@@ -1,8 +1,10 @@
 use std::ffi::c_void;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use libc::size_t;
-use nncombinator::cuda::{AsKernelPtr, CudaConstPtr, CudaPtr, CudaTensor1dPtr, CudaTensor1dPtrView, CudaTensor2dPtr, CudaVec, CudaVecView, DataTypeInfo, Kernel, KernelArgs};
+use std::mem;
+use cuda_runtime_sys::dim3;
+use libc::{c_uint, size_t};
+use nncombinator::cuda::{AsKernelPtr, CudaConstPtr, CudaPtr, CudaTensor1dPtr, CudaTensor1dPtrView, CudaTensor2dPtr, CudaVec, CudaVecView, DataTypeInfo, Kernel, KernelArgs, KernelLaunchConfig};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::ope::UnitValue;
 
@@ -111,6 +113,14 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForward<'a,
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
     type Args = TransformFeaturesForwardArgs<'a,f32,A,NI,NO>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (NO as c_uint * 2 + 32 - 1) / 32, y: 1, z: 1 },
+            block_dim: dim3 { x: 32, y: 1, z: 32},
+            shared_memory_size: 0
+        }
+    }
 }
 /// Defines the list that is passed to the cuda kernel function as arguments for the computation
 /// of Forward propagation of linear layers specialized for processing HalfKP.
@@ -203,6 +213,14 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForwardBatc
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
     type Args = TransformFeaturesForwardBatchArgs<'a,f32,A,NI,NO>;
+
+    fn launch_config(&self, _: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (NO as c_uint * 2 + 32 - 1) / 32, y: 1, z: 1 },
+            block_dim: dim3 { x: 32, y: 1, z: 32},
+            shared_memory_size: 0
+        }
+    }
 }
 /// Define the list passed to the CUDA kernel function as an argument
 /// for calculating the weight update amount for the linear layer specialized for HalfKP processing.
@@ -288,6 +306,14 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradient<'a
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientArgs<'a, f32, A, NI, NO>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (NO * 2 * args.batch_size + 32 - 1) as c_uint / 32, y: 1, z: 1 },
+            block_dim: dim3 { x: 32, y: 1, z: 32 },
+            shared_memory_size: 0
+        }
+    }
 }
 /// Define the list passed to the CUDA kernel function as an argument
 /// for calculating the weight update amount of the linear layer specialized for HalfKP processing.
@@ -375,6 +401,14 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBat
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (NO as c_uint + 15) / 16, y: (NI as c_uint + 15) / 16 , z: 1 },
+            block_dim: dim3 { x: 16, y: 16, z: 1 },
+            shared_memory_size: 256 * mem::size_of::<f32>() * 2 + 256 * mem::size_of::<f32>() / 2
+        }
+    }
 }
 /// Expand sparse inputs into bit vector format inputs.
 pub struct TransformFeaturesInputToBitsArgs<A,const NI:usize>
@@ -439,4 +473,12 @@ impl<A,const NI:usize> Kernel for TransformFeaturesInputToBits<A,NI>
     where A: CudaAllocator {
     const FUNC_PTR: *const c_void = transform_features_input_to_bits as *const c_void;
     type Args = TransformFeaturesInputToBitsArgs<A,NI>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (args.batch_size as c_uint + 1023) / 1024, y: 1, z: 1 },
+            block_dim: dim3 { x: 1024, y: 1, z: 1 },
+            shared_memory_size: 0
+        }
+    }
 }
