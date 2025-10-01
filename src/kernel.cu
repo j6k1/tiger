@@ -92,8 +92,8 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
 
     for (int k = 0; k < batch_size; k += TILE_SIZE) {
         size_t chunk_offset = (input_len + 7) / 8 * (k + ty);
-        size_t chunk_index = (by + tx) / 8;
-        size_t bit_index = (by + tx) - chunk_index * 8;
+        size_t chunk_index = (bx + tx) / 8;
+        size_t bit_index = (bx + tx) - chunk_index * 8;
 
         if (input[chunk_offset  + chunk_index] & (1 << bit_index) != 0) {
             sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0f);
@@ -101,10 +101,10 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
             sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
 
-        if (k + ty < batch_size && bx + tx < output_len) {
-            sdata_b[ty * TILE_SIZE + tx] = _to_half(loss[calc_index(bx+tx,k+ty,output_len)]);
+        if (k + tx < batch_size && by + ty < output_len) {
+            sdata_b[tx * TILE_SIZE + ty] = _to_half(loss[calc_index(by+ty,k+tx,output_len)]);
         } else {
-            sdata_b[ty * TILE_SIZE + tx] = __float2half(0.0f);
+            sdata_b[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
 
         __syncthreads();
@@ -117,14 +117,12 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
         __syncthreads();
     }
 
-    if (ty < 2) {
-        wmma::store_matrix_sync(sdata_c, c_frag, TILE_SIZE, wmma::mem_row_major);
-    }
+    wmma::store_matrix_sync(sdata_c, c_frag, TILE_SIZE, wmma::mem_row_major);
 
     __syncthreads();
 
-    if (tx + bx < output_len && ty + by < input_len) {
-        output[calc_index(tx+bx,ty+by,output_len)] = (T)sdata_c[ty * TILE_SIZE + tx];
+    if (ty + by < output_len && tx + bx < input_len) {
+        output[calc_index(ty+by,tx+bx,output_len)] = (T)sdata_c[tx * TILE_SIZE + ty];
     }
 }
 
