@@ -246,6 +246,8 @@ impl<M,A> Learnener<M,A>
         let mut current_filename = String::from("");
         let mut current_items = 0;
 
+        let mut loss_logger = BufWriter::new(OpenOptions::new().append(true).create(true).open("logs/loss.log")?);
+
         'epochs: for _ in (0..).take_while(|&c| c < maxepoch + *extend.borrow()) {
             let mut dataloader_builder = DataLoaderBuilder::new(Path::new(&kifudir)
                 .join("training"))
@@ -285,6 +287,9 @@ impl<M,A> Learnener<M,A>
 
                 println!("error_total: {}", loss);
 
+                loss_logger.write_all(loss.to_string().as_bytes())?;
+                loss_logger.write_all(b"\n")?;
+                
                 pending_count += 1;
 
                 processed_count += size;
