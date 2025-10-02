@@ -311,7 +311,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradient<'a
         KernelLaunchConfig {
             grid_dim: dim3 { x: (NI as c_uint + 15) / 16, y: (NO as c_uint + 15) / 16, z: 1 },
             block_dim: dim3 { x: 16, y: 16, z: 1 },
-            shared_memory_size: 256 * mem::size_of::<f32>() * 2 + 256 * mem::size_of::<f32>() / 2
+            shared_memory_size: 2 * 256 * mem::size_of::<f32>() / 2 + 256 * mem::size_of::<f32>()
         }
     }
 }
@@ -406,7 +406,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBat
         KernelLaunchConfig {
             grid_dim: dim3 { x: (NI as c_uint + 15) / 16, y: (NO as c_uint + 15) / 16 , z: 1 },
             block_dim: dim3 { x: 16, y: 16, z: 1 },
-            shared_memory_size: 256 * mem::size_of::<f32>() * 2 + 256 * mem::size_of::<f32>() / 2
+            shared_memory_size: 2 * 256 * mem::size_of::<f32>() / 2 + 256 * mem::size_of::<f32>()
         }
     }
 }

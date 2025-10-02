@@ -902,8 +902,8 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let optimizer_builder = AdamBuilder::new(&device)
-//        let optimizer_builder = SGDBuilder::new(&device)
+//        let optimizer_builder = AdamBuilder::new(&device)
+        let optimizer_builder = SGDBuilder::new(&device)
             .lr(learning_rate)
             .weight_decay(0.001);
 
