@@ -216,7 +216,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForwardBatc
 
     fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
         KernelLaunchConfig {
-            grid_dim: dim3 { x: (NO as c_uint * 2 + 32 - 1) * args.batch_size  as c_uint / 32, y: 1, z: 1 },
+            grid_dim: dim3 { x: (NO * 2 * args.batch_size + 32 - 1) as c_uint / 32, y: 1, z: 1 },
             block_dim: dim3 { x: 32, y: 1, z: 32},
             shared_memory_size: 0
         }
