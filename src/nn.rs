@@ -902,10 +902,10 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&allocator)?;
 
-//        let optimizer_builder = AdamBuilder::new(&device)
-        let optimizer_builder = SGDBuilder::new(&device)
-            .lr(learning_rate);
-            //.weight_decay(0.001);
+        let optimizer_builder = AdamBuilder::new(&device)
+//        let optimizer_builder = SGDBuilder::new(&device)
+            .lr(learning_rate)
+            .weight_decay(0.00001);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
