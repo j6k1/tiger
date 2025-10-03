@@ -95,7 +95,7 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
         size_t chunk_index = (bx + tx) / 8;
         size_t bit_index = (bx + tx) - chunk_index * 8;
 
-        if (input[chunk_offset + chunk_index] & (1 << bit_index) != 0) {
+        if ((input[chunk_offset + chunk_index] & (1 << bit_index)) != 0) {
             sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0f);
         } else {
             sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
