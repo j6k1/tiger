@@ -22,7 +22,7 @@ use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
-use nncombinator::layer::logging::LoggingLayerBuilder;
+use nncombinator::layer::logging::{LoggingLayer};
 use nncombinator::lossfunction::{CrossEntropy, LossFunction, LossFunctionLinear, Mse};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
@@ -934,23 +934,25 @@ impl TrainerCreator {
 
         let rnd = rnd_base.clone();
 
+        let verbose = config.verbose.unwrap_or(true);
+
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
                                                                           &optimizer_builder)
-        })?.try_add_layer(|l| {
-            let mut l = LoggingLayerBuilder::new().build(l,&device);
+        })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
 
-            if let Ok(ref mut l) = l {
+            if verbose {
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
                     let len = o.len();
 
-                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
                     println!("feature transform layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
@@ -960,24 +962,24 @@ impl TrainerCreator {
             }
 
             l
-        })?.add_layer(|l| {
+        }).add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
-        })?.try_add_layer(|l| {
-            let mut l = LoggingLayerBuilder::new().build(l,&device);
+        })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
 
-            if let Ok(ref mut l) = l {
+            if verbose {
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
                     let len = o.len();
 
-                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
                     println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
@@ -987,24 +989,24 @@ impl TrainerCreator {
             }
 
             l
-        })?.add_layer(|l| {
+        }).add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
-        })?.try_add_layer(|l| {
-            let mut l = LoggingLayerBuilder::new().build(l,&device);
+        })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
 
-            if let Ok(ref mut l) = l {
+            if verbose {
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
                     let len = o.len();
 
-                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
                     println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
@@ -1014,7 +1016,7 @@ impl TrainerCreator {
             }
 
             l
-        })?.add_layer(|l| {
+        }).add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let optimizer_builder = AdamWBuilder::new(&device).lr(
@@ -1027,18 +1029,18 @@ impl TrainerCreator {
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
             },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder)
-        })?.try_add_layer(|l| {
-            let mut l = LoggingLayerBuilder::new().build(l,&device);
+        })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
 
-            if let Ok(ref mut l) = l {
+            if verbose {
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
                     let len = o.len();
 
-                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
                     println!("output layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
@@ -1048,7 +1050,7 @@ impl TrainerCreator {
             }
 
             l
-        })?.add_layer(|l| {
+        }).add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
             LinearOutputLayer::new(l, &device)

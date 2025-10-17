@@ -60,7 +60,8 @@ pub struct Config {
     save_batch_count:Option<usize>,
     learning_rate:Option<f32>,
     learning_rate_for_output_layer:Option<f32>,
-    weight_decay:Option<f32>
+    weight_decay:Option<f32>,
+    verbose:Option<bool>,
 }
 pub struct ConfigLoader {
     reader:BufReader<File>,
