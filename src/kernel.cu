@@ -102,7 +102,7 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
         }
 
         if (k + tx < batch_size && by + ty < output_len) {
-            sdata_b[tx * TILE_SIZE + ty] = _to_half(loss[calc_index(by+ty,k+tx,output_len)]);
+            sdata_b[tx * TILE_SIZE + ty] = _to_half(loss[calc_index(by+ty,k+tx,output_len)]) * _to_half(0.5);
         } else {
             sdata_b[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }

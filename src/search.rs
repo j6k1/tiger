@@ -250,7 +250,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     LegalMove::To(m) if m.obtained().is_none() => {
                         continue;
                     },
-                    LegalMove::Put(m) => {
+                    LegalMove::Put(_) => {
                         continue;
                     },
                     _ => ()

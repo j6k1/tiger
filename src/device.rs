@@ -1,16 +1,13 @@
 use std::fmt::Debug;
-use std::mem;
 
 use libc::{size_t};
-use libc::c_uint;
-use cuda_runtime_sys::{dim3};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
 use nncombinator::arr::SerializedVec;
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr};
+use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
@@ -47,13 +44,21 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         for input in input.iter() {
             for &i in input.iter() {
                 units.iter().nth(i).map(|it| {
-                   for (r,&w) in r.iter_mut().zip(it.iter()) {
-                       *r = w;
-                   }
+                    for (&w,r) in  it.iter().zip(r.iter_mut().take(NO)) {
+                        *r += w;
+                    }
+                });
+            }
+
+            for &i in input.iter() {
+                units.iter().nth(i).map(|it| {
+                    for (&w,r) in  it.iter().zip(r.iter_mut().skip(NO)) {
+                        *r += w;
+                    }
                 });
             }
         }
-        
+
         Ok(r.try_into()?)
     }
 
@@ -197,6 +202,8 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
           CudaPtr<usize,A>: WriteMemory<usize>,
           CudaPtr<u8,A>: WriteMemory<u8>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>: AsCudaMutPtr<Pointee=f32,Allocator=A>,
+          CudaVec<f32,CudaTensor1dPtr<f32,A,{NO*2}>,A>: ReadMemory<f32>,
+          CudaTensor2dPtr<f32,A,NI,NO>: ReadMemory<f32>,
           for<'a> CudaPtr<f32,A>: WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
           for<'a> CudaTensor1dPtrView<'a,f32,{NO*2}>: From<&'a CudaTensor1dPtr<f32,A,{NO*2}>>,
           for<'a> CudaVecView<'a,f32,CudaTensor1dPtrView<'a,f32,NI>>: TryFrom<&'a CudaVec<f32,CudaTensor1dPtr<f32,A,NI>,A>,Error=TypeConvertError>,
@@ -242,7 +249,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
     #[inline]
     fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a CudaTensor1dPtr<f32,A,{NO*2}>)
         -> Result<CudaTensor2dPtr<f32,A,NI,NO>,TrainingError> {
-        let (indexes,boundaries):(Vec<size_t>,Vec<size_t>) = (&input).into();
+        let (indexes,_):(Vec<size_t>,Vec<size_t>) = (&input).into();
 
         let loss = CudaTensor1dPtrView::<f32,{NO*2}>::from(loss);
 
@@ -317,6 +324,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         let mut kernel = TransformFeaturesForwardBatch::<f32,A,NI,NO>::new();
 
         kernel.launch(&mut args)?;
+
         Ok(args.output)
     }
 

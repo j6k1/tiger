@@ -20,13 +20,12 @@ use nncombinator::arr::{Arr, SerializedVec};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::DeviceGpu;
 use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll};
-use nncombinator::lossfunction::{CrossEntropy};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
 
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
-use crate::nn::{Trainer, FEATURES_NUM};
+use crate::nn::{Trainer, FEATURES_NUM, LF};
 
 #[derive(Debug,Deserialize,Serialize)]
 pub struct CheckPoint {
@@ -92,10 +91,11 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
         }
     }
 }
+
 pub struct Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32,A>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear>,
+             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear>,
           A: CudaAllocator {
           nn:PhantomData<M>,
           allocator:PhantomData<A>
@@ -103,7 +103,7 @@ pub struct Learnener<M,A>
 impl<M,A> Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32,A>,CrossEntropy<f32>> + Persistence<f32,BinFilePersistence<f32>,Linear> + 'static,
+             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear> + 'static,
           A: CudaAllocator,
           [(); FEATURES_NUM * 2]:,
           [(); FEATURES_NUM * 256]: {
@@ -151,6 +151,7 @@ impl<M,A> Learnener<M,A>
                                        on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                        learn_sfen_read_size: usize,
                                        learn_batch_size: usize,
+                                       lambda: f32,
                                        save_batch_count: usize,
                                        maxepoch: usize) -> Result<(), ApplicationError> {
         self.learning_batch(kifudir,
@@ -161,6 +162,7 @@ impl<M,A> Learnener<M,A>
                             on_error_handler_arc,
                             learn_sfen_read_size,
                             learn_batch_size,
+                            lambda,
                             save_batch_count,
                             maxepoch,
                             Trainer::<M,A>::make_packed_sfens_parser,
@@ -175,6 +177,7 @@ impl<M,A> Learnener<M,A>
                               on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                               learn_sfen_read_size: usize,
                               learn_batch_size: usize,
+                              lambda: f32,
                               save_batch_count: usize,
                               maxepoch: usize
     ) -> Result<(), ApplicationError> {
@@ -186,6 +189,7 @@ impl<M,A> Learnener<M,A>
                             on_error_handler_arc,
                             learn_sfen_read_size,
                             learn_batch_size,
+                            lambda,
                             save_batch_count,
                             maxepoch,
                             Trainer::<M,A>::make_hcpe_parser,
@@ -202,9 +206,10 @@ impl<M,A> Learnener<M,A>
                                     on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                     learn_sfen_read_size: usize,
                                     learn_batch_size: usize,
+                                    lambda: f32,
                                     save_batch_count: usize,
                                     maxepoch: usize,
-                                    sfen_parser_builder: fn() -> P,
+                                    sfen_parser_builder: fn(f32) -> P,
                                     test_process: F
     ) -> Result<(), ApplicationError>
         where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
@@ -241,7 +246,7 @@ impl<M,A> Learnener<M,A>
         let extend = RefCell::new(0);
         let mut resume = true;
 
-        let lossf = CrossEntropy::<f32>::new();
+        let lossf = LF::new();
 
         let mut current_filename = String::from("");
         let mut current_items = 0;
@@ -267,7 +272,7 @@ impl<M,A> Learnener<M,A>
                 }
             }
 
-            let mut dataloader = dataloader_builder.build(sfen_parser_builder())?;
+            let mut dataloader = dataloader_builder.build(sfen_parser_builder(lambda))?;
 
             while let Some((filename,items,batch)) = dataloader.load()? {
                 if notify_quit.load(Ordering::Acquire) {

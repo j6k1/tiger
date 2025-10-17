@@ -56,8 +56,11 @@ const LEAN_BATCH_SIZE:usize = 1000 * 100;
 pub struct Config {
     learn_sfen_read_size:Option<usize>,
     learn_batch_size:Option<usize>,
+    lambda:Option<f32>,
     save_batch_count:Option<usize>,
-    learning_rate:Option<f32>
+    learning_rate:Option<f32>,
+    learning_rate_for_output_layer:Option<f32>,
+    weight_decay:Option<f32>
 }
 pub struct ConfigLoader {
     reader:BufReader<File>,
@@ -131,11 +134,12 @@ fn run() -> Result<(),ApplicationError> {
                                                          testdir,
                                                          TrainerCreator::create(String::from("data"),
                                                                                 String::from("nn.bin"),
-                                                                                config.learning_rate.unwrap_or(0.01),
+                                                                                &config,
                                                                                 MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?,
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
+                                                         config.lambda.unwrap_or(0.667),
                                                          config.save_batch_count.unwrap_or(1),
                                                          maxepoch)
         } else if matches.opt_present("hcpe") {
@@ -143,11 +147,12 @@ fn run() -> Result<(),ApplicationError> {
                                                 testdir,
                                                 TrainerCreator::create(String::from("data"),
                                                                        String::from("nn.bin"),
-                                                                       config.learning_rate.unwrap_or(0.01),
+                                                                       &config,
                                                                        MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?,
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
+                                                config.lambda.unwrap_or(0.667),
                                                 config.save_batch_count.unwrap_or(1),
                                                 maxepoch)
         } else {
@@ -164,8 +169,8 @@ fn run() -> Result<(),ApplicationError> {
 
         let mut evalutor = TrainerCreator::create(String::from("data"),
                                               String::from("nn.bin"),
-                                              config.learning_rate.unwrap_or(0.01),
-                                                  MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
+                                              &config,
+                                              MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
 
         if matches.opt_present("yaneuraou") {
             Learnener::new().eval_test(testdir,"bin",40,
@@ -185,7 +190,9 @@ fn run() -> Result<(),ApplicationError> {
 
         Ok(())
     } else {
-        let agent = UsiAgent::new(Tiger::new(| model_name | EvalutorCreator::create(String::from("data"),model_name.clone())));
+        let config = ConfigLoader::new("settings.toml")?.load()?;
+
+        let agent = UsiAgent::new(Tiger::new(move | model_name | EvalutorCreator::create(String::from("data"),model_name.clone(),&config)));
 
         let r = agent.start_default(|on_error_handler,e| {
             match on_error_handler {

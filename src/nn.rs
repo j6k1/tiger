@@ -10,7 +10,7 @@ use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{ReLu, Sigmoid};
+use nncombinator::activation::{LeakyReLu, ReLu, Sigmoid};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
@@ -22,22 +22,26 @@ use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
-use nncombinator::lossfunction::{CrossEntropy, LossFunction};
+use nncombinator::layer::logging::LoggingLayerBuilder;
+use nncombinator::lossfunction::{CrossEntropy, LossFunction, LossFunctionLinear, Mse};
 use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
-use nncombinator::optimizer::{AdamBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
+use nncombinator::optimizer::{AdamBuilder, AdamWBuilder, MomentumSGD, MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
-use rayon::prelude::{ParallelIterator,IntoParallelIterator};
+use rand::distributions::Uniform;
+use rand::distributions::uniform::SampleUniform;
+use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use usiagent::event::{GameEndState};
 use usiagent::math::Prng;
 use usiagent::movepick::RandomPicker;
 use usiagent::rule::{LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
+use crate::Config;
 use crate::device::DeviceFeatureTransform;
 use crate::error::{ApplicationError};
 use crate::features::HalfKP;
@@ -90,6 +94,8 @@ const OPPONENT_MOCHIGOMA_HISHA_INDEX:usize = OPPONENT_MOCHIGOMA_KAKU_INDEX + 3;
 const MOCHIGOMA_END:usize = PIECE_END + OPPONENT_MOCHIGOMA_HISHA_INDEX + 3;
 
 pub const FEATURES_NUM:usize = MOCHIGOMA_END * BANMEN_SIZE;
+
+pub const ACTIVE_INDICES:usize = 39;
 
 const SELF_INDEX_MAP:[usize; 7] = [
     MOCHIGOMA_FU_INDEX,
@@ -768,6 +774,10 @@ impl<const NI:usize,const NO:usize> FeatureTransformLayerBuilder<NI,NO> {
         Ok(FeatureTransformLayer::<U,P,I,C,B,D,OP,NI,NO>::instantiation(parent,device,ui,bi,b)?)
     }
 }
+fn xavier_uniform(fan_in:usize, fan_out:usize, gain: f32) -> Uniform<f32> where f32: SampleUniform {
+    let limit = (6.0 / (fan_in + fan_out) as f32).sqrt();
+    Uniform::new(-limit * gain, limit * gain)
+}
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
                                  BatchTrain<U,D,L> + Persistence<U,P,PT>
@@ -791,23 +801,25 @@ impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
 pub struct EvalutorCreator {
 }
 impl EvalutorCreator {
-    pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static)
+    pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                                 PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
+//        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n1 = Uniform::<f32>::new(-1.0,1.0);
 
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
-
+//        let n4 = Normal::<f32>::new(0.0, (2f32 / (1f32 + 32f32)).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.8).unwrap();
+        let n4b = Uniform::<f32>::new(-0.3,0.3);
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder = AdamBuilder::new(&device)
-            .lr(0.001)
-            .weight_decay(0.0001);
+        let optimizer_builder = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(0.001))
+            .weight_decay(config.weight_decay.unwrap_or(0.));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -833,10 +845,17 @@ impl EvalutorCreator {
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
+            let optimizer_builder = AdamWBuilder::new(&device).lr(
+                config.learning_rate_for_output_layer.unwrap_or(0.002)
+            );
+
             let rnd = rnd.clone();
+            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                        move || n4.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
-        })?.add_layer(|l| {
+                                                     move || {
+                                                         n4.sample(&mut rnd.borrow_mut().deref_mut())
+                                                     },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()), &optimizer_builder)
+       })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
             LinearOutputLayer::new(l, &device)
@@ -871,8 +890,10 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
+pub type LF = Mse<f32>;
+
 pub struct Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A:CudaAllocator {
     pub nn:M,
     a:PhantomData<A>,
@@ -884,8 +905,8 @@ pub struct Trainer<M,A>
 pub struct TrainerCreator {
 }
 impl TrainerCreator {
-    pub fn create<A: CudaAllocator + MemoryType + 'static>(save_dir:String, nn_path:String, learning_rate:f32, allocator:A)
-        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,A>, ApplicationError>
+    pub fn create<A: CudaAllocator + MemoryType + 'static>(save_dir:String, nn_path:String, config:&Config, allocator:A)
+        -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
         where for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
               CudaPtr<usize,A>: WriteMemory<usize>,
@@ -894,18 +915,20 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
+//        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n1 = Uniform::<f32>::new(-1.0,1.0);
 
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+//        let n4 = Normal::<f32>::new(0.0, (2f32 / (1f32 + 32f32)).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.8).unwrap();
+        let n4b = Uniform::<f32>::new(-0.3,0.3);
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let optimizer_builder = AdamBuilder::new(&device)
-//        let optimizer_builder = SGDBuilder::new(&device)
-            .lr(learning_rate)
-            .weight_decay(0.00001);
+        let optimizer_builder = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(0.001))
+            .weight_decay(config.weight_decay.unwrap_or(0.));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -916,24 +939,115 @@ impl TrainerCreator {
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
                                                                           &optimizer_builder)
+        })?.try_add_layer(|l| {
+            let mut l = LoggingLayerBuilder::new().build(l,&device);
+
+            if let Ok(ref mut l) = l {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("feature transform layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+            }
+
+            l
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+        })?.try_add_layer(|l| {
+            let mut l = LoggingLayerBuilder::new().build(l,&device);
+
+            if let Ok(ref mut l) = l {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+            }
+
+            l
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+        })?.try_add_layer(|l| {
+            let mut l = LoggingLayerBuilder::new().build(l,&device);
+
+            if let Ok(ref mut l) = l {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+            }
+
+            l
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
+            let optimizer_builder = AdamWBuilder::new(&device).lr(
+                config.learning_rate_for_output_layer.unwrap_or(0.002)
+            );
+
             let rnd = rnd.clone();
+            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                        move || n4.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+            move || {
+                n4.sample(&mut rnd.borrow_mut().deref_mut())
+            },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder)
+        })?.try_add_layer(|l| {
+            let mut l = LoggingLayerBuilder::new().build(l,&device);
+
+            if let Ok(ref mut l) = l {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, | acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0/0.0, | acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0/0.0, | acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("output layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+            }
+
+            l
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
@@ -965,10 +1079,10 @@ impl TrainerCreator {
     }
 }
 impl<M,A> Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,CrossEntropy<f32>>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {
-    fn sigmoid(x:i16) -> f32 {
-        1. / (1. + (-0.00173873964459554 * x as f32).exp())
+    fn sigmoid(x:f32) -> f32 {
+        1. / (1. + (-0.00173873964459554 * x).exp())
     }
 
     pub fn select_bestmove(&self, teban:Teban, state:&State, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
@@ -995,19 +1109,19 @@ impl<M,A> Trainer<M,A>
             }
         }
 
-        let mut best_score = None;
+        let mut worst_score = None;
         let mut best_move = None;
 
         for (r,m) in self.nn.batch_forward(batch.into())?.iter().zip(mvs) {
-            let r = r[0] - 0.5;
+            let r = r[0];
 
-            match best_score {
+            match worst_score {
                 None => {
-                    best_score = Some(-r);
+                    worst_score = Some(r);
                     best_move = Some(m);
                 },
-                Some(s) if -r > s => {
-                    best_score = Some(-r);
+                Some(s) if r < s => {
+                    worst_score = Some(r);
                     best_move = Some(m);
                 },
                 _ => ()
@@ -1017,7 +1131,7 @@ impl<M,A> Trainer<M,A>
         Ok(best_move)
     }
 
-    pub fn make_packed_sfens_parser<'a>()
+    pub fn make_packed_sfens_parser<'a>(lambda:f32)
         -> impl FnMut(Vec<Vec<u8>>)
                 -> Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
         move | packed_sfens | {
@@ -1071,8 +1185,10 @@ impl<M,A> Trainer<M,A>
                             _ => 0.5f32
                         };
 
-                        t * 0.667 + Self::sigmoid(score) * 0.333
-                    };
+                        let r = t * lambda + Self::sigmoid(score as f32) * (1. - lambda);
+
+                        r
+                  };
 
                     (t, input)
                 }).fold(|| (Vec::new(), Vec::new()), |mut acc, (t, i)| {
@@ -1151,7 +1267,7 @@ impl<M,A> Trainer<M,A>
         Ok((game_result,r[0],same))
     }
 
-    pub fn make_hcpe_parser<'a>()
+    pub fn make_hcpe_parser<'a>(lambda:f32)
         -> impl FnMut(Vec<Vec<u8>>) ->
                 Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
         move | hcpes | {
@@ -1172,6 +1288,33 @@ impl<M,A> Trainer<M,A>
                 Ok((teban, banmen, mc, game_result, score))
             }).collect::<Result<Vec<_>,_>>()?;
 
+            /*
+            let len = sfens_with_extended.len();
+
+            let ss = sfens_with_extended.iter().map(|(_,_,_,_,score)| *score).filter(|&s| {
+                s != 30000 && s != -30000
+            }).map(|s| {
+                Self::sigmoid(s)
+            }).collect::<Vec<f32>>();
+
+            let mate = sfens_with_extended.iter().map(|(_,_,_,_,score)| *score).filter(|&s| s == 30000).count();
+            let resign = sfens_with_extended.iter().map(|(_,_,_,_,score)| *score).filter(|&s| s == -30000).count();
+
+            let mean = ss.iter().fold(0., | acc, &x| {
+                acc + x
+            }) / (len as f32 - mate as f32 - resign as f32);
+            let max = ss.iter().fold(0.0/0.0, | acc, &x| {
+                x.max(acc)
+            });
+            let min = ss.iter().fold(0.0/0.0, | acc, &x| {
+                x.min(acc)
+            });
+            let std = ss.iter().map(|&x| {
+                (x as f32 - mean).powf(2.0)
+            }).sum::<f32>() / (len as f32 - mate as f32 - resign as f32);
+
+            println!("mean: {}, max: {}, min : {}, std: {}, mate: {}, resign: {}, total: {}", mean, max, min, std, mate, resign, len);
+            */
             let batch = sfens_with_extended.into_par_iter()
                 .map(|(teban, banmen, mc, es, score)| {
                     let state = State::new(banmen);
@@ -1217,7 +1360,15 @@ impl<M,A> Trainer<M,A>
                             _ => 0.5f32
                         };
 
-                        t * 0.667 + Self::sigmoid(score) * 0.333
+                        if score == 30000 {
+                            1.
+                        } else if score == -30000 {
+                            0.
+                        } else {
+                            let r = t * lambda + Self::sigmoid(score as f32) * (1. - lambda);
+
+                            r
+                        }
                     };
 
                     (t, input)
