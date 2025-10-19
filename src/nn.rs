@@ -942,6 +942,8 @@ impl TrainerCreator {
                                                                           move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
                                                                           &optimizer_builder)
         })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
@@ -955,20 +957,20 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("feature transform layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("feature transform layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });
             }
 
             l
-        }).add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
@@ -982,20 +984,20 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });
             }
 
             l
-        }).add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
         })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
@@ -1009,15 +1011,13 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("middle layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });
             }
 
             l
-        }).add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let optimizer_builder = AdamWBuilder::new(&device).lr(
                 config.learning_rate_for_output_layer.unwrap_or(0.002)
@@ -1030,6 +1030,8 @@ impl TrainerCreator {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
             },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder)
         })?.add_layer(|l| {
+            ActivationLayer::new(l, Sigmoid::new(&device), &device)
+        }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
@@ -1043,15 +1045,13 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("output layer forward mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("output layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });
             }
 
             l
-        }).add_layer(|l| {
-            ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
             LinearOutputLayer::new(l, &device)
         });
