@@ -28,6 +28,7 @@ use nncombinator::mem::AsRawSlice;
 use nncombinator::ope::UnitValue;
 use nncombinator::optimizer::{AdamBuilder, AdamWBuilder, MomentumSGD, MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
+use nncombinator::scheduler::{CosineAnnealingLR, LinearWarmupLR, Scheduler};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
@@ -927,8 +928,11 @@ impl TrainerCreator {
         let device = DeviceGpu::new(&allocator)?;
 
         let optimizer_builder = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .weight_decay(config.weight_decay.unwrap_or(0.));
+            .lr(config.learning_rate.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.))
+            .scheduler(LinearWarmupLR::new(500,3e-4).seq(
+                500,CosineAnnealingLR::new(21300,0.)
+            ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -1020,8 +1024,10 @@ impl TrainerCreator {
             l
         }).try_add_layer(|l| {
             let optimizer_builder = AdamWBuilder::new(&device).lr(
-                config.learning_rate_for_output_layer.unwrap_or(0.002)
-            );
+                config.learning_rate_for_output_layer.unwrap_or(3e-5)
+            ).scheduler(LinearWarmupLR::new(500,3e-5).seq(
+                500,CosineAnnealingLR::new(21300,0.)
+            ));
 
             let rnd = rnd.clone();
             let rndb = rnd.clone();
