@@ -19,7 +19,7 @@ use usiagent::input::*;
 use nncombinator::arr::{Arr, SerializedVec};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::DeviceGpu;
-use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll};
+use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll, Step};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
 
@@ -95,7 +95,7 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
 pub struct Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear>,
+             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear> + Step,
           A: CudaAllocator {
           nn:PhantomData<M>,
           allocator:PhantomData<A>
@@ -103,7 +103,7 @@ pub struct Learnener<M,A>
 impl<M,A> Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear> + 'static,
+             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence<f32>,Linear> + Step + 'static,
           A: CudaAllocator,
           [(); FEATURES_NUM * 2]:,
           [(); FEATURES_NUM * 256]: {
@@ -292,6 +292,7 @@ impl<M,A> Learnener<M,A>
 
                 println!("error_total: {}", loss);
 
+                evalutor.nn.step()?;
                 loss_logger.write_all(loss.to_string().as_bytes())?;
                 loss_logger.write_all(b"\n")?;
                 

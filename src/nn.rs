@@ -17,7 +17,7 @@ use nncombinator::cuda::{CudaMutPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, 
 use nncombinator::cuda::allocator::{CudaAllocator};
 use nncombinator::device::{Device, DeviceAllocator, DeviceCpu, DeviceGpu};
 use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
-use nncombinator::layer::{AddLayer, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, BatchTrain, Forward, ForwardAll, Loss, PreTrain, TryAddLayer, UpdateWeight};
+use nncombinator::layer::{AddLayer, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, BatchTrain, Forward, ForwardAll, Loss, OnStep, PreTrain, Step, TryAddLayer, UpdateWeight};
 use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
@@ -690,7 +690,18 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchLoss<U>
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor2dPtr<U,A,NI,NO>>,
           [(); NO * 2]: {
 }
-/// Trait for LinearLayer instance creation
+impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> OnStep for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
+    where U: UnitValue<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>> + OnStep,
+          D: Device<U> + 'static,
+          OP: Optimizer<U,D> {
+    fn on_step(&mut self, step: usize) -> Result<(), TrainingError> {
+        self.unit_optimizer.on_step(step)?;
+        self.bias_optimizer.on_step(step)?;
+
+        Ok(self.parent.on_step(step)?)
+    }
+}
 pub trait FeatureTransformLayerInstantiation<U,P,I,C,BC,D,OP,const NI:usize,const NO:usize>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
@@ -781,20 +792,20 @@ fn xavier_uniform(fan_in:usize, fan_out:usize, gain: f32) -> Uniform<f32> where 
 }
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-                                 BatchTrain<U,D,L> + Persistence<U,P,PT>
+                                 BatchTrain<U,D,L> + Persistence<U,P,PT> + Step
                                  where U: UnitValue<U>,
                                        D: Device<U>,
-                                       I: BatchDataType,
+                                       I: BatchDataType + Debug + Send + Sync,
                                        O: BatchDataType,
                                        PT: PersistenceType,
                                        L: LossFunction<U> {}
 impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
     where T: ForwardAll<Input=I,Output=O> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-             BatchTrain<U,D,L> + Persistence<U,P,PT>,
+             BatchTrain<U,D,L> + Persistence<U,P,PT> + Step,
              U: UnitValue<U>,
              D: Device<U>,
-             I: BatchDataType,
+             I: BatchDataType + Debug + Send + Sync,
              O: BatchDataType,
              PT: PersistenceType,
              L: LossFunction<U>,
@@ -858,9 +869,9 @@ impl EvalutorCreator {
                                                      },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()), &optimizer_builder)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
-        }).add_layer(|l| {
+        }).try_add_layer(|l| {
             LinearOutputLayer::new(l, &device)
-        });
+        })?;
 
         if savedir.as_ref().join(&nn_path).exists() {
             let mut p = BinFilePersistence::new(savedir.as_ref().join(&nn_path))?;
@@ -1058,9 +1069,9 @@ impl TrainerCreator {
             }
 
             l
-        }).add_layer(|l| {
+        }).try_add_layer(|l| {
             LinearOutputLayer::new(l, &device)
-        });
+        })?;
 
         {
             let save_dir = Path::new(&save_dir);
