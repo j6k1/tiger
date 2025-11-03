@@ -823,8 +823,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        //let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt())).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.13).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt())).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -913,7 +912,7 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
-pub type LF = CrossEntropy<f32>;
+pub type LF = Mse<f32>;
 
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
@@ -941,8 +940,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        //let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt())).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.13).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt())).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
