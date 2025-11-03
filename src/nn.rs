@@ -818,8 +818,7 @@ impl EvalutorCreator {
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                                 PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
-        let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
-
+        let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
@@ -851,38 +850,32 @@ impl EvalutorCreator {
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
-        let rnd = rnd_base.clone();
-
         let mut nn = net.try_add_layer(|l| {
-            let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          move || n1.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                                          || n1.sample(&mut rnd),
                                                                           || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                                                             move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                             || n2.sample(&mut rnd),
                                                              || 0.0,
                                                              &optimizer_builder_middle
             )
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
-                                                     move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                     || n3.sample(&mut rnd),
                                                       || 0.0,
                                                       &optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                     move || {
-                                                         n4.sample(&mut rnd.borrow_mut().deref_mut())
+                                                     || {
+                                                         n4.sample(&mut rnd)
                                                      },|| 0.0, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
@@ -942,7 +935,7 @@ impl TrainerCreator {
               CudaPtr<u8,A>: WriteMemory<u8> {
 
         let mut rnd = prelude::thread_rng();
-        let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
+        let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
@@ -974,14 +967,11 @@ impl TrainerCreator {
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
-        let rnd = rnd_base.clone();
-
         let verbose = config.verbose.unwrap_or(true);
 
         let mut nn = net.try_add_layer(|l| {
-            let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.0,
+                                                                          || n1.sample(&mut rnd), || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
@@ -1007,9 +997,8 @@ impl TrainerCreator {
 
             l
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
+                || n2.sample(&mut rnd),
                    || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
@@ -1035,9 +1024,8 @@ impl TrainerCreator {
 
             l
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
-                move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
+                || n3.sample(&mut rnd),
                    || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
@@ -1063,10 +1051,9 @@ impl TrainerCreator {
 
             l
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
-                n4.sample(&mut rnd.borrow_mut().deref_mut())
+                n4.sample(&mut rnd)
             },|| 0.0 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
