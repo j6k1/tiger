@@ -36,6 +36,7 @@ use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
 use rand::distributions::Uniform;
 use rand::distributions::uniform::SampleUniform;
+use rand_distr::num_traits::real::Real;
 use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use usiagent::event::{GameEndState};
 use usiagent::math::Prng;
@@ -823,7 +824,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.4).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -882,7 +883,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      move || {
                                                          n4.sample(&mut rnd.borrow_mut().deref_mut())
-                                                     },|| -1.5, &optimizer_builder_out)
+                                                     },|| -1.0, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -946,7 +947,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.4).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
@@ -1066,7 +1067,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
-            },|| -1.5 , &optimizer_builder_out)
+            },|| -1.0 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
