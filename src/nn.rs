@@ -821,7 +821,7 @@ impl EvalutorCreator {
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
+        let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
         let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
@@ -919,7 +919,7 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
-pub type LF = CrossEntropy<f32>;
+pub type LF = Mse<f32>;
 
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
@@ -944,7 +944,7 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / FEATURES_NUM as f32).sqrt()).unwrap();
+        let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
         let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
