@@ -819,19 +819,35 @@ impl EvalutorCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-//        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
-        let n1 = Uniform::<f32>::new(-1.0,1.0);
+        let n1 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
+        let n2 = Uniform::new(-(6f32 / 256f32).sqrt(), (6f32 / 256f32).sqrt());
+        let n2b = Uniform::new(-0.1,0.1);
+        let n3 = Uniform::new(-(6f32 / 32f32).sqrt(), (6f32 / 32f32).sqrt());
+        let n3b = Uniform::new(-0.1,0.1);
+        let n4 = Normal::<f32>::new(0.0, 0.2).unwrap();
 
-        let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-//        let n4 = Normal::<f32>::new(0.0, (2f32 / (1f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.8).unwrap();
-        let n4b = Uniform::<f32>::new(-0.3,0.3);
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .weight_decay(config.weight_decay.unwrap_or(0.));
+        let optimizer_builder_feature = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(18000,0.00001)
+            ));
+
+        let optimizer_builder_middle = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(15000,0.00001)
+            ));
+
+        let optimizer_builder_out = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.005))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(8000,0.000001)
+            ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -841,19 +857,26 @@ impl EvalutorCreator {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
-                                                                          &optimizer_builder)
+                                                                          &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
+            let rndb = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                                                             move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+                                                             move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                             move || n2b.sample(&mut rndb.borrow_mut().deref_mut()),
+                                                             &optimizer_builder_middle
+            )
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
+            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
-                                                     move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+                                                     move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                      move || n3b.sample(&mut rndb.borrow_mut().deref_mut()),
+                                                      &optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
@@ -866,7 +889,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      move || {
                                                          n4.sample(&mut rnd.borrow_mut().deref_mut())
-                                                     },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()), &optimizer_builder)
+                                                     },|| -1.5, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -927,22 +950,34 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-//        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
-        let n1 = Uniform::<f32>::new(-1.0,1.0);
-
-        let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-//        let n4 = Normal::<f32>::new(0.0, (2f32 / (1f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.8).unwrap();
-        let n4b = Uniform::<f32>::new(-0.3,0.3);
+        let n1 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
+        let n2 = Uniform::new(-(6f32 / 256f32).sqrt(), (6f32 / 256f32).sqrt());
+        let n2b = Uniform::new(-0.1,0.1);
+        let n3 = Uniform::new(-(6f32 / 32f32).sqrt(), (6f32 / 32f32).sqrt());
+        let n3b = Uniform::new(-0.1,0.1);
+        let n4 = Normal::<f32>::new(0.0, 0.2).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let optimizer_builder = AdamWBuilder::new(&device)
+        let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.))
+            .weight_decay(config.weight_decay.unwrap_or(0.01))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(21300,0.)
+                500,CosineAnnealingLR::new(18000,0.00001)
+            ));
+
+        let optimizer_builder_middle = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(15000,0.00001)
+            ));
+
+        let optimizer_builder_out = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
+            .weight_decay(config.weight_decay.unwrap_or(0.005))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(8000,0.000001)
             ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -954,8 +989,8 @@ impl TrainerCreator {
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
-                                                                          &optimizer_builder)
+                                                                          || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
+                                                                          &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).add_layer(|l| {
@@ -981,8 +1016,10 @@ impl TrainerCreator {
             l
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
+            let rndb = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                move || n2.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
+                move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
+                   move || n2b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).add_layer(|l| {
@@ -1007,45 +1044,40 @@ impl TrainerCreator {
 
             l
         }).try_add_layer(|l| {
-            let rnd = rnd.clone();
-            LinearLayerBuilder::<32, 32>::new().build(l, &device,
-                move || n3.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,&optimizer_builder)
-        })?.add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
-        }).add_layer(|l| {
-            let mut l = LoggingLayer::new(l,&device);
-
-            if verbose {
-                l.add_batch_forward_logger(|o| {
-                    let o = o.read_to_vec()?;
-
-                    let len = o.len();
-
-                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
-
-                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
-
-                    Ok(())
-                });
-            }
-
-            l
-        }).try_add_layer(|l| {
-            let optimizer_builder = AdamWBuilder::new(&device).lr(
-                config.learning_rate_for_output_layer.unwrap_or(3e-5)
-            ).scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-5),0.1).seq(
-                500,CosineAnnealingLR::new(21300,0.)
-            ));
-
             let rnd = rnd.clone();
             let rndb = rnd.clone();
+            LinearLayerBuilder::<32, 32>::new().build(l, &device,
+                move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
+                   move || n3b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder_middle)
+        })?.add_layer(|l| {
+            ActivationLayer::new(l, ReLu::new(&device), &device)
+        }).add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+            }
+
+            l
+        }).try_add_layer(|l| {
+            let rnd = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
-            },|| n4b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder)
+            },|| -1.5, &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
