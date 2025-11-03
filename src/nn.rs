@@ -25,7 +25,7 @@ use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::layer::logging::{LoggingLayer};
 use nncombinator::lossfunction::{CrossEntropy, LossFunction, LossFunctionLinear, Mse};
 use nncombinator::mem::AsRawSlice;
-use nncombinator::ope::UnitValue;
+use nncombinator::ope::{Sqrt, UnitValue};
 use nncombinator::optimizer::{AdamBuilder, AdamWBuilder, MomentumSGD, MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
 use nncombinator::scheduler::{CosineAnnealingLR, LinearWarmupLR, Scheduler};
@@ -823,7 +823,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.07).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -940,7 +940,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.07).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
