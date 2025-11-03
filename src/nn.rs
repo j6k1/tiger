@@ -876,7 +876,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      || {
                                                          n4.sample(&mut rnd)
-                                                     },|| -1.2, &optimizer_builder_out)
+                                                     },|| 0.0, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -1054,7 +1054,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd)
-            },|| -1.2 , &optimizer_builder_out)
+            },|| 0.0 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
