@@ -843,7 +843,7 @@ impl EvalutorCreator {
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0))
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(8000,0.00001)
             ));
@@ -966,7 +966,7 @@ impl TrainerCreator {
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0))
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(8000,0.00001)
             ));
