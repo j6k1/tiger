@@ -819,32 +819,31 @@ impl EvalutorCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
-        let n2 = Uniform::new(-(6f32 / 256f32).sqrt(), (6f32 / 256f32).sqrt());
-        let n2b = Uniform::new(-0.1,0.1);
-        let n3 = Uniform::new(-(6f32 / 32f32).sqrt(), (6f32 / 32f32).sqrt());
-        let n3b = Uniform::new(-0.1,0.1);
-        let n4 = Normal::<f32>::new(0.0, 0.2).unwrap();
+
+        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(18000,0.00001)
             ));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(15000,0.00001)
             ));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.005))
+            .weight_decay(config.weight_decay.unwrap_or(0.00005))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(8000,0.000001)
             ));
@@ -856,40 +855,34 @@ impl EvalutorCreator {
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          move || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
+                                                                          move || n1.sample(&mut rnd.borrow_mut().deref_mut()),
+                                                                          || 0.,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            let rndb = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                                                              move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
-                                                             move || n2b.sample(&mut rndb.borrow_mut().deref_mut()),
+                                                             || 0.0,
                                                              &optimizer_builder_middle
             )
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                                                      move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
-                                                      move || n3b.sample(&mut rndb.borrow_mut().deref_mut()),
+                                                      || 0.0,
                                                       &optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).try_add_layer(|l| {
-            let optimizer_builder = AdamWBuilder::new(&device).lr(
-                config.learning_rate_for_output_layer.unwrap_or(0.002)
-            );
-
             let rnd = rnd.clone();
-            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      move || {
                                                          n4.sample(&mut rnd.borrow_mut().deref_mut())
-                                                     },|| -1.5, &optimizer_builder_out)
+                                                     },|| 0.0, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -950,32 +943,30 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let rnd_base = Rc::new(RefCell::new(XorShiftRng::from_seed(rnd.gen())));
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
-        let n2 = Uniform::new(-(6f32 / 256f32).sqrt(), (6f32 / 256f32).sqrt());
-        let n2b = Uniform::new(-0.1,0.1);
-        let n3 = Uniform::new(-(6f32 / 32f32).sqrt(), (6f32 / 32f32).sqrt());
-        let n3b = Uniform::new(-0.1,0.1);
-        let n4 = Normal::<f32>::new(0.0, 0.2).unwrap();
+        let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(18000,0.00001)
             ));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.01))
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(15000,0.00001)
             ));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.005))
+            .weight_decay(config.weight_decay.unwrap_or(0.00005))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
                 500,CosineAnnealingLR::new(8000,0.000001)
             ));
@@ -1016,10 +1007,9 @@ impl TrainerCreator {
             l
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            let rndb = rnd.clone();
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 move || n2.sample(&mut rnd.borrow_mut().deref_mut()),
-                   move || n2b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder_middle)
+                   || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).add_layer(|l| {
@@ -1045,10 +1035,9 @@ impl TrainerCreator {
             l
         }).try_add_layer(|l| {
             let rnd = rnd.clone();
-            let rndb = rnd.clone();
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 move || n3.sample(&mut rnd.borrow_mut().deref_mut()),
-                   move || n3b.sample(&mut rndb.borrow_mut().deref_mut()),&optimizer_builder_middle)
+                   || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
         }).add_layer(|l| {
@@ -1077,7 +1066,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
-            },|| -1.5, &optimizer_builder_out)
+            },|| 0.0 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
