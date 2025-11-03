@@ -823,7 +823,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.05).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.07).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -940,7 +940,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.05).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.07).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
