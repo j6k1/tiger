@@ -1402,9 +1402,9 @@ impl<M,A> Trainer<M,A>
                         };
 
                         if score == 30000 {
-                            1.
+                            0.995
                         } else if score == -30000 {
-                            0.
+                            0.005
                         } else {
                             let r = t * lambda + Self::sigmoid(score as f32) * (1. - lambda);
 
