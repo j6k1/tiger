@@ -823,7 +823,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.05).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -876,7 +876,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      || {
                                                          n4.sample(&mut rnd)
-                                                     },|| 0.0, &optimizer_builder_out)
+                                                     },|| -1.2, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -912,7 +912,7 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
-pub type LF = Mse<f32>;
+pub type LF = CrossEntropy<f32>;
 
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
@@ -940,7 +940,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.05).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
@@ -1054,7 +1054,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd)
-            },|| 0.0 , &optimizer_builder_out)
+            },|| -1.2 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
