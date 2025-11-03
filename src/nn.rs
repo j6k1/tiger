@@ -857,7 +857,7 @@ impl EvalutorCreator {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           move || n1.sample(&mut rnd.borrow_mut().deref_mut()),
-                                                                          || 0.,
+                                                                          || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
@@ -883,7 +883,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      move || {
                                                          n4.sample(&mut rnd.borrow_mut().deref_mut())
-                                                     },|| -1.0, &optimizer_builder_out)
+                                                     },|| 0.0, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -981,7 +981,7 @@ impl TrainerCreator {
         let mut nn = net.try_add_layer(|l| {
             let rnd = rnd.clone();
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.,
+                                                                          || n1.sample(&mut rnd.borrow_mut().deref_mut()), || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ReLu::new(&device), &device)
@@ -1067,7 +1067,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
-            },|| -1.0 , &optimizer_builder_out)
+            },|| 0.0 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
