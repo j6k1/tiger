@@ -823,30 +823,30 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt() * 1.5)).unwrap();
 
         let device = DeviceCpu::new()?;
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001));
-            //.scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-            //    500,CosineAnnealingLR::new(18000,0.00001)
-            //));
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(18000,0.00001)
+            ));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001));
-            //.scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-            //    500,CosineAnnealingLR::new(15000,0.00001)
-            //));
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(15000,0.00001)
+            ));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0));
-            //.scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-            //    500,CosineAnnealingLR::new(8000,0.00001)
-            //));
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(8000,0.00001)
+            ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -940,30 +940,30 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES + 256) as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 + 32f32)).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt() * 1.5)).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001));
-        //.scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-        //    500,CosineAnnealingLR::new(18000,0.00001)
-        //));
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(18000,0.00001)
+            ));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001));
-        //.scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-        //    500,CosineAnnealingLR::new(15000,0.00001)
-        //));
+            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(15000,0.00001)
+            ));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0));
-        //.scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-        //    500,CosineAnnealingLR::new(8000,0.00001)
-        //));
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
+            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
+                500,CosineAnnealingLR::new(8000,0.00001)
+            ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
