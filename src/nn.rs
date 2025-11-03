@@ -918,7 +918,7 @@ impl<M> Evalutor<M>
         Ok(((r[0] - 0.5) * (1 << 20) as f32) as i32)
     }
 }
-pub type LF = Mse<f32>;
+pub type LF = CrossEntropy<f32>;
 
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
