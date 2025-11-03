@@ -823,7 +823,7 @@ impl EvalutorCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.4).unwrap();
 
         let device = DeviceCpu::new()?;
 
@@ -843,9 +843,9 @@ impl EvalutorCreator {
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.00005))
+            .weight_decay(config.weight_decay.unwrap_or(0.0))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(8000,0.000001)
+                500,CosineAnnealingLR::new(8000,0.00001)
             ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -882,7 +882,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      move || {
                                                          n4.sample(&mut rnd.borrow_mut().deref_mut())
-                                                     },|| 0.0, &optimizer_builder_out)
+                                                     },|| -1.5, &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -946,7 +946,7 @@ impl TrainerCreator {
         let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
         let n2 = Normal::<f32>::new(0.0, (2f32 / 256f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / 32f32.sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.4).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
@@ -966,9 +966,9 @@ impl TrainerCreator {
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.00005))
+            .weight_decay(config.weight_decay.unwrap_or(0.0))
             .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(8000,0.000001)
+                500,CosineAnnealingLR::new(8000,0.00001)
             ));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -1066,7 +1066,7 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd.borrow_mut().deref_mut())
-            },|| 0.0 , &optimizer_builder_out)
+            },|| -1.5 , &optimizer_builder_out)
         })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
