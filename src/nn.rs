@@ -821,7 +821,7 @@ impl EvalutorCreator {
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
         let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES) as f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2f32 / (512f32 * 1.2)).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
         let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt() * (1f32 / (1f32 + 0.01f32 * 0.01f32)).sqrt()).unwrap();
         let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt() * 2.0)).unwrap();
 
