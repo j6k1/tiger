@@ -401,7 +401,16 @@ pub trait DeviceAccumulator<U,IO,const N: usize>
     ///
     /// This function may return the following errors
     /// * [`EvaluateError`]
-    fn forward_accumulator<'a>(&self, input:&'a IO) -> Result<IO, EvaluateError>;
+    fn forward_accumulator<'a>(&self, input:&'a IO) -> Result<IO,EvaluateError>;
+    /// Backward propagation calculation
+    /// # Arguments
+    /// * `loss` - loss input
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors
+    /// * [`EvaluateError`]
+    fn backward_accumulator<'a>(&self, loss:&'a IO) -> Result<IO,TrainingError>;
     /// Forward propagation calculation in batch
     /// # Arguments
     /// * `input` - input
@@ -411,24 +420,47 @@ pub trait DeviceAccumulator<U,IO,const N: usize>
     /// This function may return the following errors
     /// * [`TrainingError`]
     fn batch_forward_accumulator<'a>(&self,input: &'a <IO as BatchDataType>::Type) -> Result<<IO as BatchDataType>::Type,TrainingError>;
+    /// Backward propagation calculation in batch
+    /// # Arguments
+    /// * `loss` - loss input
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors
+    /// * [`TrainingError`]
+    fn batch_backward_accumulator<'a>(&self,loss: &'a <IO as BatchDataType>::Type) -> Result<<IO as BatchDataType>::Type,TrainingError>;
 }
 impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
     where U: UnitValue<U> {
-    fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>, EvaluateError> {
+    fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,EvaluateError> {
+        todo!()
+    }
+    fn backward_accumulator<'a>(&self, loss: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,TrainingError> {
         todo!()
     }
 
     fn batch_forward_accumulator<'a>(&self, input: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
         todo!()
     }
+
+    fn batch_backward_accumulator<'a>(&self, loss: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
+        todo!()
+    }
 }
 impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for DeviceGpu<f32,A>
     where A: CudaAllocator {
-    fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>, EvaluateError> {
+    fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,EvaluateError> {
+        todo!()
+    }
+    fn backward_accumulator<'a>(&self, loss: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,TrainingError> {
         todo!()
     }
     fn batch_forward_accumulator<'a>(&self, input: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
-                              -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type, TrainingError> {
+                              -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
+        todo!()
+    }
+    fn batch_backward_accumulator<'a>(&self, loss: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
+                                     -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
         todo!()
     }
 }
