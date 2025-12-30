@@ -16,7 +16,7 @@ use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
 use rcublas_sys::{cublasDaxpy_v2, cublasSaxpy_v2, cublasStatus_t};
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
-use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
+use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorBatchArgs, TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     where U: UnitValue<U>, [(); NO*2]: {
@@ -433,34 +433,138 @@ pub trait DeviceAccumulator<U,IO,const N: usize>
 impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
     where U: UnitValue<U> {
     fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,EvaluateError> {
-        todo!()
+        let mut output = input.clone();
+
+        for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+            *o += i;
+        }
+
+        for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+            *o += i;
+        }
+
+        Ok(output)
     }
     fn backward_accumulator<'a>(&self, loss: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,TrainingError> {
-        todo!()
+        let mut output = loss.clone();
+
+        for (mut o,&i) in output.iter_mut().take(N).zip(loss.iter().skip(N)) {
+            *o += i;
+        }
+
+        for (mut o,&i) in output.iter_mut().skip(N).zip(loss.iter().take(N)) {
+            *o += i;
+        }
+
+        Ok(output)
     }
 
     fn batch_forward_accumulator<'a>(&self, input: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
-        todo!()
+        Ok(input.par_iter().map(|input| {
+            let mut output = Arr::<U,{N*2}>::new();
+
+            for (mut o,&i) in output.iter_mut().zip(input.iter()) {
+                *o = i
+            }
+
+            for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+                *o += i;
+            }
+
+            for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+                *o += i;
+            }
+
+            output
+        }).collect::<Vec<Arr<U,{N*2}>>>().into())
     }
 
     fn batch_backward_accumulator<'a>(&self, loss: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
-        todo!()
+        Ok(loss.par_iter().map(|input| {
+            let mut output = Arr::<U,{N*2}>::new();
+
+            for (mut o,&i) in output.iter_mut().zip(input.iter()) {
+                *o = i
+            }
+
+            for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+                *o += i;
+            }
+
+            for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+                *o += i;
+            }
+
+            output
+        }).collect::<Vec<Arr<U,{N*2}>>>().into())
     }
 }
 impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for DeviceGpu<f32,A>
     where A: CudaAllocator {
     fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,EvaluateError> {
-        todo!()
+        let output = CudaTensor1dPtr::<f32,A,{N*2}>::new(self.get_allocator())?;
+
+        let input = CudaTensor1dPtrView::<f32,{N*2}>::from(input);
+
+        let mut args = AccumulatorArgs::new(
+            CudaConstPtr::new(&input),
+            output);
+
+        let mut kernel = Accumulator::<f32,A,N>::new();
+
+        kernel.launch(&mut args)?;
+
+        Ok(args.output)
     }
     fn backward_accumulator<'a>(&self, loss: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,TrainingError> {
-        todo!()
+        let output = CudaTensor1dPtr::<f32,A,{N*2}>::new(self.get_allocator())?;
+
+        let input = CudaTensor1dPtrView::<f32,{N*2}>::from(loss);
+
+        let mut args = AccumulatorArgs::new(
+            CudaConstPtr::new(&input),
+            output);
+
+        let mut kernel = Accumulator::<f32,A,N>::new();
+
+        kernel.launch(&mut args)?;
+
+        Ok(args.output)
     }
     fn batch_forward_accumulator<'a>(&self, input: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
                               -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
-        todo!()
+        let len = input.size();
+
+        let input = CudaVecView::<f32,CudaTensor1dPtrView<f32,{N*2}>>::try_from(input)?;
+        let output = CudaVec::<f32,CudaTensor1dPtr<f32,A,{N*2}>,A>::new(len,self.get_allocator())?;
+
+        let mut args = AccumulatorBatchArgs::new(
+            CudaConstPtr::new(&input),
+            output,
+            len);
+
+        let mut kernel = AccumulatorBatch::<f32,A,N>::new();
+
+        kernel.launch(&mut args)?;
+
+        Ok(args.output)
     }
     fn batch_backward_accumulator<'a>(&self, loss: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
                                      -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
-        todo!()
+        let len = loss.size();
+
+        let input = CudaVecView::<f32,CudaTensor1dPtrView<f32,{N*2}>>::try_from(loss)?;
+        let output = CudaVec::<f32,CudaTensor1dPtr<f32,A,{N*2}>,A>::new(len,self.get_allocator())?;
+
+        let mut args = AccumulatorBatchArgs::new(
+            CudaConstPtr::new(&input),
+            output,
+            len);
+
+        let mut kernel = AccumulatorBatch::<f32,A,N>::new();
+
+        kernel.launch(&mut args)?;
+
+        Ok(args.output)
     }
 }
