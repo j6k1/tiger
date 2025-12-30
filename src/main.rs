@@ -142,6 +142,7 @@ fn run() -> Result<(),ApplicationError> {
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
                                                          config.lambda.unwrap_or(0.667),
+                                                         config.verbose.unwrap_or(false),
                                                          config.save_batch_count.unwrap_or(1),
                                                          maxepoch)
         } else if matches.opt_present("hcpe") {
@@ -155,6 +156,7 @@ fn run() -> Result<(),ApplicationError> {
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
                                                 config.lambda.unwrap_or(0.667),
+                                                config.verbose.unwrap_or(false),
                                                 config.save_batch_count.unwrap_or(1),
                                                 maxepoch)
         } else {

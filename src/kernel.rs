@@ -438,7 +438,7 @@ impl<A,const NI:usize> TransformFeaturesInputToBitsArgs<A,NI>
             boundaries: boundaries,
             bits: bits,
             input_len: NI,
-            batch_size: batch_size
+            batch_size: batch_size * 2
         }
     }
 }

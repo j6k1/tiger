@@ -1,8 +1,5 @@
-use std::cell::RefCell;
 use std::fmt::Debug;
-use std::ops::{DerefMut};
 use std::path::{Path};
-use std::rc::Rc;
 use std::fs;
 use std::marker::PhantomData;
 use libc::size_t;
@@ -10,7 +7,7 @@ use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{LeakyReLu, ReLu, Sigmoid};
+use nncombinator::activation::{ClippedReLu, Identity, LeakyReLu, ReLu, Sigmoid, Swish};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
@@ -22,13 +19,14 @@ use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
+use nncombinator::layer::bias::BiasLayerBuilder;
 use nncombinator::layer::logging::{LoggingLayer};
-use nncombinator::lossfunction::{CrossEntropy, LossFunction, LossFunctionLinear, Mse};
+use nncombinator::lossfunction::{CrossEntropy, LossFunction, LossFunctionLinear};
 use nncombinator::mem::AsRawSlice;
-use nncombinator::ope::{Sqrt, UnitValue};
-use nncombinator::optimizer::{AdamBuilder, AdamWBuilder, MomentumSGD, MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
+use nncombinator::ope::{UnitValue};
+use nncombinator::optimizer::{AdamWBuilder, MomentumSGDBuilder, Optimizer, OptimizerBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, LinearPersistence, Persistence, PersistenceType, SaveToFile};
-use nncombinator::scheduler::{CosineAnnealingLR, LinearWarmupLR, Scheduler};
+use nncombinator::scheduler::{StepLR};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
@@ -36,7 +34,6 @@ use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
 use rand::distributions::Uniform;
 use rand::distributions::uniform::SampleUniform;
-use rand_distr::num_traits::real::Real;
 use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use usiagent::event::{GameEndState};
 use usiagent::math::Prng;
@@ -820,63 +817,65 @@ impl EvalutorCreator {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES) as f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt() * (1f32 / (1f32 + 0.01f32 * 0.01f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt() * 2.0)).unwrap();
+        let n1 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n2 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n3 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        //let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        //let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
+        //let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
+        //let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
+//        let n1 = Uniform::new(-(1f32 / ACTIVE_INDICES as f32).sqrt(), (1f32 / ACTIVE_INDICES as f32).sqrt());
+//        let n2 = Uniform::new(-(1f32 / 512f32).sqrt(), (1f32 / 512f32).sqrt());
+//        let n3 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
+//        let n4 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
 
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder_feature = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(18000,0.00001)
-            ));
+
+        let optimizer_builder_feature = MomentumSGDBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(1e-3))
+            .scheduler(StepLR::new(75,0.3));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(3e-4))
+            .lr(config.learning_rate.unwrap_or(1e-3))
             .weight_decay(config.weight_decay.unwrap_or(0.0001))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(15000,0.00001)
-            ));
+            .scheduler(StepLR::new(75,0.3));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
-            .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(8000,0.00001)
-            ));
+            .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0001))
+            .scheduler(StepLR::new(75,0.3));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
-            FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
-                                                                          || n1.sample(&mut rnd),
-                                                                          || 0.0,
-                                                                          &optimizer_builder_feature)
+            FeatureTransformLayerBuilder::<FEATURES_NUM, 256>::new().build(l, &device,
+                                                                           || n1.sample(&mut rnd),
+                                                                           || 0.0,
+                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                                                              || n2.sample(&mut rnd),
-                                                             || -1.2,
+                                                             || 0.0,
                                                              &optimizer_builder_middle
             )
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                                                      || n3.sample(&mut rnd),
-                                                      || -1.2,
+                                                      || 0.0,
                                                       &optimizer_builder_middle)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, LeakyReLu::new(&device), &device)
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      || {
                                                          n4.sample(&mut rnd)
-                                                     },|| -1.2, &optimizer_builder_out)
+                                                     },|| (0.503f32 / 0.497f32).ln(), &optimizer_builder_out)
        })?.add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).try_add_layer(|l| {
@@ -929,52 +928,79 @@ pub struct TrainerCreator {
 impl TrainerCreator {
     pub fn create<A: CudaAllocator + MemoryType + 'static>(save_dir:String, nn_path:String, config:&Config, allocator:A)
         -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
-        where for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
+        where A: CudaAllocator,
+              for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
               CudaPtr<usize,A>: WriteMemory<usize>,
               CudaPtr<u8,A>: WriteMemory<u8> {
 
+        //println!("FEATURES_NUM = {}",FEATURES_NUM);
+
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
-        let n1 = Normal::<f32>::new(0.0, (2f32 / (ACTIVE_INDICES) as f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt() * (1f32 / (1f32 + 0.01f32 * 0.01f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 1f32 / ((32f32 + 1f32).sqrt() * 2.0)).unwrap();
+        let n1 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n2 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n3 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 0.01).unwrap();
+        //let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
+        //let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
+        //let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
+        //let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
+        //        let n1 = Uniform::new(-(1f32 / ACTIVE_INDICES as f32).sqrt(), (1f32 / ACTIVE_INDICES as f32).sqrt());
+        //        let n2 = Uniform::new(-(1f32 / 512f32).sqrt(), (1f32 / 512f32).sqrt());
+        //        let n3 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
+        //        let n4 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let optimizer_builder_feature = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(18000,0.00001)
-            ));
+//        let optimizer_builder_feature = AdamWBuilder::new(&device)
+        let optimizer_builder_feature = SGDBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(1e-3))
+            .scheduler(StepLR::new(75,0.3));
 
-        let optimizer_builder_middle = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(3e-4))
+//        let optimizer_builder_middle = AdamWBuilder::new(&device)
+        let optimizer_builder_middle = SGDBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(1e-3))
             .weight_decay(config.weight_decay.unwrap_or(0.0001))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(15000,0.00001)
-            ));
+            .scheduler(StepLR::new(75,0.3));
 
-        let optimizer_builder_out = AdamWBuilder::new(&device)
-            .lr(config.learning_rate_for_output_layer.unwrap_or(3e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0))
-            .scheduler(LinearWarmupLR::new(500,config.learning_rate_for_output_layer.unwrap_or(3e-4),0.1).seq(
-                500,CosineAnnealingLR::new(8000,0.00001)
-            ));
+//        let optimizer_builder_out = AdamWBuilder::new(&device)
+        let optimizer_builder_out = SGDBuilder::new(&device)
+            .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
+            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0001))
+            .scheduler(StepLR::new(75,0.3));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
-        let verbose = config.verbose.unwrap_or(true);
+        let verbose = config.verbose.unwrap_or(false);
 
         let mut nn = net.try_add_layer(|l| {
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           || n1.sample(&mut rnd), || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_gradient_logger(|(g,b)| {
+                    let g = g.read_to_vec()?;
+
+                    let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("feature transform layer gradient l2 {}",l2);
+
+                    let b = b.read_to_vec()?;
+
+                    let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("feature transform layer bias gradient l2 {}",l2);
+
+                    Ok(())
+                })
+            }
+
+            l
+        }).add_layer(|l| {
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
@@ -999,9 +1025,29 @@ impl TrainerCreator {
         }).try_add_layer(|l| {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 || n2.sample(&mut rnd),
-                   || -1.2 ,&optimizer_builder_middle)
+                   || 0.0, &optimizer_builder_middle)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ReLu::new(&device), &device)
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_gradient_logger(|(g,b)| {
+                    let g = g.read_to_vec()?;
+
+                    let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("middle layer gradient l2 {}",l2);
+
+                    let b = b.read_to_vec()?;
+
+                    let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("middle layer bias gradient l2 {}",l2);
+
+                    Ok(())
+                })
+            }
+
+            l
+        }).add_layer(|l| {
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
@@ -1026,9 +1072,29 @@ impl TrainerCreator {
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 || n3.sample(&mut rnd),
-                   || -1.2 ,&optimizer_builder_middle)
+                   || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, LeakyReLu::new(&device), &device)
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_gradient_logger(|(g,b)| {
+                    let g = g.read_to_vec()?;
+
+                    let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("feature transform layer gradient l2 {}",l2);
+
+                    let b = b.read_to_vec()?;
+
+                    let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("middle layer bias gradient l2 {}",l2);
+
+                    Ok(())
+                })
+            }
+
+            l
+        }).add_layer(|l| {
+            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
@@ -1054,8 +1120,43 @@ impl TrainerCreator {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd)
-            },|| -1.2 , &optimizer_builder_out)
+            },|| (0.503f32 / 0.497f32).ln(), &optimizer_builder_out)
         })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("output layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
+
+                l.add_gradient_logger(|(g,b)| {
+                    let g = g.read_to_vec()?;
+
+                    let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("output layer gradient l2 {}",l2);
+
+                    let b = b.read_to_vec()?;
+
+                    let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
+                    println!("output layer bias gradient l2 {}",l2);
+
+                    Ok(())
+                })
+            }
+
+            l
+        }).add_layer(|l| {
             ActivationLayer::new(l, Sigmoid::new(&device), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
@@ -1159,7 +1260,7 @@ impl<M,A> Trainer<M,A>
         Ok(best_move)
     }
 
-    pub fn make_packed_sfens_parser<'a>(lambda:f32)
+    pub fn make_packed_sfens_parser<'a>(lambda:f32, verbose: bool)
         -> impl FnMut(Vec<Vec<u8>>)
                 -> Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
         move | packed_sfens | {
@@ -1295,7 +1396,7 @@ impl<M,A> Trainer<M,A>
         Ok((game_result,r[0],same))
     }
 
-    pub fn make_hcpe_parser<'a>(lambda:f32)
+    pub fn make_hcpe_parser<'a>(lambda:f32, verbose: bool)
         -> impl FnMut(Vec<Vec<u8>>) ->
                 Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
         move | hcpes | {
@@ -1388,15 +1489,9 @@ impl<M,A> Trainer<M,A>
                             _ => 0.5f32
                         };
 
-                        if score == 30000 {
-                            0.95
-                        } else if score == -30000 {
-                            0.05
-                        } else {
-                            let r = t * lambda + Self::sigmoid(score as f32) * (1. - lambda);
+                        let r = t * lambda + Self::sigmoid(score as f32) * (1. - lambda);
 
-                            r
-                        }
+                        r.max(0.01).min(0.99)
                     };
 
                     (t, input)
@@ -1409,6 +1504,19 @@ impl<M,A> Trainer<M,A>
                     acc.1.append(&mut i);
                     acc
                 });
+
+                if verbose {
+                    let o = &batch.0;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, x| acc + x[0]) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, x| x[0].min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, x| x[0].max(acc));
+                    let std = o.iter().map(|x| (x[0] - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("label mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                }
 
             Ok(Some(batch))
         }

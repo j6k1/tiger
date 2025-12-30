@@ -261,7 +261,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
             acc
         });
 
-        let mut input_ptr = CudaPtr::new((NI + 7) / 8,self.get_allocator())?;
+        let mut input_ptr = CudaPtr::new((NI + 7) / 8 * 2,self.get_allocator())?;
         let output = CudaTensor2dPtr::<f32,A,NI,NO>::new(self.get_allocator())?;
 
         input_ptr.memcpy(input.as_ptr(),input.len())?;
@@ -341,7 +341,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         indexes_ptr.memcpy(indexes.as_ptr(),indexes.len())?;
         boundaries_ptr.memcpy(boundaries.as_ptr(), boundaries.len())?;
 
-        let bits = CudaPtr::<u8,A>::with_initializer((NI + 7) / 8 * len, self.get_allocator(), || 0)?;
+        let bits = CudaPtr::<u8,A>::with_initializer((NI + 7) / 8 * len * 2, self.get_allocator(), || 0)?;
 
         let mut args = TransformFeaturesInputToBitsArgs::<A,NI>::new(indexes_ptr,boundaries_ptr,bits,len);
 

@@ -152,6 +152,7 @@ impl<M,A> Learnener<M,A>
                                        learn_sfen_read_size: usize,
                                        learn_batch_size: usize,
                                        lambda: f32,
+                                       verbose: bool,
                                        save_batch_count: usize,
                                        maxepoch: usize) -> Result<(), ApplicationError> {
         self.learning_batch(kifudir,
@@ -163,6 +164,7 @@ impl<M,A> Learnener<M,A>
                             learn_sfen_read_size,
                             learn_batch_size,
                             lambda,
+                            verbose,
                             save_batch_count,
                             maxepoch,
                             Trainer::<M,A>::make_packed_sfens_parser,
@@ -178,6 +180,7 @@ impl<M,A> Learnener<M,A>
                               learn_sfen_read_size: usize,
                               learn_batch_size: usize,
                               lambda: f32,
+                              verbose: bool,
                               save_batch_count: usize,
                               maxepoch: usize
     ) -> Result<(), ApplicationError> {
@@ -190,6 +193,7 @@ impl<M,A> Learnener<M,A>
                             learn_sfen_read_size,
                             learn_batch_size,
                             lambda,
+                            verbose,
                             save_batch_count,
                             maxepoch,
                             Trainer::<M,A>::make_hcpe_parser,
@@ -207,9 +211,10 @@ impl<M,A> Learnener<M,A>
                                     learn_sfen_read_size: usize,
                                     learn_batch_size: usize,
                                     lambda: f32,
+                                    verbose: bool,
                                     save_batch_count: usize,
                                     maxepoch: usize,
-                                    sfen_parser_builder: fn(f32) -> P,
+                                    sfen_parser_builder: fn(f32,bool) -> P,
                                     test_process: F
     ) -> Result<(), ApplicationError>
         where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
@@ -272,7 +277,7 @@ impl<M,A> Learnener<M,A>
                 }
             }
 
-            let mut dataloader = dataloader_builder.build(sfen_parser_builder(lambda))?;
+            let mut dataloader = dataloader_builder.build(sfen_parser_builder(lambda,verbose))?;
 
             while let Some((filename,items,batch)) = dataloader.load()? {
                 if notify_quit.load(Ordering::Acquire) {
