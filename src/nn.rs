@@ -310,12 +310,24 @@ impl TrainerCreator {
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           || n1.sample(&mut rnd), || 0.0,
                                                                           &optimizer_builder_feature)
-        })?.try_add_layer(|l| {
-            AccumulatorLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                    println!("feature transform layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+
+                    Ok(())
+                });
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
@@ -332,7 +344,9 @@ impl TrainerCreator {
             }
 
             l
-        }).add_layer(|l| {
+        }).try_add_layer(|l| {
+            AccumulatorLayerBuilder::new().build(l,&device)
+        })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
@@ -348,7 +362,7 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("feature transform layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("accumulator layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });

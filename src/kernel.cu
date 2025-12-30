@@ -135,9 +135,11 @@ __device__ void bi_mix_accumulator(const T * __restrict__ input,
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
     size_t batch_index = blockIdx.y * blockDim.y + threadIdx.y;
 
-    long offset = (batch_index % 2) == 0 ? input_len : -input_len;
+    long offset = (batch_index % 2) == 0 ? input_len : -((long)input_len);
 
-    output[batch_index * input_len + index] = input[batch_index * input_len + index] + input[batch_index * input_len + index + offset];
+    if (index < input_len && batch_index < batch_size) {
+        output[batch_index * input_len + index] = input[batch_index * input_len + index] + input[batch_index * input_len + index + offset];
+    }
 }
 
 extern "C" {
