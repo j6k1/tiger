@@ -126,12 +126,34 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
     }
 }
 
+
+template<typename T>
+
+__device__ void bi_mix_accumulator(const T * __restrict__ input,
+                                         T *output,
+                                   const size_t input_len
+                                   const size_t batch_size) {
+    size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    site_t batch_index = blockIdx.y * blockDim.y + threadIdx.y;
+
+    long offset = (batch_index % 2) == 0 ? input_len : -input_len;
+
+    output[batch_index * input_len + index] = input[batch_index * input_len + index] + input[batch_index * input_len + index + offset];
+}
+
 extern "C" {
     __global__ void forward_transform_features_batch_float(const size_t *indexes, const size_t *boundaries,
                                                      const float *units, const float *bias, float *output,
                                                      const size_t output_len,
                                                      const size_t batch_size) {
         forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
+    }
+
+    __global__ void bi_mix_accumulator_float(const float * __restrict__ input,
+                                                   float *output,
+                                             const size_t input_len
+                                             const size_t batch_size) {
+        bi_mix_accumulator(input,output,input_len,batch_size);
     }
 
     __global__ void forward_transform_features_batch_double(const size_t *indexes, const size_t *boundaries,
@@ -157,6 +179,13 @@ extern "C" {
                                                              const size_t output_len,
                                                              const size_t batch_size) {
         transform_features_gradient_batch(loss,input,output,input_len,output_len,batch_size);
+    }
+
+    __global__ void bi_mix_accumulator_double(const double * __restrict__ input,
+                                                    double *output,
+                                              const size_t input_len
+                                              const size_t batch_size) {
+        bi_mix_accumulator(input,output,input_len,batch_size);
     }
 
     __global__ void transform_features_input_to_bits(const size_t * __restrict__ indexes,

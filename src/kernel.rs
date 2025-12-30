@@ -23,6 +23,10 @@ extern "C" {
                                         bits: *mut u8,
                                         input_len: size_t,
                                         batch_size: size_t) -> c_void;
+    fn bi_mix_accumulator_float(input: *const f32,
+                                output: *mut f32,
+                                input_len: size_t,
+                                batch_size: size_t) -> c_void;
 }
 /// Defines the list that is passed to the cuda kernel function as arguments for the computation
 /// of Forward propagation of linear layers specialized for processing HalfKP.
@@ -44,14 +48,13 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardArgs<'a,T,A,N
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
           A: CudaAllocator + 'a,
           [(); NO*2]: {
-    /// Create a TransformFeaturesForwardBatchArgs instance
+    /// Create a TransformFeaturesForwardArgs instance
     /// # Arguments
     /// * `indexes` - Indexes at which the input resides
     /// * `boundaries` - Index Boundaries
     /// * `units` - weight
     /// * `bias` - bias
     /// * `output` - output
-    /// * `batch_len` - batch_count
     pub fn new(indexes:CudaPtr<size_t,A>,
                boundaries:CudaPtr<size_t,A>,
                units: CudaConstPtr<'a,CudaTensor2dPtr<T,A,NI,NO>>,
@@ -97,7 +100,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForward<'a,T,A,NI,NO
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
           A: CudaAllocator + 'a,
           [(); NO*2]: {
-    /// Create a TransformFeaturesForwardBatch instance
+    /// Create a TransformFeaturesForward instance
     pub fn new() -> TransformFeaturesForward<'a,T,A,NI,NO> {
         TransformFeaturesForward {
             t: PhantomData::<T>,
@@ -149,12 +152,13 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardBatchArgs<'a,
     /// * `units` - weight
     /// * `bias` - bias
     /// * `output` - output
-    /// * `batch_len` - batch_count
+    /// * `batch_size` - batch_count
     pub fn new(indexes:CudaPtr<size_t,A>,
                boundaries:CudaPtr<size_t,A>,
                units: CudaConstPtr<'a,CudaTensor2dPtr<T,A,NI,NO>>,
                bias: CudaConstPtr<'a,CudaTensor1dPtr<T,A,NO>>,
-               output:CudaVec<T,CudaTensor1dPtr<T,A,{NO*2}>,A>, batch_size: usize) -> TransformFeaturesForwardBatchArgs<'a,T,A,NI,NO> {
+               output:CudaVec<T,CudaTensor1dPtr<T,A,{NO*2}>,A>,
+               batch_size: usize) -> TransformFeaturesForwardBatchArgs<'a,T,A,NI,NO> {
         TransformFeaturesForwardBatchArgs {
             indexes: indexes,
             boundaries: boundaries,
@@ -241,14 +245,11 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientArgs<'a,T,A,
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
           A: CudaAllocator + 'a,
           [(); NO*2]: {
-    /// Create a TransformFeaturesForwardBatchArgs instance
+    /// Create a TransformFeaturesGradientArgs instance
     /// # Arguments
     /// * `loss` - loss
     /// * `input` - input (bits)
     /// * `output` - output
-    /// * `input_len` - input size
-    /// * `output_len` - output size
-    /// * `batch_len` - batch_count
     pub fn new(loss: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{NO*2}>>,
                input: CudaPtr<u8,A>,
                output:CudaTensor2dPtr<T,A,NI,NO>) -> TransformFeaturesGradientArgs<'a,T,A,NI,NO> {
@@ -290,7 +291,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradient<'a,T,A,NI,N
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
           A: CudaAllocator + 'a,
           [(); NO*2]: {
-    /// Create a TransformFeaturesGradientBatch instance
+    /// Create a TransformFeaturesGradient instance
     pub fn new() -> TransformFeaturesGradient<'a,T,A,NI,NO> {
         TransformFeaturesGradient {
             t: PhantomData::<T>,
@@ -338,9 +339,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatchArgs<'a
     /// * `loss` - loss
     /// * `input` - input (bits)
     /// * `output` - output
-    /// * `input_len` - input size
-    /// * `output_len` - output size
-    /// * `batch_len` - batch_count
+    /// * `batch_size` - batch_count
     pub fn new(loss: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{NO*2}>>>,
                input: CudaPtr<u8,A>,
                output:CudaTensor2dPtr<T,A,NI,NO>,
@@ -427,8 +426,7 @@ impl<A,const NI:usize> TransformFeaturesInputToBitsArgs<A,NI>
     /// * `indexes` - Indexes at which the input resides
     /// * `boundaries` - Index Boundaries
     /// * `bits` - Input bits
-    /// * `input_len` - Input size
-    /// * `batch_len` - batch_count
+    /// * `batch_size` - batch_count
     pub fn new(indexes:CudaPtr<size_t,A>,
                boundaries:CudaPtr<size_t,A>,
                bits:CudaPtr<u8,A>,
@@ -478,6 +476,165 @@ impl<A,const NI:usize> Kernel for TransformFeaturesInputToBits<A,NI>
         KernelLaunchConfig {
             grid_dim: dim3 { x: (args.batch_size as c_uint + 1023) / 1024, y: 1, z: 1 },
             block_dim: dim3 { x: 1024, y: 1, z: 1 },
+            shared_memory_size: 0
+        }
+    }
+}
+/// Define a list passed to the CUDA kernel function as an argument for performing calculations
+/// that mix the outputs of the active and inactive sides.
+pub struct AccumulatorArgs<'a,T,A,const N:usize>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    input: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{N*2}>>,
+    pub output: CudaTensor1dPtr<T,A,{N*2}>,
+    input_len: usize,
+    batch_size: usize
+}
+/// Create an instance of an object representing the argument list used when performing calculations
+/// that combine the outputs of active and inactive players.
+impl<'a,T,A,const N:usize> AccumulatorArgs<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    /// Create a AccumulatorArgs instance
+    /// # Arguments
+    /// * `input` - input
+    /// * `output` - output
+    pub fn new(input: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{N*2}>>,
+               output:CudaTensor1dPtr<T,A,{N*2}>) -> AccumulatorArgs<'a,T,A,N> {
+        AccumulatorArgs {
+            input: input,
+            output: output,
+            input_len: N,
+            batch_size: 2
+        }
+    }
+}
+impl<'a,T,A,const N:usize> KernelArgs for AccumulatorArgs<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
+        vec![
+            &mut self.input,
+            &mut self.output,
+            &mut self.input_len,
+            &mut self.batch_size
+        ]
+    }
+}
+/// Implementation of mix input calculation in Accumulator Layers
+pub struct Accumulator<'a,T,A,const N:usize>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>, [(); N*2]: {
+    t:PhantomData<T>,
+    a:PhantomData<A>,
+    l:PhantomData<&'a ()>
+}
+impl<'a,T,A,const N:usize> Accumulator<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    /// Create a Accumulator instance
+    pub fn new() -> Accumulator<'a,T,A,N> {
+        Accumulator {
+            t: PhantomData::<T>,
+            a: PhantomData::<A>,
+            l:PhantomData::<&'a ()>
+        }
+    }
+}
+impl<'a,A,const N:usize> Kernel for Accumulator<'a,f32,A,N>
+    where A: CudaAllocator + 'a,
+          [(); N*2]: {
+    const FUNC_PTR: *const c_void = bi_mix_accumulator_float as *const c_void;
+    type Args = AccumulatorArgs<'a,f32,A,N>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (N as c_uint + 15) / 16, y: (args.batch_size as c_uint + 15) / 16, z: 1 },
+            block_dim: dim3 { x: 16, y: 16, z: 1 },
+            shared_memory_size: 0
+        }
+    }
+}
+/// Define the list passed to the CUDA kernel function during batch processing,
+// and use it as an argument to perform calculations that mix outputs from the active and inactive sides.
+pub struct AccumulatorBatchArgs<'a,T,A,const N:usize>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    input: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{N*2}>>>,
+    pub output: CudaVec<T,CudaTensor1dPtr<T,A,{N*2}>,A>,
+    input_len: usize,
+    batch_size: usize
+}
+/// Create an instance of an object representing the argument list used when performing calculations
+/// that combine the outputs of active and inactive players during batch processing.
+impl<'a,T,A,const N:usize> AccumulatorBatchArgs<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    /// Create a AccumulatorBatchArgs instance
+    /// * `input` - input (bits)
+    /// * `output` - output
+    /// * `batch_size` - batch_count
+    pub fn new(input: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{N*2}>>>,
+               output:CudaVec<T,CudaTensor1dPtr<T,A,{N*2}>,A>,
+               batch_size: usize) -> AccumulatorBatchArgs<'a,T,A,N> {
+        AccumulatorBatchArgs {
+            input: input,
+            output: output,
+            input_len: N,
+            batch_size: batch_size * 2
+        }
+    }
+}
+impl<'a,T,A,const N:usize> KernelArgs for AccumulatorBatchArgs<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
+        vec![
+            &mut self.input,
+            &mut self.output,
+            &mut self.input_len,
+            &mut self.batch_size
+        ]
+    }
+}
+/// Implementation of Weight Update Calculation in Linear Layers Specialized for HalfKP
+pub struct AccumulatorBatch<'a,T,A,const N:usize>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    t:PhantomData<T>,
+    a:PhantomData<A>,
+    l:PhantomData<&'a ()>
+}
+impl<'a,T,A,const N:usize> AccumulatorBatch<'a,T,A,N>
+    where T: DataTypeInfo + Debug + Default + UnitValue<T>,
+          A: CudaAllocator + 'a,
+          [(); N*2]: {
+    /// Create a AccumulatorBatch instance
+    pub fn new() -> AccumulatorBatch<'a,T,A,N> {
+        AccumulatorBatch {
+            t: PhantomData::<T>,
+            a: PhantomData::<A>,
+            l:PhantomData::<&'a ()>
+        }
+    }
+}
+impl<'a,A,const N:usize> Kernel for AccumulatorBatch<'a,f32,A,N>
+    where A: CudaAllocator + 'a,
+          [(); N*2]: {
+    const FUNC_PTR: *const c_void = bi_mix_accumulator_float as *const c_void;
+    type Args = AccumulatorBatchArgs<'a,f32,A,N>;
+
+    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+        KernelLaunchConfig {
+            grid_dim: dim3 { x: (N as c_uint + 15) / 16, y: (args.batch_size as c_uint + 15) / 16 , z: 1 },
+            block_dim: dim3 { x: 16, y: 16, z: 1 },
             shared_memory_size: 0
         }
     }
