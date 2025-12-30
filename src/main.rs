@@ -42,6 +42,7 @@ use crate::player::Tiger;
 pub mod device;
 pub mod features;
 pub mod nn;
+pub mod layer;
 pub mod learning;
 pub mod transposition_table;
 pub mod player;
