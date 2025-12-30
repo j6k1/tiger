@@ -3,17 +3,18 @@ use std::fmt::Debug;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
-use nncombinator::arr::SerializedVec;
-use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
+use nncombinator::arr::{ArrView, IntoConverter, SerializedVec, SerializedVecView};
+use nncombinator::cuda::kernel::device::{AddBiasBatch, AddBiasBatchArgs, BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory};
+use nncombinator::collection::Broadcast;
+use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory, AsMutPtr, AsPtr};
 use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu};
+use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu, DeviceReduce};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
-
+use rcublas_sys::{cublasDaxpy_v2, cublasSaxpy_v2, cublasStatus_t};
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
 use crate::kernel::{TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
 
@@ -385,5 +386,49 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         kernel.launch(&mut args)?;
 
         Ok(args.output)
+    }
+}
+/// Trait that defines the implementation of various calculation processes in the accumulator layer
+pub trait DeviceAccumulator<U,IO,const N: usize>
+    where U: UnitValue<U>,
+          IO: BatchDataType + Debug,
+          <IO as BatchDataType>::Type: BatchSize + Debug {
+    /// Forward propagation calculation
+    /// # Arguments
+    /// * `input` - input
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors
+    /// * [`EvaluateError`]
+    fn forward_accumulator<'a>(&self, input:&'a IO) -> Result<IO, EvaluateError>;
+    /// Forward propagation calculation in batch
+    /// # Arguments
+    /// * `input` - input
+    ///
+    /// # Errors
+    ///
+    /// This function may return the following errors
+    /// * [`TrainingError`]
+    fn batch_forward_accumulator<'a>(&self,input: &'a <IO as BatchDataType>::Type) -> Result<<IO as BatchDataType>::Type,TrainingError>;
+}
+impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
+    where U: UnitValue<U> {
+    fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>, EvaluateError> {
+        todo!()
+    }
+
+    fn batch_forward_accumulator<'a>(&self, input: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
+        todo!()
+    }
+}
+impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for DeviceGpu<f32,A>
+    where A: CudaAllocator {
+    fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>, EvaluateError> {
+        todo!()
+    }
+    fn batch_forward_accumulator<'a>(&self, input: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
+                              -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type, TrainingError> {
+        todo!()
     }
 }
