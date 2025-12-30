@@ -126,15 +126,14 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
     }
 }
 
-
 template<typename T>
 
 __device__ void bi_mix_accumulator(const T * __restrict__ input,
                                          T *output,
-                                   const size_t input_len
+                                   const size_t input_len,
                                    const size_t batch_size) {
     size_t index = blockIdx.x * blockDim.x + threadIdx.x;
-    site_t batch_index = blockIdx.y * blockDim.y + threadIdx.y;
+    size_t batch_index = blockIdx.y * blockDim.y + threadIdx.y;
 
     long offset = (batch_index % 2) == 0 ? input_len : -input_len;
 
@@ -151,7 +150,7 @@ extern "C" {
 
     __global__ void bi_mix_accumulator_float(const float * __restrict__ input,
                                                    float *output,
-                                             const size_t input_len
+                                             const size_t input_len,
                                              const size_t batch_size) {
         bi_mix_accumulator(input,output,input_len,batch_size);
     }
@@ -183,7 +182,7 @@ extern "C" {
 
     __global__ void bi_mix_accumulator_double(const double * __restrict__ input,
                                                     double *output,
-                                              const size_t input_len
+                                              const size_t input_len,
                                               const size_t batch_size) {
         bi_mix_accumulator(input,output,input_len,batch_size);
     }

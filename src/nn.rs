@@ -44,6 +44,7 @@ use crate::Config;
 use crate::device::DeviceFeatureTransform;
 use crate::error::{ApplicationError};
 use crate::features::HalfKP;
+use crate::layer::accumulator::AccumulatorLayerBuilder;
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
 
 const BANMEN_SIZE:usize = 81;
@@ -182,6 +183,8 @@ impl EvalutorCreator {
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)
+        })?.try_add_layer(|l| {
+            AccumulatorLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).try_add_layer(|l| {
@@ -307,6 +310,8 @@ impl TrainerCreator {
             FeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l,&device,
                                                                           || n1.sample(&mut rnd), || 0.0,
                                                                           &optimizer_builder_feature)
+        })?.try_add_layer(|l| {
+            AccumulatorLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
