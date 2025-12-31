@@ -155,16 +155,17 @@ impl EvalutorCreator {
 
         let optimizer_builder_feature = MomentumSGDBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0001))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -271,18 +272,19 @@ impl TrainerCreator {
 //        let optimizer_builder_feature = AdamWBuilder::new(&device)
         let optimizer_builder_feature = SGDBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
 //        let optimizer_builder_middle = AdamWBuilder::new(&device)
         let optimizer_builder_middle = SGDBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
-            .weight_decay(config.weight_decay.unwrap_or(0.0001))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
 //        let optimizer_builder_out = AdamWBuilder::new(&device)
         let optimizer_builder_out = SGDBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
-            .weight_decay(config.weight_decay_for_output_layer.unwrap_or(0.0001))
+            .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -307,7 +309,26 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("feature transform layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("feature transform layer forward before activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in feature transform logit");
+
+                    Ok(())
+                });
+
+                l.add_batch_backward_logger(|loss| {
+                    let o = loss.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("accumulator layer backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in accumulator layer loss");
 
                     Ok(())
                 });
@@ -316,6 +337,8 @@ impl TrainerCreator {
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
                     println!("feature transform layer gradient l2 {}",l2);
+
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in feature transform layer grad");
 
                     let b = b.read_to_vec()?;
 
@@ -330,6 +353,29 @@ impl TrainerCreator {
         }).try_add_layer(|l| {
             AccumulatorLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
+            let mut l = LoggingLayer::new(l,&device);
+
+            if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("accumulator layer forward before activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in accumulator layer logit");
+
+                    Ok(())
+                });
+            }
+
+            l
+        }).add_layer(|l| {
             ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
@@ -345,7 +391,26 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("accumulator layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("accumulator layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in accumulator layer actual");
+
+                    Ok(())
+                });
+
+                l.add_batch_backward_logger(|loss| {
+                    let o = loss.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 1 backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle 1 layer loss");
 
                     Ok(())
                 });
@@ -360,11 +425,22 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 1 logit");
+
+                    Ok(())
+                });
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
                     println!("middle layer gradient l2 {}",l2);
+
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 1 grad");
 
                     let b = b.read_to_vec()?;
 
@@ -392,7 +468,26 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("middle layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 1 actual");
+
+                    Ok(())
+                });
+
+                l.add_batch_backward_logger(|loss| {
+                    let o = loss.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 2 backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle 2 layer loss");
 
                     Ok(())
                 });
@@ -407,11 +502,20 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 2 logit");
+
+                    Ok(())
+                });
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
                     println!("middle layer gradient l2 {}",l2);
+
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 2 grad");
 
                     let b = b.read_to_vec()?;
 
@@ -439,7 +543,9 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("middle layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 2 actual");
 
                     Ok(())
                 });
@@ -449,7 +555,24 @@ impl TrainerCreator {
                     println!("middle layer bias[0] gradient {}",b[0]);
 
                     Ok(())
-                })
+                });
+
+                l.add_batch_backward_logger(|loss| {
+                    let o = loss.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 3 backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 3 loss");
+
+                    Ok(())
+                });
             }
 
             l
@@ -472,7 +595,9 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("output layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("output layer forward before activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in output layer logit");
 
                     Ok(())
                 });
@@ -482,6 +607,8 @@ impl TrainerCreator {
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
                     println!("output layer gradient l2 {}",l2);
+
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in output layer grad");
 
                     let b = b.read_to_vec()?;
 
@@ -509,7 +636,25 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("output layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("output layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in output layer actual");
+                    Ok(())
+                });
+
+                l.add_batch_backward_logger(|loss| {
+                    let o = loss.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("output layer backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in output layer loss");
 
                     Ok(())
                 });
@@ -779,7 +924,7 @@ impl<M,A> Trainer<M,A>
                 (x as f32 - mean).powf(2.0)
             }).sum::<f32>() / (len as f32 - mate as f32 - resign as f32);
 
-            println!("mean: {}, max: {}, min : {}, std: {}, mate: {}, resign: {}, total: {}", mean, max, min, std, mate, resign, len);
+            println!("mean: {:.9e}, max: {:.9e}, min : {:.9e}, std: {:.9e}, mate: {:.9e}, resign: {:.9e}, total: {:.9e}", mean, max, min, std, mate, resign, len);
             */
             let batch = sfens_with_extended.into_par_iter()
                 .map(|(teban, banmen, mc, es, score)| {
@@ -852,7 +997,7 @@ impl<M,A> Trainer<M,A>
                     let max = o.iter().fold(0.0 / 0.0, |acc, x| x[0].max(acc));
                     let std = o.iter().map(|x| (x[0] - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("label mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
+                    println!("label mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
                 }
 
             Ok(Some(batch))

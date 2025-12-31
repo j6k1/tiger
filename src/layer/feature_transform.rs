@@ -1,5 +1,5 @@
 //! Feature Transformation Layer Implementation
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::marker::PhantomData;
 
 use nncombinator::arr::{Arr, Arr2};
@@ -298,8 +298,8 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BackwardAll<U>
           A: CudaAllocator,
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           CudaPtr<U,A>: WriteMemory<U>,
-          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
-          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
           DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
@@ -361,8 +361,8 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> UpdateWeight<U>
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           A: CudaAllocator,
           CudaPtr<U,A>: WriteMemory<U>,
-          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
-          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
@@ -402,8 +402,8 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> Loss<U>
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           A: CudaAllocator,
           CudaPtr<U,A>: WriteMemory<U>,
-          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
-          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
           DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
@@ -546,8 +546,8 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchBackward<U>
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           <I as BatchDataType>::Type: Debug + BatchSize,
           CudaPtr<U,A>: WriteMemory<U>,
-          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
-          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
@@ -603,8 +603,8 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchLoss<U>
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           <I as BatchDataType>::Type: Debug + BatchSize,
           CudaPtr<U,A>: WriteMemory<U>,
-          CudaTensor1dPtr<U,A,NO>: WriteMemory<U>,
-          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U>,
+          CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
+          CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,

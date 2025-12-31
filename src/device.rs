@@ -17,6 +17,7 @@ use nncombinator::ope::UnitValue;
 use rcublas_sys::{cublasDaxpy_v2, cublasSaxpy_v2, cublasStatus_t};
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
 use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorBatchArgs, TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
+use crate::nn::FEATURES_NUM;
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     where U: UnitValue<U>, [(); NO*2]: {
@@ -204,6 +205,7 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
           CudaPtr<u8,A>: WriteMemory<u8>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>: AsCudaMutPtr<Pointee=f32,Allocator=A>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,{NO*2}>,A>: ReadMemory<f32>,
+          CudaTensor1dPtr<f32,A,NO>: ReadMemory<f32>,
           CudaTensor2dPtr<f32,A,NI,NO>: ReadMemory<f32>,
           for<'a> CudaPtr<f32,A>: WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
           for<'a> CudaTensor1dPtrView<'a,f32,{NO*2}>: From<&'a CudaTensor1dPtr<f32,A,{NO*2}>>,

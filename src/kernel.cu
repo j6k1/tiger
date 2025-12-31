@@ -2,6 +2,7 @@
 #include<mma.h>
 #include<cuda.h>
 #include<cuda_runtime.h>
+#include<stdio.h>
 
 using namespace nvcuda;
 
@@ -31,7 +32,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
                                                  const size_t batch_size) {
     extern __shared__ char smem[];
 
-    const size_t index = blockIdx.x * blockDim.y + threadIdx.y;
+    const size_t index = blockIdx.x;
 
     const size_t batch_index = index / output_len;
     size_t start_index = 0;
@@ -47,6 +48,7 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
 
         const size_t tid = threadIdx.x;
 
+        /*
         for (size_t i = tid; i < end_index - start_index; i += 32) {
             acc += units[indexes[start_index + i] * output_len + out_index];
         }
@@ -56,10 +58,29 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         acc += __shfl_down_sync(0xffffffff,acc,4);
         acc += __shfl_down_sync(0xffffffff,acc,2);
         acc += __shfl_down_sync(0xffffffff,acc,1);
+        */
 
+        if (tid == 0) {
+            T acc = 0.0;
+
+            for (size_t i = 0; i < end_index - start_index; ++i) {
+                size_t idx_pos = start_index + i;
+                size_t feat    = indexes[idx_pos];
+                T w = units[feat * output_len + out_index];
+
+                acc += w;
+            }
+
+            T val = acc + bias[out_index];
+
+            output[index] = val;
+        }
+
+        /*
         if (tid == 0 && index < batch_size * output_len) {
             output[index] = acc + bias[out_index];
         }
+        */
     }
 }
 
@@ -95,18 +116,32 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
         size_t chunk_index = (bx + tx) / 8;
         size_t bit_index = (bx + tx) - chunk_index * 8;
 
-        if ((input[chunk_offset + chunk_index] & (1 << bit_index)) != 0) {
+        if (k + ty < batch_size && bx + tx < input_len &&
+            (input[chunk_offset + chunk_index] & (1 << bit_index)) != 0) {
             sdata_a[tx * TILE_SIZE + ty] = __float2half(1.0f);
         } else {
             sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
 
+        /*
         if (k + tx < batch_size && by + ty < output_len) {
             sdata_b[tx * TILE_SIZE + ty] = _to_half(loss[calc_index(by+ty,k+tx,output_len)]) * _to_half(0.5);
         } else {
             sdata_b[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
+        */
 
+        if (k + ty < batch_size && by + tx < output_len) {
+            T g = loss[calc_index(by+tx, k+ty, output_len)];
+            T g_scaled = g * (T)0.5;
+
+            half h = _to_half(g_scaled);
+
+            sdata_b[ty * TILE_SIZE + tx] = h;
+            //sdata_b[ty * TILE_SIZE + tx] = _to_half(loss[calc_index(by+tx,k+ty,output_len)]) * _to_half(0.5);
+        } else {
+            sdata_b[ty * TILE_SIZE + tx] = __float2half(0.0f);
+        }
         __syncthreads();
 
         wmma::load_matrix_sync(a_frag, sdata_a, TILE_SIZE);
