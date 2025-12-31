@@ -146,24 +146,15 @@ impl EvalutorCreator {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
-        let n1 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n2 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n3 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        //let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
-        //let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        //let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        //let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
-//        let n1 = Uniform::new(-(1f32 / ACTIVE_INDICES as f32).sqrt(), (1f32 / ACTIVE_INDICES as f32).sqrt());
-//        let n2 = Uniform::new(-(1f32 / 512f32).sqrt(), (1f32 / 512f32).sqrt());
-//        let n3 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
-//        let n4 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
+        let n1 = Normal::<f32>::new(0.0, 0.25 * 1.5 / (ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2. / (512f32 + 32f32)).sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2. / (32f32 + 32f32)).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 2f32 / (32f32 + 1f32).sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
 
-
         let optimizer_builder_feature = MomentumSGDBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(1e-3))
+            .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
             .scheduler(StepLR::new(75,0.3));
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
@@ -270,24 +261,16 @@ impl TrainerCreator {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
-        let n1 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n2 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n3 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 0.01).unwrap();
-        //let n1 = Normal::<f32>::new(0.0, (2f32 / ACTIVE_INDICES as f32).sqrt()).unwrap();
-        //let n2 = Normal::<f32>::new(0.0, (2f32 / 512f32).sqrt()).unwrap();
-        //let n3 = Normal::<f32>::new(0.0, (2f32 / 32f32).sqrt()).unwrap();
-        //let n4 = Normal::<f32>::new(0.0, 1f32 / (32f32 + 1f32).sqrt()).unwrap();
-        //        let n1 = Uniform::new(-(1f32 / ACTIVE_INDICES as f32).sqrt(), (1f32 / ACTIVE_INDICES as f32).sqrt());
-        //        let n2 = Uniform::new(-(1f32 / 512f32).sqrt(), (1f32 / 512f32).sqrt());
-        //        let n3 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
-        //        let n4 = Uniform::new(-(1f32 / 32f32).sqrt(), (1f32 / 32f32).sqrt());
+        let n1 = Normal::<f32>::new(0.0, 0.25 * 1.5 / (ACTIVE_INDICES as f32).sqrt()).unwrap();
+        let n2 = Normal::<f32>::new(0.0, (2. / (512f32 + 32f32)).sqrt()).unwrap();
+        let n3 = Normal::<f32>::new(0.0, (2. / (32f32 + 32f32)).sqrt()).unwrap();
+        let n4 = Normal::<f32>::new(0.0, 2f32 / (32f32 + 1f32).sqrt()).unwrap();
 
         let device = DeviceGpu::new(&allocator)?;
 
 //        let optimizer_builder_feature = AdamWBuilder::new(&device)
         let optimizer_builder_feature = SGDBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(1e-3))
+            .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
             .scheduler(StepLR::new(75,0.3));
 
 //        let optimizer_builder_middle = AdamWBuilder::new(&device)
@@ -322,7 +305,7 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("feature transform layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
@@ -360,7 +343,7 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("accumulator layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
@@ -407,7 +390,7 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
@@ -428,7 +411,7 @@ impl TrainerCreator {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("feature transform layer gradient l2 {}",l2);
+                    println!("middle layer gradient l2 {}",l2);
 
                     let b = b.read_to_vec()?;
 
@@ -454,12 +437,19 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("middle layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
                     Ok(())
                 });
+                l.add_gradient_logger(|(g,b)| {
+                    let b = b.read_to_vec()?;
+
+                    println!("middle layer bias[0] gradient {}",b[0]);
+
+                    Ok(())
+                })
             }
 
             l
@@ -480,7 +470,7 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("output layer forward before activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
@@ -517,7 +507,7 @@ impl TrainerCreator {
                     let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
                     let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32;
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
                     println!("output layer forward after activation mean: {}, min: {}, max: {}, std: {}", mean, min, max, std);
 
