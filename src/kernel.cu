@@ -14,8 +14,8 @@ static __device__ half _to_half(double x) {
     return __double2half(x);
 }
 
-static __device__ size_t calc_index(size_t x, size_t y, size_t leading_dimension) {
-    return y * leading_dimension + x;
+static __device__ size_t calc_index(size_t row, size_t col, size_t leading_dimension) {
+    return row * leading_dimension + col;
 }
 
 #define BLOCK_SHARED_SMALL 32
@@ -123,22 +123,12 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
             sdata_a[tx * TILE_SIZE + ty] = __float2half(0.0f);
         }
 
-        /*
-        if (k + tx < batch_size && by + ty < output_len) {
-            sdata_b[tx * TILE_SIZE + ty] = _to_half(loss[calc_index(by+ty,k+tx,output_len)]) * _to_half(0.5);
-        } else {
-            sdata_b[tx * TILE_SIZE + ty] = __float2half(0.0f);
-        }
-        */
-
         if (k + ty < batch_size && by + tx < output_len) {
-            T g = loss[calc_index(by+tx, k+ty, output_len)];
-            T g_scaled = g * (T)0.5;
+            T g = loss[calc_index(k+ty, by+tx, output_len)];
 
-            half h = _to_half(g_scaled);
+            half h = _to_half(g);
 
             sdata_b[ty * TILE_SIZE + tx] = h;
-            //sdata_b[ty * TILE_SIZE + tx] = _to_half(loss[calc_index(by+tx,k+ty,output_len)]) * _to_half(0.5);
         } else {
             sdata_b[ty * TILE_SIZE + tx] = __float2half(0.0f);
         }
@@ -157,7 +147,7 @@ __device__ void transform_features_gradient_batch(const T * __restrict__ loss,
     __syncthreads();
 
     if (ty + by < output_len && tx + bx < input_len) {
-        output[calc_index(ty+by,tx+bx,output_len)] = (T)sdata_c[tx * TILE_SIZE + ty];
+        output[calc_index(tx+bx,ty+by,output_len)] = (T)sdata_c[tx * TILE_SIZE + ty];
     }
 }
 

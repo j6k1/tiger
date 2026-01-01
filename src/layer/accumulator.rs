@@ -159,8 +159,8 @@ impl<U,P,D,I,PI,const N:usize> UpdateWeight<U> for AccumulatorLayer<U,P,D,I,PI,N
           <PI as BatchDataType>::Type: Debug + BatchSize + 'static {
     type GradientStack = <P as UpdateWeight<U>>::GradientStack;
 
-    fn update_weight(&mut self, stack: Self::GradientStack) -> Result<(),TrainingError> {
-        self.parent.update_weight(stack)
+    fn update_weight(&mut self, stack: Self::GradientStack, batch_size: usize) -> Result<(),TrainingError> {
+        self.parent.update_weight(stack,batch_size)
     }
 }
 

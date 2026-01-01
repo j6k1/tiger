@@ -6,7 +6,7 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::cuda::{CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, ReadMemory, WriteMemory};
 use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::device::{Device, DeviceAllocator, DeviceCpu, DeviceGpu};
+use nncombinator::device::{Device, DeviceAllocator, DeviceBatchAveraging, DeviceCpu, DeviceGpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ConfigReadError, PersistenceError};
 use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
@@ -300,7 +300,9 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BackwardAll<U>
           CudaPtr<U,A>: WriteMemory<U>,
           CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
           CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
-          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> +
+                          DeviceBatchAveraging<CudaTensor2dPtr<U,A,NI,NO>,U> +
+                          DeviceBatchAveraging<CudaTensor1dPtr<U,A,NO>,U> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
@@ -342,20 +344,25 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> UpdateWeight<U> for FeatureTransfor
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Arr2<U,NI,NO>,Arr<U,NO>)>;
 
     #[inline]
-    fn update_weight(&mut self, stack: Self::GradientStack) -> Result<(), TrainingError> {
+    fn update_weight(&mut self, stack: Self::GradientStack, batch_size: usize) -> Result<(), TrainingError> {
         let (s,(g,bg)) = stack.pop();
+
+        let bg = self.device.batch_averaging(bg,batch_size * 2)?;
+        let g = self.device.batch_averaging(g,batch_size * 2)?;
 
         self.bias_optimizer.update((&bg).into(), (&mut self.bias).into())?;
         self.unit_optimizer.update((&g).into(),(&mut self.units).into())?;
 
-        Ok(self.parent.update_weight(s)?)
+        Ok(self.parent.update_weight(s,batch_size)?)
     }
 }
 
 impl<U,P,I,A,OP,const NI:usize,const NO:usize> UpdateWeight<U>
     for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + UpdateWeight<U> + 'static,
-          DeviceGpu<U,A>: Device<U> + 'static,
+          DeviceGpu<U,A>: Device<U> +
+                          DeviceBatchAveraging<CudaTensor2dPtr<U,A,NI,NO>,U> +
+                          DeviceBatchAveraging<CudaTensor1dPtr<U,A,NO>,U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
@@ -370,13 +377,16 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> UpdateWeight<U>
     type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>)>;
 
     #[inline]
-    fn update_weight(&mut self, stack: Self::GradientStack) -> Result<(), TrainingError> {
+    fn update_weight(&mut self, stack: Self::GradientStack, batch_size: usize) -> Result<(), TrainingError> {
         let (s,(g,bg)) = stack.pop();
+
+        let bg = self.device.batch_averaging(bg,batch_size * 2)?;
+        let g = self.device.batch_averaging(g,batch_size * 2)?;
 
         self.bias_optimizer.update((&bg).into(), (&mut self.bias).into())?;
         self.unit_optimizer.update((&g).into(),(&mut self.units).into())?;
 
-        Ok(self.parent.update_weight(s)?)
+        Ok(self.parent.update_weight(s, batch_size)?)
     }
 }
 
@@ -404,7 +414,9 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> Loss<U>
           CudaPtr<U,A>: WriteMemory<U>,
           CudaTensor1dPtr<U,A,NO>: WriteMemory<U> + ReadMemory<U>,
           CudaTensor2dPtr<U,A,NI,NO>: WriteMemory<U> + ReadMemory<U>,
-          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> +
+                          DeviceBatchAveraging<CudaTensor2dPtr<U,A,NI,NO>,U> +
+                          DeviceBatchAveraging<CudaTensor1dPtr<U,A,NO>,U> + 'static,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor1dPtr<U,A,NO>>,
           for<'a> &'a <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalType: From<&'a CudaTensor2dPtr<U,A,NI,NO>>,
           for<'a> <OP as Optimizer<U,DeviceGpu<U,A>>>::InternalUpdateType<'a>: From<&'a mut CudaTensor1dPtr<U,A,NO>>,
@@ -539,7 +551,9 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchBackward<U>
              BatchPreTrainBase<U> +
              BatchPreTrain<U,BatchPreOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=()> + 'static,
-          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> +
+                          DeviceBatchAveraging<CudaTensor2dPtr<U,A,NI,NO>,U> +
+                          DeviceBatchAveraging<CudaTensor1dPtr<U,A,NO>,U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           A: CudaAllocator,
@@ -596,7 +610,9 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> BatchLoss<U>
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U,BatchPreOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=()> + 'static,
-          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> + 'static,
+          DeviceGpu<U,A>: Device<U> + DeviceFeatureTransform<U,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,NI,NO> +
+                          DeviceBatchAveraging<CudaTensor2dPtr<U,A,NI,NO>,U> +
+                          DeviceBatchAveraging<CudaTensor1dPtr<U,A,NO>,U> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           A: CudaAllocator,
