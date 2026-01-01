@@ -60,6 +60,7 @@ pub struct Config {
     lambda:Option<f32>,
     save_batch_count:Option<usize>,
     learning_rate:Option<f32>,
+    learning_rate_middle_layer_large:Option<f32>,
     learning_rate_for_input_layer:Option<f32>,
     learning_rate_for_output_layer:Option<f32>,
     weight_decay:Option<f32>,

@@ -158,6 +158,11 @@ impl EvalutorCreator {
             .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
+        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_middle_layer_large.unwrap_or(1e-3))
+            .weight_decay(0.)
+            .scheduler(StepLR::new(75,0.3));
+
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
             .weight_decay(0.)
@@ -183,7 +188,7 @@ impl EvalutorCreator {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                                                              || n2.sample(&mut rnd),
                                                              || 0.0,
-                                                             &optimizer_builder_middle
+                                                             &optimizer_builder_middle_large
             )
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
@@ -275,11 +280,18 @@ impl TrainerCreator {
             .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
 
+        //        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
+        let optimizer_builder_middle_large = SGDBuilder::new(&device)
+            .lr(config.learning_rate_middle_layer_large.unwrap_or(1e-3))
+            .weight_decay(0.)
+            .scheduler(StepLR::new(75,0.3));
+
 //        let optimizer_builder_middle = AdamWBuilder::new(&device)
         let optimizer_builder_middle = SGDBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
             .weight_decay(0.)
             .scheduler(StepLR::new(75,0.3));
+
 
 //        let optimizer_builder_out = AdamWBuilder::new(&device)
         let optimizer_builder_out = SGDBuilder::new(&device)
@@ -420,7 +432,7 @@ impl TrainerCreator {
         }).try_add_layer(|l| {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 || n2.sample(&mut rnd),
-                   || 0.0, &optimizer_builder_middle)
+                   || 0.0, &optimizer_builder_middle_large)
         })?.add_layer(|l| {
             let mut l = LoggingLayer::new(l,&device);
 
