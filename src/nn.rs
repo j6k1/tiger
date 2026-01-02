@@ -46,11 +46,6 @@ const GIN_INDEX:usize = KEI_INDEX + BANMEN_SIZE;
 const KIN_INDEX:usize = GIN_INDEX + BANMEN_SIZE;
 const KAKU_INDEX:usize = KIN_INDEX + BANMEN_SIZE;
 const HISHA_INDEX:usize = KAKU_INDEX + BANMEN_SIZE;
-//const NARIFU_INDEX:usize = HISHA_INDEX + BANMEN_SIZE;
-//const NARIKYOU_INDEX:usize = NARIFU_INDEX + BANMEN_SIZE;
-//const NARIKEI_INDEX:usize = NARIKYOU_INDEX + BANMEN_SIZE;
-//const NARIGIN_INDEX:usize = NARIKEI_INDEX + BANMEN_SIZE;
-//const NARIKAKU_INDEX:usize = NARIGIN_INDEX + BANMEN_SIZE;
 const NARIKAKU_INDEX:usize = HISHA_INDEX + BANMEN_SIZE;
 const NARIHISHA_INDEX:usize = NARIKAKU_INDEX + BANMEN_SIZE;
 const OPPONENT_FU_INDEX:usize = NARIHISHA_INDEX + BANMEN_SIZE;
@@ -377,7 +372,7 @@ impl<M,A> Trainer<M,A>
         Ok(best_move)
     }
 
-    pub fn make_packed_sfens_parser<'a>(lambda:f32, _: bool)
+    pub fn make_packed_sfens_parser<'a>(lambda:f32, verbose: bool)
         -> impl FnMut(Vec<Vec<u8>>)
                 -> Result<Option<(Vec<Arr<f32,1>>,Vec<HalfKP<FEATURES_NUM>>)>,ApplicationError> + Send + 'static {
         move | packed_sfens | {
@@ -444,6 +439,19 @@ impl<M,A> Trainer<M,A>
                     acc.1.append(&mut i);
                     acc
                 });
+
+            if verbose {
+                let o = &batch.0;
+
+                let len = o.len();
+
+                let mean = o.iter().fold(0.0, |acc, x| acc + x[0]) / len as f32;
+                let min = o.iter().fold(0.0 / 0.0, |acc, x| x[0].min(acc));
+                let max = o.iter().fold(0.0 / 0.0, |acc, x| x[0].max(acc));
+                let std = o.iter().map(|x| (x[0] - mean).powf(2.0)).sum::<f32>() / len as f32;
+
+                println!("label mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+            }
 
             Ok(Some(batch))
         }
@@ -587,18 +595,18 @@ impl<M,A> Trainer<M,A>
                     acc
                 });
 
-                if verbose {
-                    let o = &batch.0;
+            if verbose {
+                let o = &batch.0;
 
-                    let len = o.len();
+                let len = o.len();
 
-                    let mean = o.iter().fold(0.0, |acc, x| acc + x[0]) / len as f32;
-                    let min = o.iter().fold(0.0 / 0.0, |acc, x| x[0].min(acc));
-                    let max = o.iter().fold(0.0 / 0.0, |acc, x| x[0].max(acc));
-                    let std = o.iter().map(|x| (x[0] - mean).powf(2.0)).sum::<f32>() / len as f32;
+                let mean = o.iter().fold(0.0, |acc, x| acc + x[0]) / len as f32;
+                let min = o.iter().fold(0.0 / 0.0, |acc, x| x[0].min(acc));
+                let max = o.iter().fold(0.0 / 0.0, |acc, x| x[0].max(acc));
+                let std = o.iter().map(|x| (x[0] - mean).powf(2.0)).sum::<f32>() / len as f32;
 
-                    println!("label mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
-                }
+                println!("label mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+            }
 
             Ok(Some(batch))
         }
