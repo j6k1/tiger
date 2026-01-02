@@ -47,18 +47,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
 
         const size_t tid = threadIdx.x;
 
-        /*
-        for (size_t i = tid; i < end_index - start_index; i += 32) {
-            acc += units[indexes[start_index + i] * output_len + out_index];
-        }
-
-        acc += __shfl_down_sync(0xffffffff,acc,16);
-        acc += __shfl_down_sync(0xffffffff,acc,8);
-        acc += __shfl_down_sync(0xffffffff,acc,4);
-        acc += __shfl_down_sync(0xffffffff,acc,2);
-        acc += __shfl_down_sync(0xffffffff,acc,1);
-        */
-
         if (tid == 0) {
             T acc = 0.0;
 
@@ -76,6 +64,16 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         }
 
         /*
+        for (size_t i = tid; i < end_index - start_index; i += 32) {
+            acc += units[indexes[start_index + i] * output_len + out_index];
+        }
+
+        acc += __shfl_down_sync(0xffffffff,acc,16);
+        acc += __shfl_down_sync(0xffffffff,acc,8);
+        acc += __shfl_down_sync(0xffffffff,acc,4);
+        acc += __shfl_down_sync(0xffffffff,acc,2);
+        acc += __shfl_down_sync(0xffffffff,acc,1);
+
         if (tid == 0 && index < batch_size * output_len) {
             output[index] = acc + bias[out_index];
         }
