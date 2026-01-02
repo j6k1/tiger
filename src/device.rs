@@ -65,9 +65,6 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a Arr<U,{NO*2}>) -> Result<Arr2<U,NI,NO>,TrainingError> {
         let mut acc = Arr2::<U,NI,NO>::new();
 
-        let d = U::from_f64(2.).unwrap();
-
-        let loss = loss.iter().map(|&l| l / d).collect::<Vec<U>>();
         let (sl,ol) = loss.split_at(NO);
 
         let sl = <&[U;NO]>::try_from(sl)?;
@@ -77,8 +74,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
 
         let (si,oi) = input.split_at(NI);
 
-        for (input,loss) in [si,oi].into_iter()
-                                                                .zip([sl,ol].into_iter()){
+        for (input,loss) in [si,oi].into_iter().zip([sl,ol].into_iter()){
             for (&input,mut acc) in input.iter().zip(acc.iter_mut()) {
                 for (&loss,acc) in loss.iter().zip(acc.iter_mut()) {
                     *acc += input * loss;
@@ -94,16 +90,14 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         let mut acc = Arr::<U,NO>::new();
 
         {
-            let d = U::from_f64(2.).unwrap();
-
             let (sl,ol) = loss.as_raw_slice().split_at(NO);
 
             for (acc,s) in acc.iter_mut().zip(sl.iter()) {
-                *acc += *s / d;
+                *acc += *s;
             }
 
             for (acc,o) in acc.iter_mut().zip(ol.iter()) {
-                *acc += *o / d;
+                *acc += *o;
             }        
         }
 
@@ -123,12 +117,9 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a SerializedVec<U,Arr<U,{NO*2}>>)
         -> Result<Arr2<U,NI,NO>,TrainingError> {
 
-        <&'a Vec<HalfKP<NI>>>::from(input).par_iter().zip(loss.par_iter()).map(|(i,l)| {
+        <&'a Vec<HalfKP<NI>>>::from(input).par_iter().zip(loss.par_iter()).map(|(i,loss)| {
             let mut acc = Arr2::<U,NI,NO>::new();
 
-            let d = U::from_f64(2.).unwrap();
-
-            let loss = l.iter().map(|&l| l / d).collect::<Vec<U>>();
             let (sl,ol) = loss.split_at(NO);
 
             let sl = <&[U;NO]>::try_from(sl)?;
@@ -180,16 +171,14 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         let mut acc = Arr::<U,NO>::new();
 
         {
-            let d = U::from_f64(2.).unwrap();
-
             let (sl,ol) = g.as_raw_slice().split_at(NO);
 
             for (acc,s) in acc.iter_mut().zip(sl.iter()) {
-                *acc += *s / d;
+                *acc += *s;
             }
 
             for (acc,o) in acc.iter_mut().zip(ol.iter()) {
-                *acc += *o / d;
+                *acc += *o;
             }        
         }
 
