@@ -155,23 +155,19 @@ impl EvalutorCreator {
 
         let optimizer_builder_feature = MomentumSGDBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         let optimizer_builder_middle_large = AdamWBuilder::new(&device)
             .lr(config.learning_rate_middle_layer_large.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -180,8 +176,6 @@ impl EvalutorCreator {
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)
-        })?.try_add_layer(|l| {
-            AccumulatorLayerBuilder::new().build(l,&device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
         }).try_add_layer(|l| {
@@ -277,27 +271,23 @@ impl TrainerCreator {
 //        let optimizer_builder_feature = AdamWBuilder::new(&device)
         let optimizer_builder_feature = SGDBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         //        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
         let optimizer_builder_middle_large = SGDBuilder::new(&device)
             .lr(config.learning_rate_middle_layer_large.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
 //        let optimizer_builder_middle = AdamWBuilder::new(&device)
         let optimizer_builder_middle = SGDBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(1e-3))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
 
 //        let optimizer_builder_out = AdamWBuilder::new(&device)
         let optimizer_builder_out = SGDBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(1e-4))
-            .weight_decay(0.)
-            .scheduler(StepLR::new(75,0.3));
+            .weight_decay(0.);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -311,6 +301,23 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                l.add_batch_forward_logger(|o| {
+                    let o = o.read_to_vec()?;
+
+                    let len = o.len();
+
+                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("feature transform layer forward before activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in feature transform layer logit");
+
+                    Ok(())
+                });
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -344,46 +351,40 @@ impl TrainerCreator {
 
                     Ok(())
                 });
+
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("feature transform layer gradient l2 {}",l2);
+                    println!("feature transform gradient l2 {}",l2);
 
                     assert!(g.iter().all(|x| x.is_finite()), "NaN in feature transform layer grad");
 
+                    let len = g.len();
+
+                    let mean = g.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = g.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = g.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (g.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("feature transform gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
                     let b = b.read_to_vec()?;
 
+                    let mean = b.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = b.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = b.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (b.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("feature transform bias gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
                     let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("feature transform layer bias gradient l2 {}",l2);
+
+                    println!("feature transform bias gradient l2 {}",l2);
 
                     Ok(())
                 })
-            }
-
-            l
-        }).try_add_layer(|l| {
-            AccumulatorLayerBuilder::new().build(l,&device)
-        })?.add_layer(|l| {
-            let mut l = LoggingLayer::new(l,&device);
-
-            if verbose {
-                l.add_batch_forward_logger(|o| {
-                    let o = o.read_to_vec()?;
-
-                    let len = o.len();
-
-                    let mean = o.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
-                    let min = o.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
-                    let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
-                    let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
-
-                    println!("accumulator layer forward before activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
-
-                    assert!(o.iter().all(|x| x.is_finite()), "NaN in accumulator layer logit");
-
-                    Ok(())
-                });
+                 */
             }
 
             l
@@ -393,6 +394,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -403,9 +405,9 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("accumulator layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+                    println!("feature transform layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
-                    assert!(o.iter().all(|x| x.is_finite()), "NaN in accumulator layer actual");
+                    assert!(o.iter().all(|x| x.is_finite()), "NaN in feature transform layer actual");
 
                     Ok(())
                 });
@@ -420,12 +422,14 @@ impl TrainerCreator {
                     let max = o.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
                     let std = (o.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
 
-                    println!("middle layer 1 backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+                    println!("feature transform layer 1 backward mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
                     assert!(o.iter().all(|x| x.is_finite()), "NaN in middle 1 layer loss");
 
                     Ok(())
                 });
+
+                 */
             }
 
             l
@@ -437,30 +441,41 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
-                l.add_batch_forward_logger(|o| {
-                    let o = o.read_to_vec()?;
-
-                    let len = o.len();
-
-                    assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 1 logit");
-
-                    Ok(())
-                });
+                /*
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("middle layer gradient l2 {}",l2);
+                    println!("middle layer 1 gradient l2 {}",l2);
 
-                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 1 grad");
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 1 layer grad");
+
+                    let len = g.len();
+
+                    let mean = g.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = g.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = g.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (g.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 1 gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
                     let b = b.read_to_vec()?;
 
+                    let mean = b.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = b.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = b.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (b.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 1 bias gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
                     let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("middle layer bias gradient l2 {}",l2);
+
+                    println!("middle layer 1 bias gradient l2 {}",l2);
 
                     Ok(())
                 })
+
+                 */
             }
 
             l
@@ -470,6 +485,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -503,6 +519,7 @@ impl TrainerCreator {
 
                     Ok(())
                 });
+                 */
             }
 
             l
@@ -514,6 +531,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -521,21 +539,41 @@ impl TrainerCreator {
 
                     Ok(())
                 });
+
                 l.add_gradient_logger(|(g,b)| {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("middle layer gradient l2 {}",l2);
+                    println!("middle layer 2 gradient l2 {}",l2);
 
-                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 2 grad");
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 2 layer grad");
+
+                    let len = g.len();
+
+                    let mean = g.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = g.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = g.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (g.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 2 gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
                     let b = b.read_to_vec()?;
 
+                    let mean = b.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = b.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = b.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (b.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 2 bias gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
                     let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("middle layer bias gradient l2 {}",l2);
+
+                    println!("middle layer 2 bias gradient l2 {}",l2);
 
                     Ok(())
                 })
+
+                 */
             }
 
             l
@@ -545,6 +583,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -558,13 +597,6 @@ impl TrainerCreator {
                     println!("middle layer forward after activation mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
                     assert!(o.iter().all(|x| x.is_finite()), "NaN in middle layer 2 actual");
-
-                    Ok(())
-                });
-                l.add_gradient_logger(|(g,b)| {
-                    let b = b.read_to_vec()?;
-
-                    println!("middle layer bias[0] gradient {}",b[0]);
 
                     Ok(())
                 });
@@ -585,6 +617,8 @@ impl TrainerCreator {
 
                     Ok(())
                 });
+
+                 */
             }
 
             l
@@ -597,6 +631,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -618,17 +653,36 @@ impl TrainerCreator {
                     let g = g.read_to_vec()?;
 
                     let l2 = g.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("output layer gradient l2 {}",l2);
+                    println!("middle layer 3 gradient l2 {}",l2);
 
-                    assert!(g.iter().all(|x| x.is_finite()), "NaN in output layer grad");
+                    assert!(g.iter().all(|x| x.is_finite()), "NaN in middle layer 3 grad");
+
+                    let len = g.len();
+
+                    let mean = g.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = g.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = g.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (g.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("output layer gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
 
                     let b = b.read_to_vec()?;
 
+                    let mean = b.iter().fold(0.0, |acc, &x| acc + x) / len as f32;
+                    let min = b.iter().fold(0.0 / 0.0, |acc, &x| x.min(acc));
+                    let max = b.iter().fold(0.0 / 0.0, |acc, &x| x.max(acc));
+                    let std = (b.iter().map(|&x| (x - mean).powf(2.0)).sum::<f32>() / len as f32).sqrt();
+
+                    println!("middle layer 3 bias gradient mean: {:.9e}, min: {:.9e}, max: {:.9e}, std: {:.9e}", mean, min, max, std);
+
                     let l2 = b.iter().fold(0.0, |acc, x| acc + x * x).sqrt();
-                    println!("output layer bias gradient l2 {}",l2);
+
+                    println!("middle layer 3 bias gradient l2 {}",l2);
 
                     Ok(())
                 })
+
+                 */
             }
 
             l
@@ -638,6 +692,7 @@ impl TrainerCreator {
             let mut l = LoggingLayer::new(l,&device);
 
             if verbose {
+                /*
                 l.add_batch_forward_logger(|o| {
                     let o = o.read_to_vec()?;
 
@@ -670,6 +725,8 @@ impl TrainerCreator {
 
                     Ok(())
                 });
+
+                 */
             }
 
             l
@@ -705,7 +762,7 @@ impl<M,A> Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {
     fn sigmoid(x:f32) -> f32 {
-        1. / (1. + (-0.00173873964459554 * x).exp())
+        1. / (1. + (-0.0017928004128957029 * x).exp())
     }
 
     pub fn select_bestmove(&self, teban:Teban, state:&State, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {

@@ -2,7 +2,6 @@
 #include<mma.h>
 #include<cuda.h>
 #include<cuda_runtime.h>
-#include<stdio.h>
 
 using namespace nvcuda;
 
