@@ -1,5 +1,5 @@
 //! Feature Transformation Layer Implementation
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug};
 use std::marker::PhantomData;
 
 use nncombinator::arr::{Arr, Arr2};

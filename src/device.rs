@@ -3,21 +3,18 @@ use std::fmt::Debug;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
-use nncombinator::arr::{ArrView, IntoConverter, SerializedVec, SerializedVecView};
-use nncombinator::cuda::kernel::device::{AddBiasBatch, AddBiasBatchArgs, BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
+use nncombinator::arr::{SerializedVec};
+use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::collection::Broadcast;
-use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory, AsMutPtr, AsPtr};
+use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory};
 use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu, DeviceReduce};
+use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
-use rcublas_sys::{cublasDaxpy_v2, cublasSaxpy_v2, cublasStatus_t};
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
 use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorBatchArgs, TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
-use crate::nn::FEATURES_NUM;
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     where U: UnitValue<U>, [(); NO*2]: {
@@ -437,11 +434,11 @@ impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
     fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,EvaluateError> {
         let mut output = input.clone();
 
-        for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+        for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
             *o += i;
         }
 
-        for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+        for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
             *o += i;
         }
 
@@ -450,11 +447,11 @@ impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
     fn backward_accumulator<'a>(&self, loss: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,TrainingError> {
         let mut output = loss.clone();
 
-        for (mut o,&i) in output.iter_mut().take(N).zip(loss.iter().skip(N)) {
+        for (o,&i) in output.iter_mut().take(N).zip(loss.iter().skip(N)) {
             *o += i;
         }
 
-        for (mut o,&i) in output.iter_mut().skip(N).zip(loss.iter().take(N)) {
+        for (o,&i) in output.iter_mut().skip(N).zip(loss.iter().take(N)) {
             *o += i;
         }
 
@@ -465,15 +462,15 @@ impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
         Ok(input.par_iter().map(|input| {
             let mut output = Arr::<U,{N*2}>::new();
 
-            for (mut o,&i) in output.iter_mut().zip(input.iter()) {
+            for (o,&i) in output.iter_mut().zip(input.iter()) {
                 *o = i
             }
 
-            for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+            for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
                 *o += i;
             }
 
-            for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+            for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
                 *o += i;
             }
 
@@ -485,15 +482,15 @@ impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
         Ok(loss.par_iter().map(|input| {
             let mut output = Arr::<U,{N*2}>::new();
 
-            for (mut o,&i) in output.iter_mut().zip(input.iter()) {
+            for (o,&i) in output.iter_mut().zip(input.iter()) {
                 *o = i
             }
 
-            for (mut o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
+            for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
                 *o += i;
             }
 
-            for (mut o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
+            for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
                 *o += i;
             }
 

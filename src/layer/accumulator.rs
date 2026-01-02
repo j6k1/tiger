@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device};
 use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
-use nncombinator::layer::{Backward, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, ContinueForward, DiffInput, Forward, ForwardAll, ForwardDiff, Loss, OnStep, PartialForward, PreTrain, UpdateWeight};
+use nncombinator::layer::{Backward, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, ContinueForward, Forward, ForwardAll, ForwardDiff, Loss, OnStep, PartialForward, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
 use nncombinator::ope::UnitValue;
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence, Specialized, TextFilePersistence};

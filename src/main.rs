@@ -30,7 +30,7 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use getopts::Options;
-use nncombinator::cuda::allocator::{DeviceAlloc, DeviceAllocator, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
+use nncombinator::cuda::allocator::{DeviceAlloc, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
 use usiagent::logger::FileLogger;
 use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
@@ -50,8 +50,8 @@ pub mod search;
 pub mod error;
 pub mod kernel;
 
-const LEAN_SFEN_READ_SIZE:usize = 1000 * 1000 * 10;
-const LEAN_BATCH_SIZE:usize = 1000 * 100;
+const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
+const LEAN_BATCH_SIZE:usize = 64;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -63,8 +63,6 @@ pub struct Config {
     learning_rate_middle_layer_large:Option<f32>,
     learning_rate_for_input_layer:Option<f32>,
     learning_rate_for_output_layer:Option<f32>,
-    weight_decay:Option<f32>,
-    weight_decay_for_output_layer:Option<f32>,
     verbose:Option<bool>,
 }
 pub struct ConfigLoader {
@@ -144,9 +142,9 @@ fn run() -> Result<(),ApplicationError> {
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                         config.lambda.unwrap_or(0.667),
+                                                         config.lambda.unwrap_or(1.0),
                                                          config.verbose.unwrap_or(false),
-                                                         config.save_batch_count.unwrap_or(1),
+                                                         config.save_batch_count.unwrap_or(20),
                                                          maxepoch)
         } else if matches.opt_present("hcpe") {
             Learnener::new().learning_from_hcpe(kifudir,
@@ -158,9 +156,9 @@ fn run() -> Result<(),ApplicationError> {
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                config.lambda.unwrap_or(0.667),
+                                                config.lambda.unwrap_or(1.0),
                                                 config.verbose.unwrap_or(false),
-                                                config.save_batch_count.unwrap_or(1),
+                                                config.save_batch_count.unwrap_or(20),
                                                 maxepoch)
         } else {
             Err(ApplicationError::InvalidSettingError(String::from("learning mode is not specified.")))

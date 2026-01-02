@@ -117,7 +117,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForward<'a,
     const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
     type Args = TransformFeaturesForwardArgs<'a,f32,A,NI,NO>;
 
-    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+    fn launch_config(&self, _: &Self::Args) -> KernelLaunchConfig {
         KernelLaunchConfig {
             grid_dim: dim3 { x: NO as c_uint, y: 1, z: 1 },
             block_dim: dim3 { x: 32, y: 1, z: 1},
@@ -308,7 +308,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradient<'a
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientArgs<'a, f32, A, NI, NO>;
 
-    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+    fn launch_config(&self, _: &Self::Args) -> KernelLaunchConfig {
         KernelLaunchConfig {
             grid_dim: dim3 { x: (NI as c_uint + 15) / 16, y: (NO as c_uint + 15) / 16, z: 1 },
             block_dim: dim3 { x: 16, y: 16, z: 1 },
@@ -401,7 +401,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBat
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>;
 
-    fn launch_config(&self, args: &Self::Args) -> KernelLaunchConfig {
+    fn launch_config(&self, _: &Self::Args) -> KernelLaunchConfig {
         KernelLaunchConfig {
             grid_dim: dim3 { x: (NI as c_uint + 15) / 16, y: (NO as c_uint + 15) / 16 , z: 1 },
             block_dim: dim3 { x: 16, y: 16, z: 1 },
