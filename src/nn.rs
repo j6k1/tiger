@@ -245,7 +245,7 @@ impl<M> Evalutor<M>
 
         let r = self.nn.forward_all(input)?;
 
-        Ok(((r[0] - 0.5) * 13500.) as i32)
+        Ok(((r[0] - 0.5) * 1200.) as i32)
     }
 
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {
