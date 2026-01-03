@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::ops::{Add, Neg, Sub};
+use std::ops::{Add, Deref, Neg, Sub};
 use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -24,7 +24,7 @@ use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, ZobristHash};
+use crate::transposition_table::{TT, ZobristHash, TTPartialEntry};
 
 pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;
@@ -193,7 +193,8 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     thread_pool:ThreadPool
 }
 const TIMELIMIT_MARGIN:u64 = 50;
-const QSEARCH_LIMIT:usize = 8;
+const TIMELIMIT_MARGIN_FOR_EVALUTION:u64 = 100;
+const QSEARCH_LIMIT:usize = 32;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -212,60 +213,57 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let (mk,sk) = zh.keys();
 
-        if score >= beta {
-            return Ok(score);
-        } else if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached(env) {
+        if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached_for_evalution(env) {
             score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
-        let checked = Rule::in_check(teban.opposite(),state);
+        let in_check = Rule::in_check(teban.opposite(),state);
 
-        if checked {
-            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
-
-            if picker.len() == 0 {
-                return Ok(Score::NEGINFINITE);
-            }
+        if in_check {
+            Rule::generate_moves::<Evasions>(teban,state,mc,&mut picker)?;
         } else {
-            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban, state, &mut picker)?;
+            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
+        }
 
-            if picker.len() == 0 {
-                score = Score::Value(evalutor.evalute(teban, state, mc)?);
-                return Ok(score);
-            }
+        if in_check && picker.len() == 0 {
+            return Ok(Score::NEGINFINITE);
+        }
+
+        if picker.len() == 0 {
+            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
         }
 
         let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
 
-        let mut count = 0;
+        let mut stand_pat = Score::Value(evalutor.evalute_material(teban,state,mc));
+
+        if stand_pat >= beta {
+            return Ok(stand_pat);
+        }
+
+        if stand_pat > alpha {
+            alpha = stand_pat;
+        }
+        
+        let mut bestscore = Score::NEGINFINITE;
 
         for m in picker {
-            if checked {
-                match m {
-                    LegalMove::To(m) if m.obtained().is_none() => {
-                        continue;
-                    },
-                    LegalMove::Put(_) => {
-                        continue;
-                    },
-                    _ => ()
-                }
-            }
-
-            count += 1;
-
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
             } {
                 history.remove(&(teban,mk,sk));
 
-                return Ok(Score::INFINITE);
+                if depth == 0 {
+                    return Ok(Score::INFINITE);
+                } else {
+                    return Ok(beta);
+                }
             }
 
             let o = match m {
@@ -280,8 +278,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,history,-beta,-alpha,depth+1,evalutor,rng)?;
 
             if score >= beta {
-                score = score;
-                break;
+                return Ok(score);
+            }
+
+            if score > bestscore {
+                bestscore = score;
             }
 
             if score > alpha {
@@ -295,15 +296,15 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.remove(&(teban,mk,sk));
 
-        if count == 0 {
-            score = Score::Value(evalutor.evalute(teban, state, mc)?);
-        }
-
-        Ok(score)
+        Ok(bestscore)
     }
 
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> bool {
         env.turn_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false)
+    }
+
+    fn timelimit_reached_for_evalution(&self,env:&mut Environment<L,S>) -> bool {
+        env.turn_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN_FOR_EVALUTION)).unwrap_or(false)
     }
 
     fn send_info(&self, env:&mut Environment<L,S>,
@@ -352,6 +353,17 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                      score: Score,
                      beta: Score,
                      alpha:Score) {
+        let mut tte = env.transposition_table.entry(&zh);
+        let tte = tte.or_default();
+
+        if tte.depth == -1 || score == Score::INFINITE ||
+            (tte.beta >= beta && tte.alpha <= alpha && tte.depth < depth as i8 - 1) ||
+            (tte.depth == depth as i8 - 1 && tte.score < score) {
+            tte.depth = depth as i8 - 1;
+            tte.score = score;
+            tte.beta = beta;
+            tte.alpha = alpha;
+        }
     }
 
     fn update_best_move<'a>(&self, env: &mut Environment<L, S>,
@@ -361,6 +373,18 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             beta:Score,
                             alpha:Score,
                             m: Option<LegalMove>) {
+        let mut tte = env.transposition_table.entry(zh);
+        let tte = tte.or_default();
+
+        if tte.depth == -1 || score == Score::INFINITE ||
+            (tte.beta >= beta && tte.alpha <= alpha && tte.depth < depth as i8) ||
+            (tte.depth == depth as i8 && tte.score < score) {
+            tte.depth = depth as i8;
+            tte.score = score;
+            tte.beta = beta;
+            tte.alpha = alpha;
+            tte.best_move = m;
+        }
     }
 }
 impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
@@ -667,6 +691,44 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             return Ok(EvaluationResult::Timeout);
         }
 
+        if let Some(prev_move) = gs.m.clone() {
+            let r = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone());
+
+            if let Some(TTPartialEntry {
+                            depth: d,
+                            score: s,
+                            beta,
+                            alpha,
+                            best_move: _
+                        }) = r {
+
+                match s {
+                    Score::INFINITE => {
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(prev_move);
+
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                    },
+                    Score::NEGINFINITE => {
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(prev_move);
+
+                        return Ok(EvaluationResult::Immediate(Score::NEGINFINITE,mvs,gs.zh.clone()));
+                    },
+                    Score::Value(s) if d as u32 >= gs.depth && beta >= gs.beta && alpha <= gs.alpha => {
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(prev_move);
+
+                        return Ok(EvaluationResult::Immediate(Score::Value(s),mvs,gs.zh.clone()));
+                    },
+                    _ => ()
+                }
+            }
+        }
+
         let prev_move = gs.m.clone();
 
         if Rule::in_check(gs.teban,&gs.state) {
@@ -697,16 +759,69 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
-        let count = if Rule::in_check(gs.teban.opposite(),gs.state) {
-            1
-        } else {
+        let count = if Rule::in_check(gs.teban.opposite(),&gs.state) {
             2
+        } else {
+            3
         };
 
         for i in 0..count {
-            if i == 0 && Rule::in_check(gs.teban.opposite(),gs.state) {
+            if i == 0 {
+                if let Some(TTPartialEntry {
+                                depth: _,
+                                score: _,
+                                beta: _,
+                                alpha: _,
+                                best_move: m
+                            }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
+                    if let Some(m) = m {
+                        if self.is_obtained_ou(m)? {
+                            let mut mvs = VecDeque::new();
+
+                            mvs.push_front(m);
+                            prev_move.map(|m| mvs.push_front(m));
+
+                            return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                        }
+
+                        match self.search_child_node(env, gs, m, alpha, event_dispatcher, evalutor)? {
+                            EvaluationResult::Immediate(s, mvs, zh) => {
+                                self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
+
+                                let s = -s;
+
+                                if s > scoreval {
+                                    scoreval = s;
+
+                                    best_moves = mvs;
+                                    prev_move.map(|m| best_moves.push_front(m));
+
+                                    if gs.current_depth == 0 && s > gs.best_score {
+                                        self.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                                    }
+
+                                    self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
+
+                                    if scoreval >= beta {
+                                        return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                    }
+                                }
+
+                                if alpha < s {
+                                    alpha = s;
+                                }
+                            },
+                            EvaluationResult::Timeout => {
+                                return Ok(EvaluationResult::Timeout);
+                            }
+                        }
+                    }
+                }
+
+                continue;
+            } else if i == 1 && Rule::in_check(gs.teban.opposite(),&gs.state) {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
-            } else if i == 0 {
+            } else if i == 1 {
                 Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             } else {
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
@@ -724,6 +839,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 match self.search_child_node(env,gs,m,alpha,event_dispatcher,evalutor)? {
                     EvaluationResult::Immediate(s, mvs, zh) => {
+                        self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
+
                         let s = -s;
 
                         if s > scoreval {
@@ -731,6 +848,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                             best_moves = mvs;
                             prev_move.map(|m| best_moves.push_front(m));
+
+                            self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
                             if gs.current_depth == 0 && s > gs.best_score {
                                 self.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
