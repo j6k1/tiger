@@ -149,10 +149,12 @@ __device__ void bi_mix_accumulator(const T * __restrict__ input,
 }
 
 extern "C" {
-    __global__ void forward_transform_features_batch_float(const size_t *indexes, const size_t *boundaries,
-                                                     const float *units, const float *bias, float *output,
-                                                     const size_t output_len,
-                                                     const size_t batch_size) {
+    __global__ void forward_transform_features_batch_float(const size_t * __restrict__ indexes,
+                                                           const size_t * __restrict__ boundaries,
+                                                           const float * __restrict__ units,
+                                                           const float * __restrict__ bias, float *output,
+                                                           const size_t output_len,
+                                                           const size_t batch_size) {
         forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
     }
 
@@ -163,10 +165,12 @@ extern "C" {
         bi_mix_accumulator(input,output,input_len,batch_size);
     }
 
-    __global__ void forward_transform_features_batch_double(const size_t *indexes, const size_t *boundaries,
-                                                     const double *units, const double *bias, double *output,
-                                                     const size_t output_len,
-                                                     const size_t batch_size) {
+    __global__ void forward_transform_features_batch_double(const size_t * __restrict__ indexes,
+                                                            const size_t * __restrict__ boundaries,
+                                                            const double * __restrict__ units,
+                                                            const double * __restrict__ bias, double *output,
+                                                            const size_t output_len,
+                                                            const size_t batch_size) {
         forward_transform_features_batch(indexes,boundaries,units,bias,output,output_len,batch_size);
     }
 
