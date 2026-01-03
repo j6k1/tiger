@@ -25,8 +25,10 @@ static __device__ size_t calc_index(size_t row, size_t col, size_t leading_dimen
 
 template<typename T>
 
-__device__ void forward_transform_features_batch(const size_t *indexes, const size_t *boundaries,
-                                                 const T *units, const T *bias, T *output,
+__device__ void forward_transform_features_batch(const size_t * __restrict__ indexes,
+                                                 const size_t * __restrict__ boundaries,
+                                                 const T * __restrict__ units,
+                                                 const T * __restrict__ bias, T *output,
                                                  const size_t output_len,
                                                  const size_t batch_size) {
     extern __shared__ char smem[];
