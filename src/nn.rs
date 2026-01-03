@@ -19,8 +19,9 @@ use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
-use nncombinator::optimizer::{SGDBuilder};
+use nncombinator::optimizer::{AdamWBuilder, SGDBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
+use nncombinator::scheduler::StepLR;
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
@@ -133,21 +134,25 @@ impl EvalutorCreator {
 
         let device = DeviceCpu::new()?;
 
-        let optimizer_builder_feature = SGDBuilder::new(&device)
-            .lr(config.learning_rate_for_input_layer.unwrap_or(0.5))
-            .weight_decay(0.);
+        let optimizer_builder_feature = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_input_layer.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_middle_large = SGDBuilder::new(&device)
-            .lr(config.learning_rate_middle_layer_large.unwrap_or(2e-3))
-            .weight_decay(0.);
+        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_middle_layer_large.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_middle = SGDBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(1e-2))
-            .weight_decay(0.);
+        let optimizer_builder_middle = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_out = SGDBuilder::new(&device)
-            .lr(config.learning_rate_for_output_layer.unwrap_or(2e-1))
-            .weight_decay(0.);
+        let optimizer_builder_out = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_output_layer.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -344,21 +349,25 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let optimizer_builder_feature = SGDBuilder::new(&device)
-            .lr(config.learning_rate_for_input_layer.unwrap_or(0.5))
-            .weight_decay(0.);
+        let optimizer_builder_feature = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_input_layer.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_middle_large = SGDBuilder::new(&device)
-            .lr(config.learning_rate_middle_layer_large.unwrap_or(2e-3))
-            .weight_decay(0.);
+        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_middle_layer_large.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_middle = SGDBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(1e-2))
-            .weight_decay(0.);
+        let optimizer_builder_middle = AdamWBuilder::new(&device)
+            .lr(config.learning_rate.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
-        let optimizer_builder_out = SGDBuilder::new(&device)
-            .lr(config.learning_rate_for_output_layer.unwrap_or(2e-1))
-            .weight_decay(0.);
+        let optimizer_builder_out = AdamWBuilder::new(&device)
+            .lr(config.learning_rate_for_output_layer.unwrap_or(0.001))
+            .scheduler(StepLR::new(1,0.5))
+            .weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 

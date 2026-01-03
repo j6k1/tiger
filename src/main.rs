@@ -51,7 +51,7 @@ pub mod error;
 pub mod kernel;
 
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
-const LEAN_BATCH_SIZE:usize = 64;
+const LEAN_BATCH_SIZE:usize = 8192;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -142,7 +142,7 @@ fn run() -> Result<(),ApplicationError> {
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                         config.lambda.unwrap_or(1.0),
+                                                         config.lambda.unwrap_or(0.1),
                                                          config.verbose.unwrap_or(false),
                                                          config.save_batch_count.unwrap_or(20),
                                                          maxepoch)
@@ -156,7 +156,7 @@ fn run() -> Result<(),ApplicationError> {
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                config.lambda.unwrap_or(1.0),
+                                                config.lambda.unwrap_or(0.1),
                                                 config.verbose.unwrap_or(false),
                                                 config.save_batch_count.unwrap_or(20),
                                                 maxepoch)

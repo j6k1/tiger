@@ -47,23 +47,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
 
         const size_t tid = threadIdx.x;
 
-        if (tid == 0) {
-            T acc = 0.0;
-
-            for (size_t i = 0; i < end_index - start_index; ++i) {
-                size_t idx_pos = start_index + i;
-                size_t feat    = indexes[idx_pos];
-                T w = units[feat * output_len + out_index];
-
-                acc += w;
-            }
-
-            T val = acc + bias[out_index];
-
-            output[index] = val;
-        }
-
-        /*
         for (size_t i = tid; i < end_index - start_index; i += 32) {
             acc += units[indexes[start_index + i] * output_len + out_index];
         }
@@ -77,7 +60,6 @@ __device__ void forward_transform_features_batch(const size_t *indexes, const si
         if (tid == 0 && index < batch_size * output_len) {
             output[index] = acc + bias[out_index];
         }
-        */
     }
 }
 

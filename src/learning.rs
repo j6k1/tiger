@@ -297,7 +297,6 @@ impl<M,A> Learnener<M,A>
 
                 println!("error_total: {}", loss);
 
-                evalutor.nn.step()?;
                 loss_logger.write_all(loss.to_string().as_bytes())?;
                 loss_logger.write_all(b"\n")?;
                 
@@ -319,6 +318,8 @@ impl<M,A> Learnener<M,A>
                       current_items,
                       pending_count >= save_batch_count,
                       &mut pending_count)?;
+
+            evalutor.nn.step()?;
 
             resume = false;
         }
