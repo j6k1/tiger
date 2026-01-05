@@ -564,7 +564,7 @@ impl<M,A> Trainer<M,A>
 
     pub fn test_by_packed_sfens(&mut self,
                                 packed_sfen:Vec<u8>)
-                                -> Result<(GameEndState,f32,Option<bool>),ApplicationError> {
+                                -> Result<Option<(GameEndState,f32,bool)>,ApplicationError> {
         let ((teban,banmen,mc),yaneuraou::haffman_code::ExtendFields {
             value: _,
             best_move,
@@ -598,7 +598,7 @@ impl<M,A> Trainer<M,A>
                         },
                         _ => false
                     }
-                }).or(Some(false))
+                }).unwrap_or(false)
             },
             yaneuraou::reader::BestMove::MovePut(k,x,y) => {
                 self.select_bestmove(teban, &state, mc)?.map(|m| {
@@ -615,12 +615,14 @@ impl<M,A> Trainer<M,A>
                         },
                         _ => false
                     }
-                }).or(Some(false))
+                }).unwrap_or(false)
             },
-            _ => None
+            _ => {
+                return Ok(None);
+            }
         };
 
-        Ok((game_result,r[0],same))
+        Ok(Some((game_result,r[0],same)))
     }
 
     pub fn make_hcpe_parser<'a>(lambda:f32, verbose: bool)
@@ -719,7 +721,7 @@ impl<M,A> Trainer<M,A>
 
     pub fn test_by_packed_hcpe(&mut self,
                                hcpe:Vec<u8>)
-                               -> Result<(GameEndState,f32,Option<bool>),ApplicationError> {
+                               -> Result<Option<(GameEndState,f32,bool)>,ApplicationError> {
         let ((teban,banmen,mc),hcpe::haffman_code::ExtendFields {
             eval: _,
             best_move,
@@ -752,7 +754,7 @@ impl<M,A> Trainer<M,A>
                         },
                         _ => false
                     }
-                }).or(Some(false))
+                }).unwrap_or(false)
             },
             hcpe::reader::BestMove::MovePut(k,x,y) => {
                 self.select_bestmove(teban, &state, mc)?.map(|m| {
@@ -769,9 +771,11 @@ impl<M,A> Trainer<M,A>
                         },
                         _ => false
                     }
-                }).or(Some(false))
+                }).unwrap_or(false)
             },
-            _ => None
+            _ => {
+                return Ok(None)
+            }
         };
 
         let s = match game_result {
@@ -790,7 +794,7 @@ impl<M,A> Trainer<M,A>
             _ => GameEndState::Draw
         };
 
-        Ok((s,r[0],same))
+        Ok(Some((s,r[0],same)))
     }
 
     pub fn save(&mut self) -> Result<(),ApplicationError> {

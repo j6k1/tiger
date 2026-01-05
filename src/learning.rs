@@ -217,7 +217,7 @@ impl<M,A> Learnener<M,A>
                                     sfen_parser_builder: fn(f32,bool) -> P,
                                     test_process: F
     ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static,
+        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + 'static,
               P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
         let notify_quit_arc = Arc::new(AtomicBool::new(false));
 
@@ -366,7 +366,7 @@ impl<M,A> Learnener<M,A>
                         learn_sfen_read_size: usize,
                         mut test_process: F
     ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<(GameEndState, f32, Option<bool>), ApplicationError> + Send + 'static, {
+        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + 'static, {
         let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
             .join("tests"))
             .shuffle(true)
@@ -382,48 +382,43 @@ impl<M,A> Learnener<M,A>
         let mut win = 0usize;
         let mut count = 0usize;
         let mut same_moves = 0usize;
-        let mut compare_moves = 0usize;
 
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
-                let (s, score, same_move) = test_process(evalutor, packed)?;
+                match test_process(evalutor, packed)? {
+                    None => continue,
+                    Some((s, score, same_move)) => {
+                        if same_move {
+                            same_moves += 1;
+                        }
 
-                match same_move {
-                    Some(true) => {
-                        compare_moves += 1;
-                        same_moves += 1;
-                    },
-                    Some(false) => {
-                        compare_moves += 1;
-                    },
-                    _ => ()
-                }
+                        if score >= 0.5 {
+                            estimated_win += 1;
+                        }
 
-                if score >= 0.5 {
-                    estimated_win += 1;
-                }
+                        let success = match s {
+                            GameEndState::Draw => {
+                                true
+                            },
+                            GameEndState::Win => {
+                                win += 1;
+                                score >= 0.5
+                            },
+                            _ => {
+                                score < 0.5
+                            }
+                        };
 
-                let success = match s {
-                    GameEndState::Draw => {
-                        true
-                    },
-                    GameEndState::Win => {
-                        win += 1;
-                        score >= 0.5
-                    },
-                    _ => {
-                        score < 0.5
+                        if success {
+                            successed += 1;
+                        }
+
+                        count += 1;
+
+                        if count >= 10000 {
+                            break 'outer;
+                        }
                     }
-                };
-
-                if success {
-                    successed += 1;
-                }
-
-                count += 1;
-
-                if count >= 10000 {
-                    break 'outer;
                 }
             }
         }
@@ -432,7 +427,8 @@ impl<M,A> Learnener<M,A>
         println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
                  (count - estimated_win) as f32 / count as f32 * 100.);
         println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
-        println!("正解率(指し手の一致率) {}%", same_moves as f32 / compare_moves as f32 * 100.);
+        println!("正解率(指し手の一致率) {}%", same_moves as f32 / count as f32 * 100.);
+        println!("{}件のテストサンプルを利用しました。",count);
 
         Ok(())
     }
