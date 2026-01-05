@@ -377,12 +377,12 @@ impl<M,A> Learnener<M,A>
             .send_buffer_size(10);
 
         let mut dataloader:UnifiedDataLoader<Vec<Vec<u8>>, ApplicationError> = dataloader_builder.build(| sfens | Ok(Some(sfens)))?;
-        let mut successed = 0;
-        let mut estimated_win = 0;
-        let mut win = 0;
-        let mut count = 0;
-        let mut same_moves = 0;
-        let mut compare_moves = 0;
+        let mut successed = 0usize;
+        let mut estimated_win = 0usize;
+        let mut win = 0usize;
+        let mut count = 0usize;
+        let mut same_moves = 0usize;
+        let mut compare_moves = 0usize;
 
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
@@ -416,22 +416,13 @@ impl<M,A> Learnener<M,A>
                     }
                 };
 
-                match s {
-                    GameEndState::Win => println!("結果　勝ち"),
-                    GameEndState::Lose => println!("結果　負け"),
-                    _ => println!("結果　引き分け")
-                };
-
                 if success {
                     successed += 1;
-                    println!("勝率{} 正解!", score);
-                } else {
-                    println!("勝率{} 不正解...", score);
                 }
 
                 count += 1;
 
-                if count >= 1000 {
+                if count >= 10000 {
                     break 'outer;
                 }
             }
