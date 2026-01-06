@@ -209,12 +209,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                zh: &ZobristHash<u64>,
                history:&mut HashSet<(Teban,u64,u64)>,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
-        let mut score = alpha;
-
         let (mk,sk) = zh.keys();
 
         if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached_for_evalution(env) {
-            score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
 
@@ -240,7 +238,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.insert((teban,mk,sk));
 
-        let mut stand_pat = Score::Value(evalutor.evalute_material(teban,state,mc));
+        let stand_pat = Score::Value(evalutor.evalute_material(teban,state,mc));
 
         if stand_pat >= beta {
             return Ok(stand_pat);
@@ -275,7 +273,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,history,-beta,-alpha,depth+1,evalutor,rng)?;
+            let score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,history,-beta,-alpha,depth+1,evalutor,rng)?;
 
             if score >= beta {
                 return Ok(score);

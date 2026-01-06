@@ -19,7 +19,7 @@ use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
-use nncombinator::optimizer::{AdamWBuilder, SGDBuilder};
+use nncombinator::optimizer::{AdamWBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
 use nncombinator::scheduler::StepLR;
 use packedsfen::hcpe::reader::HcpeReader;

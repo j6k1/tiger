@@ -57,6 +57,7 @@ const LEAN_BATCH_SIZE:usize = 8192;
 pub struct Config {
     learn_sfen_read_size:Option<usize>,
     learn_batch_size:Option<usize>,
+    batches_per_epoch:Option<usize>,
     lambda:Option<f32>,
     save_batch_count:Option<usize>,
     learning_rate:Option<f32>,
@@ -112,6 +113,8 @@ fn run() -> Result<(),ApplicationError> {
     opts.optopt("", "testdir", "Directory of test data to validate learning results.", "path string.");
     opts.optflag("", "yaneuraou", "YaneuraOu format teacher phase.");
     opts.optflag("", "hcpe", "hcpe format teacher phase.");
+    opts.optflag("", "yaneuraou,hcpe", "YaneuraOu format teacher phase. and hcpe format test phase.");
+    opts.optflag("", "hcpe,yaneuraou", "hcpe format teacher phase. and YaneuraOu format test phase.");
     opts.optopt("e", "maxepoch", "Number of epochs in batch learning.", "number of epoch");
     opts.optopt("", "eval", "Test only the evaluation of learned models. The argument is the path to the directory containing the teacher phase for testing", "path string.");
 
@@ -132,34 +135,70 @@ fn run() -> Result<(),ApplicationError> {
 
         let maxepoch = matches.opt_str("maxepoch").unwrap_or(String::from("1")).parse::<usize>()?;
 
-        let r = if matches.opt_present("yaneuraou") {
-            Learnener::new().learning_from_yaneuraou_bin(kifudir,
-                                                         testdir,
-                                                         TrainerCreator::create(String::from("data"),
-                                                                                String::from("nn.bin"),
-                                                                                &config,
-                                                                                MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?,
+        let mut evalutor = TrainerCreator::create(String::from("data"),
+                                                  String::from("nn.bin"),
+                                                  &config,
+                                                  MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
+
+        let r = if matches.opt_present("yaneuraou") || matches.opt_present("yaneuraou,hcpe") {
+            if let Err(e) = Learnener::new().learning_from_yaneuraou_bin(kifudir,
+                                                         &mut evalutor,
                                                          on_error_handler.clone(),
                                                          config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                          config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
                                                          config.lambda.unwrap_or(0.1),
                                                          config.verbose.unwrap_or(false),
                                                          config.save_batch_count.unwrap_or(20),
-                                                         maxepoch)
-        } else if matches.opt_present("hcpe") {
-            Learnener::new().learning_from_hcpe(kifudir,
-                                                testdir,
-                                                TrainerCreator::create(String::from("data"),
-                                                                       String::from("nn.bin"),
-                                                                       &config,
-                                                                       MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?,
+                                                         maxepoch,
+                                                         config.batches_per_epoch) {
+                Err(e)
+            } else {
+
+                if matches.opt_present("yaneuraou") {
+                    Learnener::new().eval_test(testdir,"bin",40,
+                                               &mut evalutor,
+                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               |evalutor, packed| {
+                                                   evalutor.test_by_packed_sfens(packed)
+                                               })
+                } else {
+                    Learnener::new().eval_test(testdir,"hcpe",38,
+                                               &mut evalutor,
+                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               |evalutor, packed| {
+                                                   evalutor.test_by_packed_hcpe(packed)
+                                               })
+                }
+            }
+        } else if matches.opt_present("hcpe") || matches.opt_present("hcpe,yaneuraou") {
+            if let Err(e) = Learnener::new().learning_from_hcpe(kifudir,
+                                                &mut evalutor,
                                                 on_error_handler.clone(),
                                                 config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                 config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
                                                 config.lambda.unwrap_or(0.1),
                                                 config.verbose.unwrap_or(false),
                                                 config.save_batch_count.unwrap_or(20),
-                                                maxepoch)
+                                                maxepoch,
+                                                config.batches_per_epoch) {
+                Err(e)
+            } else {
+                if matches.opt_present("hcpe,yaneuraou") {
+                    Learnener::new().eval_test(testdir,"bin",40,
+                                               &mut evalutor,
+                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               |evalutor, packed| {
+                                                   evalutor.test_by_packed_sfens(packed)
+                                               })
+                } else {
+                    Learnener::new().eval_test(testdir,"hcpe",38,
+                                               &mut evalutor,
+                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               |evalutor, packed| {
+                                                   evalutor.test_by_packed_hcpe(packed)
+                                               })
+                }
+            }
         } else {
             Err(ApplicationError::InvalidSettingError(String::from("learning mode is not specified.")))
         };

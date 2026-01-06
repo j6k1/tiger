@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::thread;
+use std::{io, thread};
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::fs;
@@ -91,6 +91,7 @@ impl<'a,P: AsRef<Path>> CheckPointWriter<P> {
         }
     }
 }
+const DEFAULT_EPOCH_SIZE:usize = 10000;
 
 pub struct Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
@@ -146,17 +147,16 @@ impl<M,A> Learnener<M,A>
     }
 
     pub fn learning_from_yaneuraou_bin(&mut self, kifudir: String,
-                                       testdir: String,
-                                       evalutor: Trainer<M,A>,
+                                       evalutor: &mut Trainer<M,A>,
                                        on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                        learn_sfen_read_size: usize,
                                        learn_batch_size: usize,
                                        lambda: f32,
                                        verbose: bool,
                                        save_batch_count: usize,
-                                       maxepoch: usize) -> Result<(), ApplicationError> {
+                                       maxepoch: usize,
+                                       batches_per_epoch: Option<usize>) -> Result<(), ApplicationError> {
         self.learning_batch(kifudir,
-                            testdir,
                             "bin",
                             40,
                             evalutor,
@@ -167,25 +167,22 @@ impl<M,A> Learnener<M,A>
                             verbose,
                             save_batch_count,
                             maxepoch,
-                            Trainer::<M,A>::make_packed_sfens_parser,
-                            |evalutor, packed| {
-                                evalutor.test_by_packed_sfens(packed)
-                            })
+                            batches_per_epoch,
+                            Trainer::<M,A>::make_packed_sfens_parser)
     }
 
     pub fn learning_from_hcpe(&mut self, kifudir: String,
-                              testdir: String,
-                              evalutor: Trainer<M,A>,
+                              evalutor: &mut Trainer<M,A>,
                               on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                               learn_sfen_read_size: usize,
                               learn_batch_size: usize,
                               lambda: f32,
                               verbose: bool,
                               save_batch_count: usize,
-                              maxepoch: usize
+                              maxepoch: usize,
+                              batches_per_epoch: Option<usize>
     ) -> Result<(), ApplicationError> {
         self.learning_batch(kifudir,
-                            testdir,
                             "hcpe",
                             38,
                             evalutor,
@@ -196,17 +193,14 @@ impl<M,A> Learnener<M,A>
                             verbose,
                             save_batch_count,
                             maxepoch,
-                            Trainer::<M,A>::make_hcpe_parser,
-                            |evalutor, packed| {
-                                evalutor.test_by_packed_hcpe(packed)
-                            })
+                            batches_per_epoch,
+                            Trainer::<M,A>::make_hcpe_parser)
     }
 
-    pub fn learning_batch<F, P>(&mut self, kifudir: String,
-                                    testdir: String,
+    pub fn learning_batch<P>(&mut self, kifudir: String,
                                     ext: &str,
                                     item_size: usize,
-                                    evalutor: Trainer<M,A>,
+                                    evalutor: &mut Trainer<M,A>,
                                     on_error_handler_arc: Arc<Mutex<OnErrorHandler<FileLogger>>>,
                                     learn_sfen_read_size: usize,
                                     learn_batch_size: usize,
@@ -214,11 +208,10 @@ impl<M,A> Learnener<M,A>
                                     verbose: bool,
                                     save_batch_count: usize,
                                     maxepoch: usize,
-                                    sfen_parser_builder: fn(f32,bool) -> P,
-                                    test_process: F
+                                    batches_per_epoch: Option<usize>,
+                                    sfen_parser_builder: fn(f32,bool) -> P
     ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + 'static,
-              P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
+        where P: FnMut(Vec<Vec<u8>>) -> Result<Option<(Vec<Arr<f32, 1>>, Vec<HalfKP<FEATURES_NUM>>)>, ApplicationError> + Send + 'static {
         let notify_quit_arc = Arc::new(AtomicBool::new(false));
 
         let mut evalutor = evalutor;
@@ -248,7 +241,6 @@ impl<M,A> Learnener<M,A>
             None
         };
 
-        let extend = RefCell::new(0);
         let mut resume = true;
 
         let lossf = LF::new();
@@ -258,7 +250,9 @@ impl<M,A> Learnener<M,A>
 
         let mut loss_logger = BufWriter::new(OpenOptions::new().append(true).create(true).open("logs/loss.log")?);
 
-        'epochs: for _ in (0..).take_while(|&c| c < maxepoch + *extend.borrow()) {
+        let mut epoch_count = 0;
+
+        'epochs: while epoch_count < maxepoch && notify_quit.load(Ordering::Acquire) == false {
             let mut dataloader_builder = DataLoaderBuilder::new(Path::new(&kifudir)
                 .join("training"))
                 .resume(resume)
@@ -304,6 +298,13 @@ impl<M,A> Learnener<M,A>
 
                 processed_count += size;
 
+                if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) > 0 {
+                    if epoch_count % batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
+                        epoch_count += 1;
+                        evalutor.nn.step()?;
+                    }
+                }
+
                 self.save(&mut evalutor,
                           &checkpoint_path,
                           current_filename.as_str(),
@@ -319,13 +320,12 @@ impl<M,A> Learnener<M,A>
                       pending_count >= save_batch_count,
                       &mut pending_count)?;
 
-            evalutor.nn.step()?;
-
             resume = false;
-        }
 
-        if notify_run_test_arc.load(Ordering::Acquire) {
-            self.eval_test(testdir,ext,item_size,&mut evalutor,learn_sfen_read_size,test_process)?;
+            if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
+                epoch_count += 1;
+                evalutor.nn.step()?;
+            }
         }
 
         print!("{}局面を学習しました。\n", processed_count);
@@ -388,7 +388,10 @@ impl<M,A> Learnener<M,A>
                 match test_process(evalutor, packed)? {
                     None => continue,
                     Some((s, score, same_move)) => {
-                        print!(".");
+                        if count % 100 == 0 {
+                            print!(".");
+                            io::stdout().flush().unwrap();
+                        }
 
                         if same_move {
                             same_moves += 1;
