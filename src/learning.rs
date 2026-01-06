@@ -299,7 +299,7 @@ impl<M,A> Learnener<M,A>
                 processed_count += size;
 
                 if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) > 0 {
-                    if epoch_count % batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
+                    if processed_count % batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
                         epoch_count += 1;
                         evalutor.nn.step()?;
                     }
