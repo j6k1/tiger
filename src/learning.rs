@@ -251,7 +251,7 @@ impl<M,A> Learnener<M,A>
 
         let mut epoch_count = 0;
 
-        let mut loss_total = 0.0f64;
+        let mut loss_total = 0.0f32;
         let mut processed_batch_count = 0usize;
 
         'epochs: while epoch_count < maxepoch && notify_quit.load(Ordering::Acquire) == false {
@@ -291,12 +291,12 @@ impl<M,A> Learnener<M,A>
 
                 let loss = evalutor.nn.batch_train(batch.0.into(), batch.1.into(), &lossf)?;
 
-                loss_total += loss as f64;
+                loss_total += loss;
                 processed_batch_count += 1;
 
-                println!("loss: {}, error_total: {}", loss, loss_total / processed_batch_count as f64);
+                println!("loss: {}, error_total: {}", loss, loss_total / processed_batch_count as f32);
 
-                loss_logger.write_all((loss_total / processed_batch_count as f64).to_string().as_bytes())?;
+                loss_logger.write_all((loss_total / processed_batch_count as f32).to_string().as_bytes())?;
                 loss_logger.write_all(b"\n")?;
                 
                 pending_count += 1;
