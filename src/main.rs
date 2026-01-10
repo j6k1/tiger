@@ -59,6 +59,8 @@ pub struct Config {
     learn_batch_size:Option<usize>,
     batches_per_epoch:Option<usize>,
     lambda:Option<f32>,
+    step_count:Option<usize>,
+    gamma:Option<f32>,
     save_batch_count:Option<usize>,
     learning_rate:Option<f32>,
     learning_rate_middle_layer_large:Option<f32>,

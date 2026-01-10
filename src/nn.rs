@@ -136,22 +136,22 @@ impl EvalutorCreator {
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle_large = AdamWBuilder::new(&device)
             .lr(config.learning_rate_middle_layer_large.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -351,22 +351,22 @@ impl TrainerCreator {
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_input_layer.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle_large = AdamWBuilder::new(&device)
             .lr(config.learning_rate_middle_layer_large.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate_for_output_layer.unwrap_or(0.001))
-            .scheduler(StepLR::new(1,0.5))
+            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
