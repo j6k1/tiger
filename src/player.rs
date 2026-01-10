@@ -124,7 +124,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             factor_nodes_per_thread:FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             turn_limit:None,
-            model_name: String::from("nn.bins")
+            model_name: String::from("nn.bin")
         }
     }
 }
