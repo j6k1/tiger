@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::{io, thread};
 use std::sync::Mutex;
 use std::sync::Arc;
@@ -252,6 +251,9 @@ impl<M,A> Learnener<M,A>
 
         let mut epoch_count = 0;
 
+        let mut loss_total = 0.0f64;
+        let mut processed_batch_count = 0usize;
+
         'epochs: while epoch_count < maxepoch && notify_quit.load(Ordering::Acquire) == false {
             let mut dataloader_builder = DataLoaderBuilder::new(Path::new(&kifudir)
                 .join("training"))
@@ -289,7 +291,10 @@ impl<M,A> Learnener<M,A>
 
                 let loss = evalutor.nn.batch_train(batch.0.into(), batch.1.into(), &lossf)?;
 
-                println!("error_total: {}", loss);
+                loss_total += loss as f64;
+                processed_batch_count += 1;
+
+                println!("loss: {}, error_total: {}", loss, loss_total / processed_batch_count as f64);
 
                 loss_logger.write_all(loss.to_string().as_bytes())?;
                 loss_logger.write_all(b"\n")?;
