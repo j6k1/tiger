@@ -16,6 +16,7 @@ use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatc
 use usiagent::hash::KyokumenHash;
 use usiagent::logger::Logger;
 use usiagent::math::Prng;
+use usiagent::move_orderer::MoveOrderer;
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
@@ -93,6 +94,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub stop:Arc<AtomicBool>,
     pub quited:Arc<AtomicBool>,
     pub transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
+    pub move_orderer:MoveOrderer,
     pub nodes:Arc<AtomicU64>
 }
 impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
@@ -113,6 +115,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             stop:Arc::clone(&self.stop),
             quited:Arc::clone(&self.quited),
             transposition_table:self.transposition_table.clone(),
+            move_orderer:self.move_orderer.clone(),
             nodes:Arc::clone(&self.nodes),
         }
     }
@@ -161,6 +164,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             stop:stop,
             quited:quited,
             transposition_table:Arc::clone(transposition_table),
+            move_orderer:MoveOrderer::new(max_depth as usize),
             nodes:Arc::new(AtomicU64::new(0))
         }
     }
@@ -825,7 +829,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
-            for m in &mut picker {
+            for m in env.move_orderer.ordering(&mut picker, gs.current_depth, gs.teban, &gs.state) {
                 if self.is_obtained_ou(m)? {
                     let mut mvs = VecDeque::new();
 
@@ -841,6 +845,20 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                         let s = -s;
 
+                        match m {
+                            LegalMove::To(mv) if mv.obtained().is_none() => {
+                                if s <= start_alpha {
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth);
+                                }
+                            },
+                            LegalMove::Put(_) => {
+                                if s <= start_alpha {
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth);
+                                }
+                            },
+                            _ => ()
+                        };
+
                         if s > scoreval {
                             scoreval = s;
 
@@ -854,6 +872,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             }
 
                             if scoreval >= beta {
+                                match m {
+                                    LegalMove::To(mv) if mv.obtained().is_none() => {
+                                        env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                    },
+                                    LegalMove::Put(_) => {
+                                        env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                    },
+                                    _ => ()
+                                };
+
                                 return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                             }
                         }

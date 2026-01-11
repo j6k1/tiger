@@ -189,11 +189,9 @@ impl EvalutorCreator {
             LinearOutputLayer::new(l, &device)
         })?;
 
-        if savedir.as_ref().join(&nn_path).exists() {
-            let mut p = BinFilePersistence::new(savedir.as_ref().join(&nn_path))?;
+        let mut p = BinFilePersistence::new(savedir.as_ref().join(&nn_path))?;
 
-            nn.load(&mut p)?;
-        }
+        nn.load(&mut p)?;
 
         Ok(Evalutor {
             nn:nn
