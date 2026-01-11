@@ -805,6 +805,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
                                     if scoreval >= beta {
+                                        match m {
+                                            LegalMove::To(mv) if mv.obtained().is_none() => {
+                                                env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                            },
+                                            LegalMove::Put(_) => {
+                                                env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                            },
+                                            _ => ()
+                                        };
+
                                         return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                                     }
                                 }
