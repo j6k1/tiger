@@ -24,7 +24,7 @@ extern crate nncombinator;
 extern crate packedsfen;
 extern crate shogi_dataloader;
 
-use std::env;
+use std::{env};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -36,7 +36,7 @@ use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
 use crate::error::ApplicationError;
 use crate::learning::Learnener;
-use crate::nn::{EvalutorCreator, TrainerCreator};
+use crate::nn::{EvalTester, EvalutorCreator, TrainerCreator};
 use crate::player::Tiger;
 
 pub mod device;
@@ -49,11 +49,12 @@ pub mod player;
 pub mod search;
 pub mod error;
 pub mod kernel;
+pub mod evalutor;
 
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
 const LEAN_BATCH_SIZE:usize = 8192;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     learn_sfen_read_size:Option<usize>,
     learn_batch_size:Option<usize>,
@@ -155,17 +156,18 @@ fn run() -> Result<(),ApplicationError> {
                                                          config.batches_per_epoch) {
                 Err(e)
             } else {
+                let _ = evalutor;
+
+                let evalutor = Arc::new(EvalTester::new(&config)?);
 
                 if matches.opt_present("yaneuraou") {
-                    Learnener::new().eval_test(testdir,"bin",40,
-                                               &mut evalutor,
+                    evalutor.eval_test(testdir,"bin",40,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_sfens(packed)
                                                })
                 } else {
-                    Learnener::new().eval_test(testdir,"hcpe",38,
-                                               &mut evalutor,
+                    evalutor.eval_test(testdir,"hcpe",38,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_hcpe(packed)
@@ -185,16 +187,18 @@ fn run() -> Result<(),ApplicationError> {
                                                 config.batches_per_epoch) {
                 Err(e)
             } else {
+                let _ = evalutor;
+
+                let evalutor = Arc::new(EvalTester::new(&config)?);
+
                 if matches.opt_present("hcpe,yaneuraou") {
-                    Learnener::new().eval_test(testdir,"bin",40,
-                                               &mut evalutor,
+                    evalutor.eval_test(testdir,"bin",40,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_sfens(packed)
                                                })
                 } else {
-                    Learnener::new().eval_test(testdir,"hcpe",38,
-                                               &mut evalutor,
+                    evalutor.eval_test(testdir,"hcpe",38,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_hcpe(packed)
@@ -213,21 +217,16 @@ fn run() -> Result<(),ApplicationError> {
     } else if let Some(testdir) = matches.opt_str("eval") {
         let config = ConfigLoader::new("settings.toml")?.load()?;
 
-        let mut evalutor = TrainerCreator::create(String::from("data"),
-                                              String::from("nn.bin"),
-                                              &config,
-                                              MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
+        let evalutor = Arc::new(EvalTester::new(&config)?);
 
         if matches.opt_present("yaneuraou") {
-            Learnener::new().eval_test(testdir,"bin",40,
-               &mut evalutor,
+            evalutor.eval_test(testdir,"bin",40,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                |evalutor, packed| {
                    evalutor.test_by_packed_sfens(packed)
                })?;
         } else {
-            Learnener::new().eval_test(testdir,"hcpe",38,
-               &mut evalutor,
+            evalutor.eval_test(testdir,"hcpe",38,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                |evalutor, packed| {
                    evalutor.test_by_packed_hcpe(packed)

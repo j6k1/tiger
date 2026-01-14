@@ -1,4 +1,4 @@
-use std::{io, thread};
+use std::{thread};
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::fs;
@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 
 use usiagent::output::USIStdErrorWriter;
 use usiagent::OnErrorHandler;
-use usiagent::event::*;
 use usiagent::logger::*;
 use usiagent::input::*;
 
@@ -20,7 +19,7 @@ use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::DeviceGpu;
 use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll, Step};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
-use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
+use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder};
 
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
@@ -359,87 +358,6 @@ impl<M,A> Learnener<M,A>
             })?;
             *pending_count = 0;
         }
-
-        Ok(())
-    }
-
-    pub fn eval_test<F>(&mut self,
-                        testdir: String,
-                        ext: &str,
-                        item_size: usize,
-                        evalutor: &mut Trainer<M,A>,
-                        learn_sfen_read_size: usize,
-                        mut test_process: F
-    ) -> Result<(), ApplicationError>
-        where F: FnMut(&mut Trainer<M,A>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + 'static, {
-        let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
-            .join("tests"))
-            .shuffle(true)
-            .ext(ext.to_string())
-            .batch_size(128)
-            .read_sfen_size(learn_sfen_read_size)
-            .sfen_size(item_size)
-            .send_buffer_size(10);
-
-        let mut dataloader:UnifiedDataLoader<Vec<Vec<u8>>, ApplicationError> = dataloader_builder.build(| sfens | Ok(Some(sfens)))?;
-        let mut successed = 0usize;
-        let mut estimated_win = 0usize;
-        let mut win = 0usize;
-        let mut count = 0usize;
-        let mut same_moves = 0usize;
-
-        'outer: while let Some((_,_,batch)) = dataloader.load()? {
-            for packed in batch.into_iter() {
-                match test_process(evalutor, packed)? {
-                    None => continue,
-                    Some((s, score, same_move)) => {
-                        if count % 100 == 0 {
-                            print!(".");
-                            io::stdout().flush().unwrap();
-                        }
-
-                        if same_move {
-                            same_moves += 1;
-                        }
-
-                        if score >= 0.5 {
-                            estimated_win += 1;
-                        }
-
-                        let success = match s {
-                            GameEndState::Draw => {
-                                true
-                            },
-                            GameEndState::Win => {
-                                win += 1;
-                                score >= 0.5
-                            },
-                            _ => {
-                                score < 0.5
-                            }
-                        };
-
-                        if success {
-                            successed += 1;
-                        }
-
-                        count += 1;
-
-                        if count >= 10000 {
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-        }
-
-        println!("");
-        println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
-        println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
-                 (count - estimated_win) as f32 / count as f32 * 100.);
-        println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
-        println!("正解率(指し手の一致率) {}%", same_moves as f32 / count as f32 * 100.);
-        println!("{}件のテストサンプルを利用しました。",count);
 
         Ok(())
     }
