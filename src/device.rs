@@ -40,21 +40,23 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
         r.extend_from_slice(&bias);
         r.extend_from_slice(&bias);
 
-        for input in input.iter() {
-            for &i in input.iter() {
-                units.iter().nth(i).map(|it| {
-                    for (&w,r) in  it.iter().zip(r.iter_mut().take(NO)) {
-                        *r += w;
-                    }
-                });
-            }
-
-            for &i in input.iter() {
-                units.iter().nth(i).map(|it| {
-                    for (&w,r) in  it.iter().zip(r.iter_mut().skip(NO)) {
-                        *r += w;
-                    }
-                });
+        for (index,input) in input.iter().enumerate() {
+            if index == 0 {
+                for &i in input.iter() {
+                    units.iter().nth(i).map(|it| {
+                        for (&w,r) in  it.iter().zip(r.iter_mut().take(NO)) {
+                            *r += w;
+                        }
+                    });
+                }
+            } else {
+                for &i in input.iter() {
+                    units.iter().nth(i).map(|it| {
+                        for (&w,r) in  it.iter().zip(r.iter_mut().skip(NO)) {
+                            *r += w;
+                        }
+                    });
+                }
             }
         }
 
