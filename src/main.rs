@@ -36,7 +36,7 @@ use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
 use crate::error::ApplicationError;
 use crate::learning::Learnener;
-use crate::nn::{EvalTester, EvalutorCreator, TrainerCreator};
+use crate::nn::{EvalutorCreator, TrainerCreator};
 use crate::player::Tiger;
 
 pub mod device;
@@ -158,7 +158,7 @@ fn run() -> Result<(),ApplicationError> {
             } else {
                 let _ = evalutor;
 
-                let evalutor = Arc::new(EvalTester::new(&config)?);
+                let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
 
                 if matches.opt_present("yaneuraou") {
                     evalutor.eval_test(testdir,"bin",40,
@@ -189,7 +189,7 @@ fn run() -> Result<(),ApplicationError> {
             } else {
                 let _ = evalutor;
 
-                let evalutor = Arc::new(EvalTester::new(&config)?);
+                let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
 
                 if matches.opt_present("hcpe,yaneuraou") {
                     evalutor.eval_test(testdir,"bin",40,
@@ -217,7 +217,7 @@ fn run() -> Result<(),ApplicationError> {
     } else if let Some(testdir) = matches.opt_str("eval") {
         let config = ConfigLoader::new("settings.toml")?.load()?;
 
-        let evalutor = Arc::new(EvalTester::new(&config)?);
+        let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
 
         if matches.opt_present("yaneuraou") {
             evalutor.eval_test(testdir,"bin",40,

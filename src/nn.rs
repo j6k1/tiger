@@ -4,9 +4,8 @@ use std::{fs, io};
 use std::collections::HashSet;
 use std::io::Write;
 use std::marker::PhantomData;
-use std::sync::{mpsc, Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Arc};
+use std::sync::mpsc::{Receiver};
 use libc::size_t;
 use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution, ThreadRng};
@@ -15,9 +14,9 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
-use nncombinator::cuda::allocator::{CudaAllocator, DeviceAlloc, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
+use nncombinator::cuda::allocator::{CudaAllocator};
 use nncombinator::device::{Device, DeviceCpu, DeviceGpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchForward, BatchSize, BatchTrain, ForwardAll, PreTrain, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ForwardAll, PreTrain, Step, TryAddLayer};
 use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
@@ -229,248 +228,6 @@ impl<M> Evalutor<M>
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {
         self.material_evalutor.evalute(teban,state,mc)
     }
-}
-pub enum WorkerItem {
-    Job(HalfKP<FEATURES_NUM>,Sender<Result<Arr<f32,1>,ApplicationError>>),
-    Start(Arc<AtomicUsize>),
-    Quit
-}
-pub struct ServiceWorker {
-    sender: Sender<WorkerItem>,
-    done_receiver:Arc<Mutex<Receiver<()>>>,
-    error_receiver:Arc<Mutex<Receiver<Result<(),ApplicationError>>>>,
-    working: Arc<AtomicBool>,
-    threads:Arc<AtomicUsize>,
-    busy_threads:Arc<AtomicUsize>
-}
-impl ServiceWorker {
-    pub fn new(config: &Config) -> Result<Self,ApplicationError> {
-        let (s,r) = mpsc::channel::<WorkerItem>();
-        let (es,er) = mpsc::channel::<Result<(),ApplicationError>>();
-        let (ds,dr) = mpsc::channel::<()>();
-
-        let working = Arc::new(AtomicBool::new(true));
-
-        {
-            let config = config.clone();
-
-            let working = Arc::clone(&working);
-
-            let _ = std::thread::Builder::new()
-                .stack_size(1024 * 1024 * 512)
-                .name(String::from("evalution thread worker.")).spawn(move || {
-
-                let allocator = match MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new()) {
-                    Ok(allocator) => {
-                        let _ = es.send(Ok(()));
-                        allocator
-                    },
-                    Err(e) => {
-                        let _ = es.send(Err(ApplicationError::from(e)));
-                        return;
-                    }
-                };
-
-                let trainer = match TrainerCreator::create(String::from("data"),
-                                       String::from("nn.bin"),
-                                       &config,
-                                       allocator) {
-                    Ok(trainer) => {
-                        let _ = es.send(Ok(()));
-                        trainer
-                    },
-                    Err(e) => {
-                        let _ = es.send(Err(ApplicationError::from(e)));
-                        return;
-                    }
-                };
-
-                let mut batch = vec![];
-                let mut sender = vec![];
-
-                while working.load(Ordering::Acquire) {
-                    match r.recv() {
-                        Err(e) => {
-                            let _ = es.send(Err(ApplicationError::from(e)));
-                            return;
-                        },
-                        Ok(item) => {
-                            match item {
-                                WorkerItem::Quit => {
-                                    if batch.len() > 0 {
-                                        break;
-                                    }
-                                },
-                                WorkerItem::Job(input,s) => {
-                                    batch.push(input);
-                                    sender.push(s);
-                                    let _ = es.send(Ok(()));
-                                },
-                                WorkerItem::Start(busy_threads) => {
-                                    if batch.len() > 0 {
-                                        let r = match trainer.nn.batch_forward(batch.into()) {
-                                            Ok(r) => {
-                                                let _ = es.send(Ok(()));
-                                                r
-                                            },
-                                            Err(e) => {
-                                                let _ = es.send(Err(ApplicationError::from(e)));
-                                                return;
-                                            }
-                                        };
-
-                                        busy_threads.fetch_sub(r.len(),Ordering::SeqCst);
-
-                                        for (r,s) in r.iter().zip(sender.iter()) {
-                                            let _ = s.send(Ok(r.into()));
-                                        }
-
-                                        batch = vec![];
-                                        sender = vec![];
-                                    } else {
-                                        let _ = es.send(Ok(()));
-                                    }
-                                }
-                            }
-                        },
-                    };
-                }
-
-                let _ = trainer;
-
-                let _ = ds.send(());
-            });
-        }
-
-        er.recv()??;
-        er.recv()??;
-
-        Ok(ServiceWorker {
-            sender:s,
-            done_receiver:Arc::new(Mutex::new(dr)),
-            error_receiver:Arc::new(Mutex::new(er)),
-            working: Arc::clone(&working),
-            threads: Arc::new(AtomicUsize::new(0)),
-            busy_threads: Arc::new(AtomicUsize::new(0))
-        })
-    }
-
-    pub fn start_thread(&self) {
-        self.threads.fetch_add(1,Ordering::SeqCst);
-    }
-
-    pub fn leave_thread(&self) -> Result<(),ApplicationError> {
-        self.threads.fetch_sub(1, Ordering::SeqCst);
-
-        if self.busy_threads.load(Ordering::SeqCst) == self.threads.load(Ordering::SeqCst) {
-            self.sender.send(WorkerItem::Start(Arc::clone(&self.busy_threads))).map_err(|_| {
-                ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-            })?;
-
-            match self.error_receiver.lock() {
-                Ok(r) => {
-                    r.recv().map_err(|_| {
-                        ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-                    })??
-                },
-                Err(_) => {
-                    return Err(ApplicationError::InvalidStateError(String::from("evalution thread worker is dead.")));
-                }
-            };
-        }
-
-        Ok(())
-    }
-    pub fn submit(&self, input:HalfKP<FEATURES_NUM>) -> Result<Arr<f32,1>,ApplicationError> {
-        let (s,r) = mpsc::channel();
-
-        self.busy_threads.fetch_add(1, Ordering::SeqCst);
-
-        let immdiate = self.busy_threads.load(Ordering::SeqCst) == self.threads.load(Ordering::SeqCst);
-
-        assert!(self.busy_threads.load(Ordering::SeqCst) <= self.threads.load(Ordering::SeqCst), "thread count is wrong.");
-
-        self.sender.send(WorkerItem::Job(input,s)).map_err(|_| {
-            ApplicationError::InvalidStateError(String::from("evalution thread worker task send failed."))
-        })?;
-
-        match self.error_receiver.lock() {
-            Ok(r) => {
-                r.recv().map_err(|_| {
-                    ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-                })??
-            },
-            Err(_) => {
-                return Err(ApplicationError::InvalidStateError(String::from("evalution thread worker is dead.")));
-            }
-        };
-
-        if immdiate {
-            self.sender.send(WorkerItem::Start(Arc::clone(&self.busy_threads))).map_err(|_| {
-                ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-            })?;
-
-            match self.error_receiver.lock() {
-                Ok(r) => {
-                    r.recv().map_err(|_| {
-                        ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-                    })??
-                },
-                Err(_) => {
-                    return Err(ApplicationError::InvalidStateError(String::from("evalution thread worker is dead.s")));
-                }
-            };
-        }
-
-        let r = r.recv().map_err(|_| ApplicationError::InvalidStateError(String::from("evalution thread worker is dead.")));
-
-        r?
-    }
-
-    pub fn release(&self) -> Result<(),ApplicationError> {
-        self.working.store(false,Ordering::Release);
-        self.sender.send(WorkerItem::Quit).map_err(|_| {
-            ApplicationError::InvalidStateError(String::from("evalution thread worker task send failed."))
-        })?;
-
-        match self.done_receiver.lock() {
-            Ok(r) => {
-                r.recv().map_err(|_| {
-                    ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
-                })?;
-            },
-            Err(_) => {
-                return Err(ApplicationError::InvalidStateError(String::from("evalution thread worker is dead.")));
-            }
-        };
-
-        Ok(())
-    }
-}
-impl Drop for ServiceWorker {
-    fn drop(&mut self) {
-        self.working.store(false,Ordering::Release);
-    }
-}
-pub struct EvalTester {
-    worker:ServiceWorker,
-    material_evalutor:crate::evalutor::material::Evalutor
-}
-impl EvalTester {
-    pub fn new(config:&Config) -> Result<Self,ApplicationError> {
-        Ok(EvalTester {
-            worker:ServiceWorker::new(config)?,
-            material_evalutor:crate::evalutor::material::Evalutor::new()
-        })
-    }
-
-    pub fn evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
-        let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
-
-        let r = self.worker.submit(input)?;
-
-        Ok(((r[0] - 0.5) * 1200.) as i32)
-    }
 
     fn process_result(&self,current_threads:&mut usize,
                       count:&mut usize,
@@ -485,14 +242,11 @@ impl EvalTester {
                 ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
             })?? {
                 None => {
-                    self.worker.leave_thread()?;
                     *current_threads -= 1;
 
                     continue
                 },
                 Some((s, score, same_move)) => {
-                    self.worker.leave_thread()?;
-
                     *current_threads -= 1;
 
                     if *count >= 350 {
@@ -501,7 +255,7 @@ impl EvalTester {
 
                     if *count % 5 == 0 {
                         print!(".");
-                        io::stdout().flush().unwrap();
+                        io::stdout().flush().unwrap()
                     }
 
                     if same_move {
@@ -543,7 +297,7 @@ impl EvalTester {
                         learn_sfen_read_size: usize,
                         test_process: F
     ) -> Result<(), ApplicationError>
-    where F: Fn(&EvalTester, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + Sync + 'static, {
+    where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + Sync + 'static, {
         let test_process = Arc::new(test_process);
 
         let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
@@ -582,8 +336,6 @@ impl EvalTester {
                     let this = Arc::clone(&self);
                     let test_process = Arc::clone(&test_process);
 
-                    self.worker.start_thread();
-
                     {
                         let ss = ss.clone();
 
@@ -610,8 +362,6 @@ impl EvalTester {
                 break 'outer;
             }
         }
-
-        self.worker.release()?;
 
         println!("");
         println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
@@ -643,7 +393,7 @@ impl EvalTester {
             InputCreator::make_input(teban.opposite(),&state,&mc)
         );
 
-        let r = self.worker.submit(input)?;
+        let r = self.nn.forward_all(input)?;
 
         let same = match best_move {
             yaneuraou::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
@@ -707,7 +457,7 @@ impl EvalTester {
             InputCreator::make_input(teban.opposite(),&state,&mc)
         );
 
-        let r = self.worker.submit(input)?;
+        let r = self.nn.forward_all(input)?;
 
         let same = match best_move {
             hcpe::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
@@ -1358,6 +1108,6 @@ impl InputCreator {
             }
         };
 
-        Ok(index as usize)
+        Ok(index)
     }
 }
