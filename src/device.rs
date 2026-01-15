@@ -35,32 +35,28 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     #[inline]
     fn forward_feature_transform<'a>(&self,bias:&Arr<U,NO>,units:&Arr2<U,NI,NO>,input:HalfKPView<'a,NI>) 
         -> Result<Arr<U,{NO*2}>,EvaluateError> {
-        let mut r = Vec::with_capacity(NO*2);
+        let mut so = Vec::with_capacity(NO);
+        let mut oo = Vec::with_capacity(NO);
 
-        r.extend_from_slice(&bias);
-        r.extend_from_slice(&bias);
+        so.extend_from_slice(&bias);
 
-        for (index,input) in input.iter().enumerate() {
-            if index == 0 {
-                for &i in input.iter() {
-                    units.iter().nth(i).map(|it| {
-                        for (&w,r) in  it.iter().zip(r.iter_mut().take(NO)) {
-                            *r += w;
-                        }
-                    });
-                }
-            } else {
-                for &i in input.iter() {
-                    units.iter().nth(i).map(|it| {
-                        for (&w,r) in  it.iter().zip(r.iter_mut().skip(NO)) {
-                            *r += w;
-                        }
-                    });
-                }
-            }
-        }
+        let it = input.iter().nth(0);
 
-        Ok(r.try_into()?)
+        let mut so = so.iter().enumerate().map(|(oi,&o)| {
+            it.map(|it| it.iter().fold(o,|acc,&i| acc + units[(i,oi)])).unwrap_or(o)
+        }).collect::<Vec<U>>();
+
+        oo.extend_from_slice(&bias);
+
+        let it = input.iter().nth(1);
+
+        let oo = oo.iter().enumerate().map(|(oi,&o)| {
+            it.map(|it| it.iter().fold(o,|acc,&i| acc + units[(i,oi)])).unwrap_or(o)
+        }).collect::<Vec<U>>();
+
+        so.extend_from_slice(&oo);
+
+        Ok(so.try_into()?)
     }
 
     #[inline]
