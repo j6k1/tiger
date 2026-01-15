@@ -39,7 +39,7 @@ use usiagent::math::Prng;
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban, ObtainKind, MochigomaKind};
-use crate::Config;
+use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
 use crate::features::HalfKP;
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
@@ -229,7 +229,8 @@ impl<M> Evalutor<M>
         self.material_evalutor.evalute(teban,state,mc)
     }
 
-    fn process_result(&self,current_threads:&mut usize,
+    fn process_result(&self,
+                      current_threads:&mut usize,
                       count:&mut usize,
                       same_moves:&mut usize,
                       successed:&mut usize,
@@ -249,7 +250,7 @@ impl<M> Evalutor<M>
                 Some((s, score, same_move)) => {
                     *current_threads -= 1;
 
-                    if *count >= 350 {
+                    if *count >= EVAL_TEST_SAMPLES {
                         continue;
                     }
 
@@ -295,6 +296,7 @@ impl<M> Evalutor<M>
                         ext: &str,
                         item_size: usize,
                         learn_sfen_read_size: usize,
+                        eval_test_max_threads: usize,
                         test_process: F
     ) -> Result<(), ApplicationError>
     where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + Sync + 'static, {
@@ -321,7 +323,7 @@ impl<M> Evalutor<M>
 
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
-                if current_threads >= 128 {
+                if current_threads >= eval_test_max_threads {
                     self.process_result(&mut current_threads,
                                         &mut count,
                                         &mut same_moves,
@@ -329,7 +331,7 @@ impl<M> Evalutor<M>
                                         &mut estimated_win,
                                         &mut win,
                                         &sr)?;
-                    if count >= 350 {
+                    if count >= EVAL_TEST_SAMPLES {
                         break 'outer;
                     }
                 } else {
@@ -358,7 +360,7 @@ impl<M> Evalutor<M>
                                 &mut estimated_win,
                                 &mut win,
                                 &sr)?;
-            if count >= 350 {
+            if count >= EVAL_TEST_SAMPLES {
                 break 'outer;
             }
         }

@@ -53,6 +53,8 @@ pub mod evalutor;
 
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
 const LEAN_BATCH_SIZE:usize = 8192;
+const EVAL_TEST_MAX_THREADS:usize = 16;
+const EVAL_TEST_SAMPLES:usize = 500;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -67,6 +69,7 @@ pub struct Config {
     learning_rate_middle_layer_large:Option<f32>,
     learning_rate_for_input_layer:Option<f32>,
     learning_rate_for_output_layer:Option<f32>,
+    eval_test_max_threads:Option<usize>,
     verbose:Option<bool>,
 }
 pub struct ConfigLoader {
@@ -163,12 +166,14 @@ fn run() -> Result<(),ApplicationError> {
                 if matches.opt_present("yaneuraou") {
                     evalutor.eval_test(testdir,"bin",40,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_sfens(packed)
                                                })
                 } else {
                     evalutor.eval_test(testdir,"hcpe",38,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_hcpe(packed)
                                                })
@@ -194,12 +199,14 @@ fn run() -> Result<(),ApplicationError> {
                 if matches.opt_present("hcpe,yaneuraou") {
                     evalutor.eval_test(testdir,"bin",40,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_sfens(packed)
                                                })
                 } else {
                     evalutor.eval_test(testdir,"hcpe",38,
                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
                                                |evalutor, packed| {
                                                    evalutor.test_by_packed_hcpe(packed)
                                                })
@@ -222,13 +229,15 @@ fn run() -> Result<(),ApplicationError> {
         if matches.opt_present("yaneuraou") {
             evalutor.eval_test(testdir,"bin",40,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
                |evalutor, packed| {
                    evalutor.test_by_packed_sfens(packed)
                })?;
         } else {
             evalutor.eval_test(testdir,"hcpe",38,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-               |evalutor, packed| {
+               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+       |evalutor, packed| {
                    evalutor.test_by_packed_hcpe(packed)
                })?;
         }

@@ -234,7 +234,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             return Ok(Score::NEGINFINITE);
         }
 
-        if picker.len() == 0 {
+        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+
+        if mvs.len() == 0 {
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
         }
 
@@ -254,7 +256,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         
         let mut bestscore = Score::NEGINFINITE;
 
-        for m in picker {
+        for m in mvs {
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
