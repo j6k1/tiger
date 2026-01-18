@@ -21,7 +21,6 @@ use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
-use usiagent::see::calc_see;
 use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
@@ -245,7 +244,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.insert((teban,mk,sk));
 
-        let stand_pat = Score::Value(evalutor.evalute_material(teban,state,mc));
+        let stand_pat = Score::Value(evalutor.evalute(teban,state,mc)?);
 
         if stand_pat >= beta {
             return Ok(stand_pat);

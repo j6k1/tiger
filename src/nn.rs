@@ -554,12 +554,12 @@ impl<M> Evalutor<M>
         }
 
         mvs.sort_by(|&a,&b| calc_see(teban,state,b).cmp(&calc_see(teban,state,a)));
-        
+
         let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
 
-        let stand_pat = self.material_evalutor.evalute(teban,state,mc);
+        let stand_pat = self.evalute(teban,state,mc)?;
 
         if stand_pat >= beta {
             return Ok(stand_pat);
