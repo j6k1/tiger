@@ -547,12 +547,14 @@ impl<M> Evalutor<M>
             return Ok(-30000);
         }
 
-        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+        let mut mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
         if mvs.len() == 0 {
             return Ok(self.evalute(teban,state,mc)?);
         }
 
+        mvs.sort_by(|&a,&b| calc_see(teban,state,b).cmp(&calc_see(teban,state,a)));
+        
         let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
@@ -583,10 +585,6 @@ impl<M> Evalutor<M>
                 }
             }
 
-            if calc_see(teban,state,m) < 0 {
-                continue
-            }
-            
             let o = match m {
                 LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
                 _ => None

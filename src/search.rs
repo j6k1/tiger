@@ -271,10 +271,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 }
             }
 
-            if calc_see(teban,state,m) < 0 {
-                continue;
-            }
-
             let o = match m {
                 LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
                 _ => None
