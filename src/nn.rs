@@ -38,6 +38,7 @@ use usiagent::hash::KyokumenHash;
 use usiagent::math::Prng;
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
+use usiagent::see::calc_see;
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban, ObtainKind, MochigomaKind};
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
@@ -582,6 +583,10 @@ impl<M> Evalutor<M>
                 }
             }
 
+            if calc_see(teban,state,m) < 0 {
+                continue
+            }
+            
             let o = match m {
                 LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
                 _ => None

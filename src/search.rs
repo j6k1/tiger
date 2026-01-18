@@ -21,6 +21,7 @@ use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, State};
+use usiagent::see::calc_see;
 use usiagent::shogi::{MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
@@ -268,6 +269,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 } else {
                     return Ok(beta);
                 }
+            }
+
+            if calc_see(teban,state,m) < 0 {
+                continue;
             }
 
             let o = match m {
