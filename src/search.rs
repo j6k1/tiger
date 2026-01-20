@@ -821,15 +821,21 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     if scoreval >= beta {
                                         match m {
                                             LegalMove::To(mv) if mv.obtained().is_none() => {
-                                                env.move_orderer.update_killer(gs.current_depth as usize,m);
-                                                let _ = prev_move.map(|prev_move| {
-                                                    env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
-                                                });
+                                                if !mv.is_nari() {
+                                                    env.move_orderer.update_killer(gs.current_depth as usize, m);
+                                                    let _ = prev_move.map(|prev_move| {
+                                                        env.move_orderer.update_counter_move(m, gs.teban.opposite(), prev_move, gs.prev_kind)
+                                                    });
+                                                }
 
                                                 env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
                                             },
                                             LegalMove::Put(_) => {
                                                 env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                                let _ = prev_move.map(|prev_move| {
+                                                    env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
+                                                });
+
                                                 env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
                                             },
                                             _ => ()
@@ -904,15 +910,21 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             if scoreval >= beta {
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        env.move_orderer.update_killer(gs.current_depth as usize,m);
-                                        let _ = prev_move.map(|prev_move| {
-                                            env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
-                                        });
+                                        if !mv.is_nari() {
+                                            env.move_orderer.update_killer(gs.current_depth as usize, m);
+                                            let _ = prev_move.map(|prev_move| {
+                                                env.move_orderer.update_counter_move(m, gs.teban.opposite(), prev_move, gs.prev_kind)
+                                            });
+                                        }
 
                                         env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
                                     },
                                     LegalMove::Put(_) => {
                                         env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                        let _ = prev_move.map(|prev_move| {
+                                            env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
+                                        });
+
                                         env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
                                     },
                                     _ => ()
