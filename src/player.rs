@@ -17,7 +17,7 @@ use usiagent::OnErrorHandler;
 use usiagent::output::USIOutputWriter;
 use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
 use usiagent::rule::{AppliedMove, Kyokumen, State};
-use usiagent::shogi::{Banmen, Mochigoma, MochigomaCollections, Move, Teban};
+use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, Teban};
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
@@ -365,6 +365,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                     beta: Score::INFINITE,
                     best_score: Score::NEGINFINITE,
                     m:None,
+                    prev_kind: KomaKind::Blank,
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
                     depth:base_depth,
