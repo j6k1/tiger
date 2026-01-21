@@ -822,21 +822,21 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         match m {
                                             LegalMove::To(mv) if mv.obtained().is_none() => {
                                                 if !mv.is_nari() {
-                                                    env.move_orderer.update_killer(gs.current_depth as usize, m);
+                                                    env.move_orderer.update_killer(gs.current_depth as usize, m)?;
                                                     let _ = prev_move.map(|prev_move| {
                                                         env.move_orderer.update_counter_move(m, gs.teban.opposite(), prev_move, gs.prev_kind)
-                                                    });
+                                                    }).unwrap_or(Ok(()))?;
                                                 }
 
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
                                             },
                                             LegalMove::Put(_) => {
-                                                env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                                env.move_orderer.update_killer(gs.current_depth as usize,m)?;
                                                 let _ = prev_move.map(|prev_move| {
                                                     env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
-                                                });
+                                                }).unwrap_or(Ok(()))?;
 
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
                                             },
                                             _ => ()
                                         };
@@ -865,7 +865,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
-            for m in env.move_orderer.ordering(&mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind) {
+            for m in env.move_orderer.ordering(
+                &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)? {
                 if self.is_obtained_ou(m)? {
                     let mut mvs = VecDeque::new();
 
@@ -884,12 +885,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         match m {
                             LegalMove::To(mv) if mv.obtained().is_none() => {
                                 if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth);
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
                                 }
                             },
                             LegalMove::Put(_) => {
                                 if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth);
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
                                 }
                             },
                             _ => ()
@@ -911,21 +912,21 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
                                         if !mv.is_nari() {
-                                            env.move_orderer.update_killer(gs.current_depth as usize, m);
+                                            env.move_orderer.update_killer(gs.current_depth as usize, m)?;
                                             let _ = prev_move.map(|prev_move| {
                                                 env.move_orderer.update_counter_move(m, gs.teban.opposite(), prev_move, gs.prev_kind)
-                                            });
+                                            }).unwrap_or(Ok(()))?;
                                         }
 
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
                                     },
                                     LegalMove::Put(_) => {
-                                        env.move_orderer.update_killer(gs.current_depth as usize,m);
+                                        env.move_orderer.update_killer(gs.current_depth as usize,m)?;
                                         let _ = prev_move.map(|prev_move| {
                                             env.move_orderer.update_counter_move(m,gs.teban.opposite(),prev_move,gs.prev_kind)
-                                        });
+                                        }).unwrap_or(Ok(()))?;
 
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth);
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
                                     },
                                     _ => ()
                                 };

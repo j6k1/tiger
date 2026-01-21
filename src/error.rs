@@ -8,7 +8,7 @@ use nncombinator::error::{ConfigReadError, CudaError, DeviceError, EvaluateError
 use packedsfen::error::ReadError;
 use rayon::ThreadPoolBuildError;
 use shogi_dataloader::error::DataLoadError;
-use usiagent::error::{EventDispatchError, InfoSendError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
+use usiagent::error::{EventDispatchError, InfoSendError, InvalidInputError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
 
 #[derive(Debug)]
@@ -43,7 +43,8 @@ pub enum ApplicationError {
     BorrowError(BorrowError),
     BorrowMutError(BorrowMutError),
     ThreadPoolBuildError(ThreadPoolBuildError),
-    LimitSizeError(LimitSizeError)
+    LimitSizeError(LimitSizeError),
+    InvalidInputError(InvalidInputError),
 }
 impl fmt::Display for ApplicationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -78,7 +79,8 @@ impl fmt::Display for ApplicationError {
             ApplicationError::BorrowError(ref e) => write!(f,"{}",e),
             ApplicationError::BorrowMutError(ref e) => write!(f,"{}",e),
             ApplicationError::ThreadPoolBuildError(ref e) => write!(f,"{}",e),
-            ApplicationError::LimitSizeError(ref e) => write!(f,"{}",e)
+            ApplicationError::LimitSizeError(ref e) => write!(f,"{}",e),
+            ApplicationError::InvalidInputError(ref e) => write!(f,"{}",e),
         }
     }
 }
@@ -116,7 +118,8 @@ impl error::Error for ApplicationError {
             ApplicationError::BorrowError(_) => "already borrowed.",
             ApplicationError::BorrowMutError(_) => "already mutably borrowed.",
             ApplicationError::ThreadPoolBuildError(_) => "Failed to create thread pool.",
-            ApplicationError::LimitSizeError(_) => "Size exceeds the upper limit."
+            ApplicationError::LimitSizeError(_) => "Size exceeds the upper limit.",
+            ApplicationError::InvalidInputError(_) => "Invalid input.",
         }
     }
 
@@ -153,6 +156,7 @@ impl error::Error for ApplicationError {
             ApplicationError::BorrowMutError(ref e) => Some(e),
             ApplicationError::ThreadPoolBuildError(ref e) => Some(e),
             ApplicationError::LimitSizeError(ref e) => Some(e),
+            ApplicationError::InvalidInputError(ref e) => Some(e),
         }
     }
 }
@@ -291,5 +295,10 @@ impl From<BorrowMutError> for ApplicationError {
 impl From<DataLoadError> for ApplicationError {
     fn from(err: DataLoadError) -> ApplicationError {
         ApplicationError::DataLoadError(err)
+    }
+}
+impl From<InvalidInputError> for ApplicationError {
+    fn from(err: InvalidInputError) -> ApplicationError {
+        ApplicationError::InvalidInputError(err)
     }
 }
