@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
@@ -125,6 +125,124 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             turn_limit:None,
             model_name: String::from("nn.bin")
+        }
+    }
+
+    fn think_common<L,S,P>(&mut self,
+                           mut env:Environment<L,S>,
+                           periodically_info:P,
+                           on_error_handler:Arc<Mutex<OnErrorHandler<L>>>) -> Result<BestMove,ApplicationError>
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          P: PeriodicallyInfo {
+        let (teban, state, mc) = self.kyokumen.as_ref().map(|k| (k.teban, &k.state, &k.mc)).ok_or(
+            UsiProtocolError::InvalidState(
+                String::from("Position information is not initialized."))
+        )?;
+
+        let base_depth = env.base_depth;
+
+        let turn_limit = env.turn_limit.clone();
+
+        let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher(
+            &on_error_handler,&turn_limit,&env.stop,&env.quited,&env.current_turn_limit
+        );
+
+        match self.evalutor {
+            Some(ref evalutor) => {
+                let _pinfo_sender = {
+                    let nodes = env.nodes.clone();
+                    let mut prev_time = Instant::now();
+                    let mut prev_nodes = 0;
+                    let on_error_handler = env.on_error_handler.clone();
+
+                    periodically_info.start(1000,move || {
+                        let mut commands = vec![];
+                        commands.push(UsiInfoSubCommand::Nodes(nodes.load(Ordering::Acquire)));
+
+                        let now = Instant::now();
+                        let current_nodes = nodes.load(Ordering::Acquire);
+
+                        let msec = (now - prev_time).as_millis();
+
+                        if msec > 0 {
+                            commands.push(UsiInfoSubCommand::Nps(
+                                ((current_nodes - prev_nodes) as u128 * 1000 / msec) as u64
+                            ));
+
+                            prev_time = now;
+                            prev_nodes = current_nodes;
+                        }
+
+                        commands
+                    }, &on_error_handler)
+                };
+
+                let zh = match self.zh.as_ref() {
+                    Some(zh) => zh.clone(),
+                    None => {
+                        return Err(ApplicationError::InvalidStateError(format!("ZobristHash is not initialized!")))
+                    }
+                };
+
+                let mut rng = rand::thread_rng();
+
+                let mut gs = GameState {
+                    teban: teban,
+                    state: &Arc::new(state.clone()),
+                    rng:&mut rng,
+                    alpha: Score::NEGINFINITE,
+                    beta: Score::INFINITE,
+                    best_score: Score::NEGINFINITE,
+                    m:None,
+                    prev_kind: KomaKind::Blank,
+                    mc: &Arc::new(mc.clone()),
+                    zh:zh,
+                    depth:base_depth,
+                    current_depth:0,
+                    base_depth:base_depth,
+                    max_depth:env.max_depth
+                };
+
+                let strategy  = Root::new(ThreadPoolBuilder::new()
+                    .num_threads(self.max_threads as usize)
+                    .stack_size(1024 * 1024 * 200).build()?);
+
+                let result = strategy.search(&mut env,&mut gs, &mut event_dispatcher, &evalutor);
+
+                let bestmove = match result {
+                    Err(ref e) => {
+                        strategy.send_message(&mut env,format!("error {}",&e).as_str())?;
+                        env.info_sender.flush()?;
+
+                        let _ = env.on_error_handler.lock().map(|h| h.call(e));
+                        BestMove::Resign
+                    },
+                    Ok(EvaluationResult::Timeout) => {
+                        strategy.send_message(&mut env,"timeout!")?;
+                        env.info_sender.flush()?;
+
+                        BestMove::Resign
+                    },
+                    Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
+                        BestMove::Resign
+                    },
+                    Ok(EvaluationResult::Immediate(_,mvs,_)) if mvs.len() == 0 => {
+                        BestMove::Resign
+                    },
+                    Ok(EvaluationResult::Immediate(_,mvs,_)) if mvs.len() >= 2 => {
+                        BestMove::Move(mvs[0].to_move(),Some(mvs[1].to_move()))
+                    },
+                    Ok(EvaluationResult::Immediate(_,mvs,_)) => {
+                        BestMove::Move(mvs[0].to_move(),None)
+                    }
+                };
+
+                Ok(bestmove)
+            },
+            None =>  {
+                Err(ApplicationError::InvalidStateError(format!("evalutor is not initialized!")))
+            }
         }
     }
 }
@@ -292,132 +410,68 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         where L: Logger + Send + 'static,
               S: InfoSender,
               P: PeriodicallyInfo {
-        let (teban,state,mc) = self.kyokumen.as_ref().map(|k| (k.teban,&k.state,&k.mc)).ok_or(
-            UsiProtocolError::InvalidState(
-                String::from("Position information is not initialized."))
-        )?;
+        let env = {
+            let limit = Some(limit.clone());
 
-        let limit = limit.to_instant(teban,think_start_time);
+            let transposition_table = Arc::clone(&self.transposition_table);
+            let hasher = Arc::clone(&self.hasher);
 
-        let mut env = Environment::new(
-            Arc::clone(&event_queue),
-            info_sender.clone(),
-            Arc::clone(&on_error_handler),
-            Arc::clone(&self.hasher),
-            limit,
-            self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)),
-            self.base_depth,
-            self.max_depth,
-            self.max_threads,
-            self.factor_nodes_per_thread,
-            self.nodes_per_leaf_node,
-            &self.transposition_table
-        );
+            let env = Environment::new(
+                Arc::clone(&event_queue),
+                info_sender.clone(),
+                Arc::clone(&on_error_handler),
+                hasher,
+                limit,
+                self.turn_limit,
+                Arc::new(RwLock::new(self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)))),
+                self.base_depth,
+                self.max_depth,
+                self.max_threads,
+                self.factor_nodes_per_thread,
+                self.nodes_per_leaf_node,
+                &transposition_table
+            );
 
-        let base_depth = env.base_depth;
+            env
+        };
 
-        let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher(&on_error_handler,&env.stop,&env.quited);
-
-        match self.evalutor {
-            Some(ref evalutor) => {
-                let _pinfo_sender = {
-                    let nodes = env.nodes.clone();
-                    let mut prev_time = think_start_time.clone();
-                    let mut prev_nodes = 0;
-                    let on_error_handler = env.on_error_handler.clone();
-
-                    periodically_info.start(1000,move || {
-                        let mut commands = vec![];
-                        commands.push(UsiInfoSubCommand::Nodes(nodes.load(Ordering::Acquire)));
-
-                        let now = Instant::now();
-                        let current_nodes = nodes.load(Ordering::Acquire);
-
-                        let msec = (now - prev_time).as_millis();
-
-                        if msec > 0 {
-                            commands.push(UsiInfoSubCommand::Nps(
-                                ((current_nodes - prev_nodes) as u128 * 1000 / msec) as u64
-                            ));
-
-                            prev_time = now;
-                            prev_nodes = current_nodes;
-                        }
-
-                        commands
-                    }, &on_error_handler)
-                };
-
-                let zh = match self.zh.as_ref() {
-                    Some(zh) => zh.clone(),
-                    None => {
-                        return Err(ApplicationError::InvalidStateError(format!("ZobristHash is not initialized!")))
-                    }
-                };
-
-                let mut rng = rand::thread_rng();
-
-                let mut gs = GameState {
-                    teban: teban,
-                    state: &Arc::new(state.clone()),
-                    rng:&mut rng,
-                    alpha: Score::NEGINFINITE,
-                    beta: Score::INFINITE,
-                    best_score: Score::NEGINFINITE,
-                    m:None,
-                    prev_kind: KomaKind::Blank,
-                    mc: &Arc::new(mc.clone()),
-                    zh:zh,
-                    depth:base_depth,
-                    current_depth:0,
-                    base_depth:base_depth,
-                    max_depth:env.max_depth
-                };
-
-                let strategy  = Root::new(ThreadPoolBuilder::new()
-                    .num_threads(self.max_threads as usize)
-                    .stack_size(1024 * 1024 * 200).build()?);
-
-                let result = strategy.search(&mut env,&mut gs, &mut event_dispatcher, &evalutor);
-
-                let bestmove = match result {
-                    Err(ref e) => {
-                        strategy.send_message(&mut env,format!("error {}",&e).as_str())?;
-                        env.info_sender.flush()?;
-
-                        let _ = env.on_error_handler.lock().map(|h| h.call(e));
-                        BestMove::Resign
-                    },
-                    Ok(EvaluationResult::Timeout) => {
-                        strategy.send_message(&mut env,"timeout!")?;
-                        env.info_sender.flush()?;
-
-                        BestMove::Resign
-                    },
-                    Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
-                        BestMove::Resign
-                    },
-                    Ok(EvaluationResult::Immediate(_,mvs,_)) if mvs.len() == 0 => {
-                        BestMove::Resign
-                    },
-                    Ok(EvaluationResult::Immediate(_,mvs,_)) => {
-                        BestMove::Move(mvs[0].to_move(),None)
-                    }
-                };
-
-                Ok(bestmove)
-            },
-            None =>  {
-                Err(ApplicationError::InvalidStateError(format!("evalutor is not initialized!")))
-            }
-        }
+        Ok(self.think_common(env,
+                                    periodically_info,
+                                    on_error_handler)?)
     }
 
-    fn think_ponder<L,S,P>(&mut self,_:&UsiGoTimeLimit,_:Arc<Mutex<UserEventQueue>>,
-                           _:S,_:P,_:Arc<Mutex<OnErrorHandler<L>>>)
+    fn think_ponder<L,S,P>(&mut self,limit:&UsiGoTimeLimit,event_queue:Arc<Mutex<UserEventQueue>>,
+                           info_sender:S,periodically_info:P,on_error_handler:Arc<Mutex<OnErrorHandler<L>>>)
                            -> Result<BestMove,ApplicationError> where L: Logger + Send + 'static, S: InfoSender,
                                                                       P: PeriodicallyInfo + Send + 'static {
-        unimplemented!();
+        let env = {
+            let limit = Some(limit.clone());
+
+            let transposition_table = Arc::clone(&self.transposition_table);
+            let hasher = Arc::clone(&self.hasher);
+
+            let env = Environment::new(
+                Arc::clone(&event_queue),
+                info_sender.clone(),
+                Arc::clone(&on_error_handler),
+                hasher,
+                limit,
+                self.turn_limit,
+                Arc::new(RwLock::new(None)),
+                self.base_depth,
+                self.max_depth,
+                self.max_threads,
+                self.factor_nodes_per_thread,
+                self.nodes_per_leaf_node,
+                &transposition_table
+            );
+
+            env
+        };
+
+        Ok(self.think_common(env,
+                                    periodically_info,
+                                    on_error_handler)?)
     }
 
     fn think_mate<L,S,P>(&mut self,_:&UsiGoMateTimeLimit,_:Arc<Mutex<UserEventQueue>>,

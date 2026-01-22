@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::ops::{Add, Deref, Neg, Sub};
-use std::sync::{Arc, atomic, mpsc, Mutex};
+use std::sync::{Arc, atomic, mpsc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -12,7 +12,7 @@ use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
 use usiagent::error::EventHandlerError;
-use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher};
+use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher, UsiGoTimeLimit};
 use usiagent::hash::KyokumenHash;
 use usiagent::logger::Logger;
 use usiagent::math::Prng;
@@ -83,8 +83,9 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub info_sender:S,
     pub on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
     pub hasher:Arc<KyokumenHash<u64>>,
-    pub limit:Option<Instant>,
-    pub turn_limit:Option<Instant>,
+    pub limit:Option<UsiGoTimeLimit>,
+    pub turn_limit:Option<u32>,
+    pub current_turn_limit:Arc<RwLock<Option<Instant>>>,
     pub base_depth:u32,
     pub max_depth:u32,
     pub max_threads:u32,
@@ -106,6 +107,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             hasher:Arc::clone(&self.hasher),
             limit:self.limit.clone(),
             turn_limit:self.turn_limit.clone(),
+            current_turn_limit:Arc::clone(&self.current_turn_limit),
             base_depth:self.base_depth,
             max_depth:self.max_depth,
             max_threads:self.max_threads,
@@ -135,8 +137,9 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                info_sender:S,
                on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
                hasher:Arc<KyokumenHash<u64>>,
-               limit:Option<Instant>,
-               turn_limit:Option<Instant>,
+               limit:Option<UsiGoTimeLimit>,
+               turn_limit:Option<u32>,
+               current_turn_limit:Arc<RwLock<Option<Instant>>>,
                base_depth:u32,
                max_depth:u32,
                max_threads:u32,
@@ -155,6 +158,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             hasher:hasher,
             limit:limit,
             turn_limit:turn_limit,
+            current_turn_limit:current_turn_limit,
             base_depth:base_depth,
             max_depth:max_depth,
             max_threads:max_threads,
@@ -216,7 +220,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
-        if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached_for_evalution(env) {
+        if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached_for_evalution(env)? {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
@@ -294,7 +298,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 alpha = score;
             }
 
-            if self.timelimit_reached(env) {
+            if self.timelimit_reached(env)? {
                 break;
             }
         }
@@ -304,12 +308,30 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         Ok(bestscore)
     }
 
-    fn timelimit_reached(&self,env:&mut Environment<L,S>) -> bool {
-        env.turn_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false)
+    fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
+        match env.current_turn_limit.read() {
+            Ok(l) => {
+                Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false))
+            },
+            Err(_) => {
+                Err(ApplicationError::InvalidStateError(String::from(
+                    "An error occurred while acquiring a read lock for current_turn_limit."
+                )))
+            }
+        }
     }
 
-    fn timelimit_reached_for_evalution(&self,env:&mut Environment<L,S>) -> bool {
-        env.turn_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN_FOR_EVALUTION)).unwrap_or(false)
+    fn timelimit_reached_for_evalution(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
+        match env.current_turn_limit.read() {
+            Ok(l) => {
+                Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN_FOR_EVALUTION)).unwrap_or(false))
+            },
+            Err(_) => {
+                Err(ApplicationError::InvalidStateError(String::from(
+                    "An error occurred while acquiring a read lock for current_turn_limit."
+                )))
+            }
+        }
     }
 
     fn send_info(&self, env:&mut Environment<L,S>,
@@ -410,13 +432,17 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
     }
 
-    pub fn create_event_dispatcher<'a,T>(on_error_handler:&Arc<Mutex<OnErrorHandler<L>>>,stop:&Arc<AtomicBool>,quited:&Arc<AtomicBool>)
+    pub fn create_event_dispatcher<'a,T>(on_error_handler:&Arc<Mutex<OnErrorHandler<L>>>,
+                                         turn_limit:&'a Option<u32>,
+                                         stop:&Arc<AtomicBool>,
+                                         quited:&Arc<AtomicBool>,
+                                         current_turn_limit:&Arc<RwLock<Option<Instant>>>)
                                          -> UserEventDispatcher<'a,T,ApplicationError,L> {
 
         let mut event_dispatcher = USIEventDispatcher::new(&on_error_handler);
 
         {
-            let stop = stop.clone();
+            let stop = Arc::clone(stop);
 
             event_dispatcher.add_handler(UserEventKind::Stop, move |_,e| {
                 match e {
@@ -430,14 +456,30 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
 
         {
-            let stop = stop.clone();
-            let quited = quited.clone();
+            let stop = Arc::clone(stop);
+            let quited = Arc::clone(quited);
 
             event_dispatcher.add_handler(UserEventKind::Quit, move |_,e| {
                 match e {
                     &UserEvent::Quit => {
                         quited.store(true,atomic::Ordering::Release);
                         stop.store(true,atomic::Ordering::Release);
+                        Ok(())
+                    },
+                    e => Err(EventHandlerError::InvalidState(e.event_kind())),
+                }
+            });
+        }
+
+        {
+            let current_turn_limit = Arc::clone(current_turn_limit);
+
+            event_dispatcher.add_handler(UserEventKind::Stop, move |_,e| {
+                match e {
+                    &UserEvent::PonderHit(think_start_time) => {
+                        if let Ok(mut l) = current_turn_limit.write() {
+                            *l = turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64));
+                        }
                         Ok(())
                     },
                     e => Err(EventHandlerError::InvalidState(e.event_kind())),
@@ -463,8 +505,12 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let max_depth = gs.max_depth;
         let best_score = gs.best_score;
 
+        let turn_limit = env.turn_limit.clone();
+        
         self.thread_pool.spawn(move || {
-            let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(&env.on_error_handler, &env.stop, &env.quited);
+            let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(
+                &env.on_error_handler, &turn_limit, &env.stop, &env.quited, &env.current_turn_limit
+            );
 
             let mut rng = rand::thread_rng();
 
@@ -703,7 +749,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                       evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         env.nodes.fetch_add(1,Ordering::Release);
 
-        if self.timelimit_reached(env) || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+        event_dispatcher.dispatch_events(&self,&env.event_queue)?;
+
+        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
 
