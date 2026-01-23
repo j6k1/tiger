@@ -130,7 +130,7 @@ pub enum EvaluationResult {
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
-    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32),
+    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, MoveOrderer),
     Timeout
 }
 impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
@@ -481,11 +481,13 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
     }
 
     fn start_thread<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
-                           evalutor: &Arc<Evalutor<M>>) {
+                           evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer) {
         let sender = self.sender.clone();
         let teban = gs.teban;
         let state = Arc::clone(&gs.state);
         let mut env = env.clone();
+        env.move_orderer = move_orderer;
+
         let evalutor = Arc::clone(&evalutor);
         let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
@@ -527,7 +529,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
             match r {
                 Ok(EvaluationResult::Immediate(score,mvs,zh)) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth)));
+                    let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,env.move_orderer)));
                 },
                 Ok(EvaluationResult::Timeout) => {
                     let _ = sender.send(Ok(RootEvaluationResult::Timeout));
@@ -574,6 +576,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
         let nodes_per_thread:u128 = nodes_per_leaf_node.pow(env.factor_nodes_per_thread as u32) as u128;
         let mut search_space:u128 = nodes_per_leaf_node as u128 * 4;
+        let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
         let mut busy_threads = 0;
         let mut last_depth = depth;
         let mut result = None;
@@ -583,14 +586,14 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         loop {
             if busy_threads == env.max_threads {
                 match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth)) if base_depth <= depth => {
+                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth, _)) if base_depth <= depth => {
                         busy_threads -= 1;
 
                         self.termination(env,busy_threads)?;
 
                         return Ok(EvaluationResult::Immediate(s, mvs, zh));
                     },
-                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth)) => {
+                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth, move_orderer)) => {
                         busy_threads -= 1;
 
                         if let Err(e) = env.info_sender.flush() {
@@ -606,6 +609,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                             result = Some(EvaluationResult::Immediate(s, mvs, zh));
                         }
+
+                        move_orderer_quque.push_back(move_orderer);
                     },
                     Ok(RootEvaluationResult::Timeout) => {
                         busy_threads -= 1;
@@ -632,7 +637,10 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 gs.base_depth = depth;
                 gs.max_depth = env.max_depth - (base_depth - depth);
 
-                self.start_thread(env,gs,evalutor);
+                self.start_thread(env,gs,evalutor,
+                                  move_orderer_quque
+                                      .pop_front()
+                                      .unwrap_or(MoveOrderer::new(env.max_depth as usize)));
 
                 busy_threads += 1;
                 thread_index += 1;
