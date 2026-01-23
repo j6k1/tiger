@@ -1,12 +1,13 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::ops::{Add, Deref, Neg, Sub};
-use std::sync::{Arc, atomic, mpsc, Mutex, RwLock};
+use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
 use nncombinator::layer::{ForwardAll, PreTrain};
+use parking_lot::RwLock;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
@@ -310,26 +311,16 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         match env.current_turn_limit.read() {
-            Ok(l) => {
+            l => {
                 Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false))
-            },
-            Err(_) => {
-                Err(ApplicationError::InvalidStateError(String::from(
-                    "An error occurred while acquiring a read lock for current_turn_limit."
-                )))
             }
         }
     }
 
     fn timelimit_reached_for_evalution(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         match env.current_turn_limit.read() {
-            Ok(l) => {
+            l => {
                 Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN_FOR_EVALUTION)).unwrap_or(false))
-            },
-            Err(_) => {
-                Err(ApplicationError::InvalidStateError(String::from(
-                    "An error occurred while acquiring a read lock for current_turn_limit."
-                )))
             }
         }
     }
@@ -474,12 +465,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         {
             let current_turn_limit = Arc::clone(current_turn_limit);
 
-            event_dispatcher.add_handler(UserEventKind::Stop, move |_,e| {
+            event_dispatcher.add_handler(UserEventKind::PonderHit, move |_,e| {
                 match e {
                     &UserEvent::PonderHit(think_start_time) => {
-                        if let Ok(mut l) = current_turn_limit.write() {
-                            *l = turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64));
-                        }
+                        let mut l = current_turn_limit.write();
+                        *l = turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64));
                         Ok(())
                     },
                     e => Err(EventHandlerError::InvalidState(e.event_kind())),
@@ -506,7 +496,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let best_score = gs.best_score;
 
         let turn_limit = env.turn_limit.clone();
-        
+
         self.thread_pool.spawn(move || {
             let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(
                 &env.on_error_handler, &turn_limit, &env.stop, &env.quited, &env.current_turn_limit
