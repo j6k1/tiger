@@ -840,7 +840,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                         return Ok(EvaluationResult::Immediate(Score::NEGINFINITE,mvs,gs.zh.clone()));
                     },
-                    // When the conditions alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth are satisfied,
+                    // When the conditions tte.alpha <= alpha <= beta <= tte.beta and tte.depth <= depth are satisfied,
                     // the score of the substitution table directly becomes the score for this position.
                     //
                     // alpha and beta are parameters related to pruning.
