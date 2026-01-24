@@ -228,6 +228,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
+        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) || self.timelimit_reached(env)? {
+            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            return Ok(score);
+        }
+
         event_dispatcher.dispatch_events(self,&env.event_queue)?;
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
