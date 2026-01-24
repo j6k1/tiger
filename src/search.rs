@@ -228,7 +228,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
-        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) || self.timelimit_reached(env)? {
+        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
