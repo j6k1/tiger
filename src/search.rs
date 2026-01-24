@@ -84,7 +84,9 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub info_sender:S,
     pub on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
     pub hasher:Arc<KyokumenHash<u64>>,
+    pub teban:Teban,
     pub limit:Option<UsiGoTimeLimit>,
+    pub current_limit:Arc<RwLock<Option<Instant>>>,
     pub turn_limit:Option<u32>,
     pub current_turn_limit:Arc<RwLock<Option<Instant>>>,
     pub base_depth:u32,
@@ -106,7 +108,9 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             info_sender:self.info_sender.clone(),
             on_error_handler:Arc::clone(&self.on_error_handler),
             hasher:Arc::clone(&self.hasher),
+            teban:self.teban.clone(),
             limit:self.limit.clone(),
+            current_limit:self.current_limit.clone(),
             turn_limit:self.turn_limit.clone(),
             current_turn_limit:Arc::clone(&self.current_turn_limit),
             base_depth:self.base_depth,
@@ -138,7 +142,9 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                info_sender:S,
                on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
                hasher:Arc<KyokumenHash<u64>>,
+               teban:Teban,
                limit:Option<UsiGoTimeLimit>,
+               current_limit:Arc<RwLock<Option<Instant>>>,
                turn_limit:Option<u32>,
                current_turn_limit:Arc<RwLock<Option<Instant>>>,
                base_depth:u32,
@@ -157,7 +163,9 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             info_sender:info_sender,
             on_error_handler:on_error_handler,
             hasher:hasher,
+            teban:teban,
             limit:limit,
+            current_limit:current_limit,
             turn_limit:turn_limit,
             current_turn_limit:current_turn_limit,
             base_depth:base_depth,
@@ -203,7 +211,6 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     thread_pool:ThreadPool
 }
 const TIMELIMIT_MARGIN:u64 = 50;
-const TIMELIMIT_MARGIN_FOR_EVALUTION:u64 = 100;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -213,14 +220,18 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError>;
-    fn qsearch(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
+    fn qsearch<'b>(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
                env:&mut Environment<L,S>,
+               event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                zh: &ZobristHash<u64>,
                history:&mut HashSet<(Teban,u64,u64)>,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
-        if history.contains(&(teban,mk,sk)) || self.timelimit_reached(env)? {
+        event_dispatcher.dispatch_events(self,&env.event_queue)?;
+
+        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
@@ -280,7 +291,18 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let score = -self.qsearch(teban.opposite(),&next,&nmc,env,&zh,history,-beta,-alpha,depth+1,evalutor,rng)?;
+            let score = -self.qsearch(teban.opposite(),
+                                      &next,
+                                      &nmc,
+                                      env,
+                                      event_dispatcher,
+                                      &zh,
+                                      history,
+                                      -beta,
+                                      -alpha,
+                                      depth+1,
+                                      evalutor,
+                                      rng)?;
 
             if score >= beta {
                 return Ok(score);
@@ -305,19 +327,21 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     }
 
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
-        match env.current_turn_limit.read() {
-            l => {
-                Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false))
-            }
-        }
-    }
+        let mut reached;
 
-    fn timelimit_reached_for_evalution(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         match env.current_turn_limit.read() {
             l => {
-                Ok(l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN_FOR_EVALUTION)).unwrap_or(false))
+                reached = l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
             }
         }
+
+        match env.current_limit.read() {
+            l => {
+                reached = reached || l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
+            }
+        }
+
+        Ok(reached)
     }
 
     fn send_info(&self, env:&mut Environment<L,S>,
@@ -418,9 +442,12 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
     }
 
     pub fn create_event_dispatcher<'a,T>(on_error_handler:&Arc<Mutex<OnErrorHandler<L>>>,
-                                         turn_limit:&'a Option<u32>,
                                          stop:&Arc<AtomicBool>,
                                          quited:&Arc<AtomicBool>,
+                                         teban:Teban,
+                                         limit:&'a Option<UsiGoTimeLimit>,
+                                         current_limit:&Arc<RwLock<Option<Instant>>>,
+                                         turn_limit:&'a Option<u32>,
                                          current_turn_limit:&Arc<RwLock<Option<Instant>>>)
                                          -> UserEventDispatcher<'a,T,ApplicationError,L> {
 
@@ -458,12 +485,20 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
         {
             let current_turn_limit = Arc::clone(current_turn_limit);
+            let limit = limit.clone();
+            let current_limit = Arc::clone(current_limit);
+            let teban = teban.clone();
 
             event_dispatcher.add_handler(UserEventKind::PonderHit, move |_,e| {
                 match e {
                     &UserEvent::PonderHit(think_start_time) => {
-                        let mut l = current_turn_limit.write();
-                        *l = turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64));
+                        {
+                            let mut l = current_turn_limit.write();
+                            *l = turn_limit.map(move |l| think_start_time + Duration::from_millis(l as u64));
+                            let teban = teban.clone();
+                            let mut l = current_limit.write();
+                            *l = limit.and_then(move |l| l.to_instant(teban,think_start_time));
+                        }
                         Ok(())
                     },
                     e => Err(EventHandlerError::InvalidState(e.event_kind())),
@@ -492,10 +527,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let best_score = gs.best_score;
 
         let turn_limit = env.turn_limit.clone();
+        let limit = env.limit.clone();
 
         self.thread_pool.spawn(move || {
             let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(
-                &env.on_error_handler, &turn_limit, &env.stop, &env.quited, &env.current_turn_limit
+                &env.on_error_handler, &env.stop, &env.quited, env.teban.clone(), &limit, &env.current_limit, &turn_limit, &env.current_turn_limit
             );
 
             let mut rng = rand::thread_rng();
@@ -798,7 +834,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         if gs.depth == 0 || gs.current_depth >= gs.max_depth {
-            let s = self.qsearch(gs.teban,&gs.state,&gs.mc,env,&gs.zh,&mut HashSet::new(),gs.alpha,gs.beta,0,evalutor,gs.rng)?;
+            let s = self.qsearch(gs.teban,
+                                       &gs.state,
+                                       &gs.mc,
+                                       env,
+                                       event_dispatcher,
+                                       &gs.zh,
+                                       &mut HashSet::new(),
+                                       gs.alpha,
+                                       gs.beta,
+                                 0,
+                                       evalutor,
+                                       gs.rng)?;
 
             let mut mvs = VecDeque::new();
 

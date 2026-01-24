@@ -346,7 +346,6 @@ impl<M> Evalutor<M>
             }
         }
 
-        println!("");
         println!("勝ち {}% (勝ちと評価された局面の割合 {}%)", win as f32 / count as f32 * 100., estimated_win as f32 / count as f32 * 100.);
         println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
                  (count - estimated_win) as f32 / count as f32 * 100.);

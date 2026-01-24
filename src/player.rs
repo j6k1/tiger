@@ -144,9 +144,10 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
         let base_depth = env.base_depth;
 
         let turn_limit = env.turn_limit.clone();
+        let limit = env.limit.clone();
 
         let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher(
-            &on_error_handler,&turn_limit,&env.stop,&env.quited,&env.current_turn_limit
+            &on_error_handler,&env.stop,&env.quited,teban,&limit,&env.current_limit,&turn_limit,&env.current_turn_limit
         );
 
         match self.evalutor {
@@ -417,12 +418,19 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             let transposition_table = Arc::clone(&self.transposition_table);
             let hasher = Arc::clone(&self.hasher);
 
+            let (teban, _, _) = self.kyokumen.as_ref().map(|k| (k.teban, &k.state, &k.mc)).ok_or(
+                UsiProtocolError::InvalidState(
+                    String::from("Position information is not initialized."))
+            )?;
+
             let env = Environment::new(
                 Arc::clone(&event_queue),
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
+                teban,
                 limit,
+                Arc::new(RwLock::new(limit.and_then(move |l| l.to_instant(teban,think_start_time)))),
                 self.turn_limit,
                 Arc::new(RwLock::new(self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)))),
                 self.base_depth,
@@ -451,12 +459,19 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             let transposition_table = Arc::clone(&self.transposition_table);
             let hasher = Arc::clone(&self.hasher);
 
+            let (teban, _, _) = self.kyokumen.as_ref().map(|k| (k.teban, &k.state, &k.mc)).ok_or(
+                UsiProtocolError::InvalidState(
+                    String::from("Position information is not initialized."))
+            )?;
+
             let env = Environment::new(
                 Arc::clone(&event_queue),
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
+                teban,
                 limit,
+                Arc::new(RwLock::new(None)),
                 self.turn_limit,
                 Arc::new(RwLock::new(None)),
                 self.base_depth,
