@@ -204,7 +204,6 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
 }
 const TIMELIMIT_MARGIN:u64 = 50;
 const TIMELIMIT_MARGIN_FOR_EVALUTION:u64 = 100;
-const QSEARCH_LIMIT:usize = 32;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -221,7 +220,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
-        if history.contains(&(teban,mk,sk)) || depth == QSEARCH_LIMIT || self.timelimit_reached_for_evalution(env)? {
+        if history.contains(&(teban,mk,sk)) || self.timelimit_reached(env)? {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
         }
@@ -269,11 +268,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             } {
                 history.remove(&(teban,mk,sk));
 
-                if depth == 0 {
-                    return Ok(Score::INFINITE);
-                } else {
-                    return Ok(beta);
-                }
+                return Ok(Score::INFINITE);
             }
 
             let o = match m {
@@ -374,9 +369,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let mut tte = env.transposition_table.entry(&zh);
         let tte = tte.or_default();
 
-        if tte.depth == -1 || score == Score::INFINITE ||
-            (tte.beta >= beta && tte.alpha <= alpha && tte.depth < depth as i8 - 1) ||
-            (tte.depth == depth as i8 - 1 && tte.score < score) {
+        if tte.depth == -1 || score == Score::INFINITE || score == Score::NEGINFINITE ||
+            ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 - 1 >= tte.depth) &&
+             (beta > tte.beta || alpha < tte.alpha || depth as i8 - 1 > tte.depth)) {
             tte.depth = depth as i8 - 1;
             tte.score = score;
             tte.beta = beta;
@@ -395,8 +390,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let tte = tte.or_default();
 
         if tte.depth == -1 || score == Score::INFINITE ||
-            (tte.beta >= beta && tte.alpha <= alpha && tte.depth < depth as i8) ||
-            (tte.depth == depth as i8 && tte.score < score) {
+            ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 >= tte.depth) && tte.score < score) {
             tte.depth = depth as i8;
             tte.score = score;
             tte.beta = beta;

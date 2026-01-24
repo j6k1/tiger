@@ -1,14 +1,12 @@
 use std::fmt::Debug;
 use std::path::{Path};
-use std::{fs, io};
-use std::collections::HashSet;
-use std::io::Write;
+use std::{fs};
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
 use libc::size_t;
 use rand::{prelude, Rng, SeedableRng};
-use rand::prelude::{Distribution, ThreadRng};
+use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
@@ -34,17 +32,12 @@ use packedsfen::yaneuraou::reader::PackedSfenReader;
 use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
 use usiagent::event::{GameEndState};
-use usiagent::hash::KyokumenHash;
-use usiagent::math::Prng;
-use usiagent::movepick::{MovePicker, RandomPicker};
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasionsAll, Rule, SquareToPoint, State};
-use usiagent::see::calc_see;
-use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban, ObtainKind, MochigomaKind};
+use usiagent::rule::{Rule, State};
+use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
 use crate::features::HalfKP;
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
-use crate::transposition_table::ZobristHash;
 
 const BANMEN_SIZE:usize = 81;
 
@@ -233,11 +226,10 @@ impl<M> Evalutor<M>
     fn process_result(&self,
                       current_threads:&mut usize,
                       count:&mut usize,
-                      same_moves:&mut usize,
                       successed:&mut usize,
                       estimated_win:&mut usize,
                       win:&mut usize,
-                      sr:&Receiver<Result<Option<(GameEndState, f32, bool)>,ApplicationError>>,
+                      sr:&Receiver<Result<Option<(GameEndState, f32)>,ApplicationError>>,
     ) -> Result<(),ApplicationError> {
         while *current_threads > 0 {
             match sr.recv().map_err(|_| {
@@ -248,20 +240,11 @@ impl<M> Evalutor<M>
 
                     continue
                 },
-                Some((s, score, same_move)) => {
+                Some((s, score)) => {
                     *current_threads -= 1;
 
                     if *count >= EVAL_TEST_SAMPLES {
                         continue;
-                    }
-
-                    if *count % 5 == 0 {
-                        print!(".");
-                        io::stdout().flush().unwrap()
-                    }
-
-                    if same_move {
-                        *same_moves += 1;
                     }
 
                     if score >= 0.5 {
@@ -300,7 +283,7 @@ impl<M> Evalutor<M>
                         eval_test_max_threads: usize,
                         test_process: F
     ) -> Result<(), ApplicationError>
-    where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32, bool)>, ApplicationError> + Send + Sync + 'static, {
+    where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32)>, ApplicationError> + Send + Sync + 'static, {
         let test_process = Arc::new(test_process);
 
         let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
@@ -317,17 +300,15 @@ impl<M> Evalutor<M>
         let mut estimated_win = 0usize;
         let mut win = 0usize;
         let mut count = 0usize;
-        let mut same_moves = 0usize;
 
         let mut current_threads = 0usize;
-        let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32,bool)>,ApplicationError>>();
+        let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32)>,ApplicationError>>();
 
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
                 if current_threads >= eval_test_max_threads {
                     self.process_result(&mut current_threads,
                                         &mut count,
-                                        &mut same_moves,
                                         &mut successed,
                                         &mut estimated_win,
                                         &mut win,
@@ -356,7 +337,6 @@ impl<M> Evalutor<M>
 
             self.process_result(&mut current_threads,
                                 &mut count,
-                                &mut same_moves,
                                 &mut successed,
                                 &mut estimated_win,
                                 &mut win,
@@ -371,7 +351,6 @@ impl<M> Evalutor<M>
         println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
                  (count - estimated_win) as f32 / count as f32 * 100.);
         println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
-        println!("正解率(指し手の一致率) {}%", same_moves as f32 / count as f32 * 100.);
         println!("{}件のテストサンプルを利用しました。",count);
 
         Ok(())
@@ -379,12 +358,12 @@ impl<M> Evalutor<M>
 
     pub fn test_by_packed_sfens(&self,
                                 packed_sfen:Vec<u8>)
-                                -> Result<Option<(GameEndState,f32,bool)>,ApplicationError> {
+                                -> Result<Option<(GameEndState,f32)>,ApplicationError> {
         let mut packed_sfen_reader = PackedSfenReader::new();
 
         let ((teban,banmen,mc),yaneuraou::haffman_code::ExtendFields {
             value: _,
-            best_move,
+            best_move: _,
             end_ply: _,
             game_result
         }) = packed_sfen_reader.read_sfen_with_extended(packed_sfen)?;
@@ -398,58 +377,17 @@ impl<M> Evalutor<M>
 
         let r = self.nn.forward_all(input)?;
 
-        let same = match best_move {
-            yaneuraou::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.select_bestmove(teban, &state, mc)?.map(|m| {
-                    match m {
-                        LegalMove::To(m) => {
-                            let (bsx, bsy) = m.src().square_to_point();
-                            let (bdx, bdy) = m.dst().square_to_point();
-                            let bn = m.is_nari();
-
-                            if sx == bsx && sy == bsy && bdx == dx && bdy == dy && bn == n {
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                        _ => false
-                    }
-                }).unwrap_or(false)
-            },
-            yaneuraou::reader::BestMove::MovePut(k,x,y) => {
-                self.select_bestmove(teban, &state, mc)?.map(|m| {
-                    match m {
-                        LegalMove::Put(m) => {
-                            let (bx,by) = m.dst().square_to_point();
-                            let bk = m.kind();
-
-                            if x == bx && y == by && bk == k {
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                        _ => false
-                    }
-                }).unwrap_or(false)
-            },
-            _ => {
-                return Ok(None);
-            }
-        };
-
-        Ok(Some((game_result,r[0],same)))
+        Ok(Some((game_result,r[0])))
     }
 
     pub fn test_by_packed_hcpe(&self,
                                hcpe:Vec<u8>)
-                               -> Result<Option<(GameEndState,f32,bool)>,ApplicationError> {
+                               -> Result<Option<(GameEndState,f32)>,ApplicationError> {
         let mut hcpe_reader = HcpeReader::new();
 
         let ((teban,banmen,mc),hcpe::haffman_code::ExtendFields {
             eval: _,
-            best_move,
+            best_move: _,
             game_result
         }) = hcpe_reader.read_sfen_with_extended(hcpe)?;
 
@@ -461,47 +399,6 @@ impl<M> Evalutor<M>
         );
 
         let r = self.nn.forward_all(input)?;
-
-        let same = match best_move {
-            hcpe::reader::BestMove::MoveTo(sx,sy,dx,dy,n) => {
-                self.select_bestmove(teban, &state, mc)?.map(|m| {
-                    match m {
-                        LegalMove::To(m) => {
-                            let (bsx, bsy) = m.src().square_to_point();
-                            let (bdx, bdy) = m.dst().square_to_point();
-                            let bn = m.is_nari();
-
-                            if sx == bsx && sy == bsy && bdx == dx && bdy == dy && bn == n {
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                        _ => false
-                    }
-                }).unwrap_or(false)
-            },
-            hcpe::reader::BestMove::MovePut(k,x,y) => {
-                self.select_bestmove(teban, &state, mc)?.map(|m| {
-                    match m {
-                        LegalMove::Put(m) => {
-                            let (bx,by) = m.dst().square_to_point();
-                            let bk = m.kind();
-
-                            if x == bx && y == by && bk == k {
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                        _ => false
-                    }
-                }).unwrap_or(false)
-            },
-            _ => {
-                return Ok(None)
-            }
-        };
 
         let s = match game_result {
             GameResult::SenteWin if teban == Teban::Sente => {
@@ -519,149 +416,7 @@ impl<M> Evalutor<M>
             _ => GameEndState::Draw
         };
 
-        Ok(Some((s,r[0],same)))
-    }
-    fn qsearch(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
-               zh: &ZobristHash<u64>,
-               hasher: &KyokumenHash<u64>,
-               history:&mut HashSet<(Teban,u64,u64)>,
-               mut alpha:i32,beta:i32,depth:usize,rng:&mut ThreadRng) -> Result<i32,ApplicationError> {
-        let (mk,sk) = zh.keys();
-
-        if history.contains(&(teban,mk,sk)) {
-            let score = self.evalute(teban, state, mc)?;
-            return Ok(score);
-        }
-
-        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
-
-        let in_check = Rule::in_check(teban.opposite(),state);
-
-        if in_check {
-            Rule::generate_moves::<Evasions>(teban,state,mc,&mut picker)?;
-        } else {
-            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
-        }
-
-        if in_check && picker.len() == 0 {
-            return Ok(-30000);
-        }
-
-        let mut mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
-
-        if mvs.len() == 0 {
-            return Ok(self.evalute(teban,state,mc)?);
-        }
-
-        mvs.sort_by(|&a,&b| calc_see(teban,state,b).cmp(&calc_see(teban,state,a)));
-
-        let (mk,sk) = zh.keys();
-
-        history.insert((teban,mk,sk));
-
-        let stand_pat = self.evalute(teban,state,mc)?;
-
-        if stand_pat >= beta {
-            return Ok(stand_pat);
-        }
-
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
-
-        let mut bestscore = -30000;
-
-        for m in mvs {
-            if let Some(ObtainKind::Ou) = match m {
-                LegalMove::To(m) => m.obtained(),
-                _ => None
-            } {
-                history.remove(&(teban,mk,sk));
-
-                if depth == 0 {
-                    return Ok(30000);
-                } else {
-                    return Ok(beta);
-                }
-            }
-
-            let o = match m {
-                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
-                _ => None
-            };
-
-            let zh = zh.updated(&hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
-
-            let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
-
-            let score = -self.qsearch(teban.opposite(),&next,&nmc,&zh,hasher,history,-beta,-alpha,depth+1,rng)?;
-
-            if score >= beta {
-                return Ok(score);
-            }
-
-            if score > bestscore {
-                bestscore = score;
-            }
-
-            if score > alpha {
-                alpha = score;
-            }
-        }
-
-        history.remove(&(teban,mk,sk));
-
-        Ok(bestscore)
-    }
-
-    pub fn select_bestmove(&self, teban:Teban, state:&State, mc:MochigomaCollections) -> Result<Option<LegalMove>,ApplicationError> {
-        let hasher = KyokumenHash::new();
-
-        let zh = match &mc {
-            &MochigomaCollections::Empty => {
-                ZobristHash::new(&hasher,teban,state.get_banmen(),&Mochigoma::new(),&Mochigoma::new())
-            },
-            &MochigomaCollections::Pair(ref ms,ref mg) if teban == Teban::Sente => {
-                ZobristHash::new(&hasher,teban,state.get_banmen(),ms,mg)
-            },
-            &MochigomaCollections::Pair(ref mg,ref ms) => {
-                ZobristHash::new(&hasher,teban,state.get_banmen(),ms,mg)
-            }
-        };
-
-        let mut rnd = rand::thread_rng();
-        let mut picker = RandomPicker::new(Prng::new(rnd.gen()));
-
-        Rule::generate_moves::<NonEvasionsAll>(teban,state,&mc,&mut picker)?;
-
-        let mut best_score = None;
-        let mut best_move = None;
-
-        for m in &mut picker {
-            let next = Rule::apply_move_none_check(state, teban, &mc, m.to_applied_move());
-
-            match next {
-                (state, mc, _) => {
-                    let s = -self.qsearch(
-                        teban.opposite(),&state,&mc,&zh,&hasher,&mut HashSet::new(),-30000,30000,0,&mut rnd
-                    )?;
-
-                    match best_score {
-                        None => {
-                            best_score = Some(s);
-                            best_move = Some(m);
-                        },
-                        Some(bs) if s > bs => {
-                            best_score = Some(s);
-                            best_move = Some(m);
-                        },
-                        _ => ()
-                    }
-                }
-            }
-        }
-
-        Ok(best_move)
+        Ok(Some((s,r[0])))
     }
 }
 pub type LF = CrossEntropy<f32>;

@@ -54,7 +54,7 @@ pub mod evalutor;
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
 const LEAN_BATCH_SIZE:usize = 8192;
 const EVAL_TEST_MAX_THREADS:usize = 16;
-const EVAL_TEST_SAMPLES:usize = 500;
+const EVAL_TEST_SAMPLES:usize = 10000;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
