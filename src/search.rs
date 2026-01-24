@@ -399,6 +399,17 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let mut tte = env.transposition_table.entry(&zh);
         let tte = tte.or_default();
 
+        // Update only if the entry is not registered in the replacement table, or if it is Score::INFINITE or Score::NEGINFINITE.
+        // And alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth.
+        // alpha and beta are pruning-related parameters.
+        // Widening the range lowers pruning probability but reduces speed,
+        // while narrowing the range increases pruning probability but improves speed.
+        // Furthermore, if the above conditions are not met,
+        // entries susceptible to pruning may overwrite less susceptible entries, causing issues.
+        // The condition making an entry susceptible to pruning means its search result
+        // may differ from one using alpha and beta values less susceptible to pruning at the same position.
+        // This necessitates the above condition. Depth represents the remaining search depth;
+        // a larger value yields more accurate search results.
         if tte.depth == -1 || score == Score::INFINITE || score == Score::NEGINFINITE ||
             ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 - 1 >= tte.depth) &&
              (beta > tte.beta || alpha < tte.alpha || depth as i8 - 1 > tte.depth)) {
@@ -419,6 +430,20 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let mut tte = env.transposition_table.entry(zh);
         let tte = tte.or_default();
 
+        // Update only if the entry is not registered in the replacement table or if Score::INFINITE.
+        // And alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth && tte.score < score.
+        // alpha and beta are parameters related to pruning.
+        // Widening the range lowers the likelihood of pruning but reduces speed,
+        // while narrowing the range increases the likelihood of pruning but improves speed.
+        // Furthermore, if the above conditions are not met,
+        // entries susceptible to pruning may overwrite entries less susceptible to pruning, causing problems.
+        // Conditions making an entry susceptible to pruning mean its search result
+        // may differ from one using alpha and beta values less susceptible to pruning at the same position.
+        // This necessitates the above conditions. Depth represents the remaining search depth;
+        // a larger value yields more accurate search results.
+        // Additionally, entries with Score::NEGINIFINITE or decreasing scores are excluded.
+        // This is because this function registers the best move in that position,
+        // and registering moves that decrease the score or guarantee a loss is pointless.
         if tte.depth == -1 || score == Score::INFINITE ||
             ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 >= tte.depth) && tte.score < score) {
             tte.depth = depth as i8;
@@ -815,6 +840,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                         return Ok(EvaluationResult::Immediate(Score::NEGINFINITE,mvs,gs.zh.clone()));
                     },
+                    // When the conditions alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth are satisfied,
+                    // the score of the substitution table directly becomes the score for this position.
+                    //
+                    // alpha and beta are parameters related to pruning.
+                    // Widening the range lowers the likelihood of pruning but reduces speed,
+                    // while narrowing the range increases the likelihood of pruning but improves speed.
+                    // Furthermore, when the above conditions are not met,
+                    // entries susceptible to pruning may overwrite entries less susceptible to pruning, potentially causing issues.
+                    // An entry being susceptible to pruning refers to a state where the search result differs from the result
+                    // obtained using alpha and beta values less susceptible to pruning at the same position.
+                    // depth is the remaining search depth; a larger value means deeper exploration,
+                    // resulting in a more accurate score.
                     Score::Value(s) if d as u32 >= gs.depth && beta >= gs.beta && alpha <= gs.alpha => {
                         let mut mvs = VecDeque::new();
 
