@@ -808,6 +808,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                       evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         env.nodes.fetch_add(1,Ordering::Release);
 
+        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Timeout);
+        }
+
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
         if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
