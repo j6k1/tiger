@@ -644,7 +644,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         if depth >= last_depth {
                             last_depth = depth;
 
-                            if s > gs.best_score {
+                            if depth > last_depth || s > gs.best_score {
                                 gs.best_score = s;
                             }
 
