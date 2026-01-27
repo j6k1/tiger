@@ -86,9 +86,8 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub hasher:Arc<KyokumenHash<u64>>,
     pub teban:Teban,
     pub limit:Option<UsiGoTimeLimit>,
-    pub current_limit:Arc<RwLock<Option<Instant>>>,
     pub turn_limit:Option<u32>,
-    pub current_turn_limit:Arc<RwLock<Option<Instant>>>,
+    pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
     pub max_depth:u32,
     pub max_threads:u32,
@@ -110,9 +109,8 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             hasher:Arc::clone(&self.hasher),
             teban:self.teban.clone(),
             limit:self.limit.clone(),
-            current_limit:self.current_limit.clone(),
             turn_limit:self.turn_limit.clone(),
-            current_turn_limit:Arc::clone(&self.current_turn_limit),
+            current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
             max_depth:self.max_depth,
             max_threads:self.max_threads,
@@ -144,9 +142,8 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                hasher:Arc<KyokumenHash<u64>>,
                teban:Teban,
                limit:Option<UsiGoTimeLimit>,
-               current_limit:Arc<RwLock<Option<Instant>>>,
                turn_limit:Option<u32>,
-               current_turn_limit:Arc<RwLock<Option<Instant>>>,
+               current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
                max_depth:u32,
                max_threads:u32,
@@ -165,9 +162,8 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             hasher:hasher,
             teban:teban,
             limit:limit,
-            current_limit:current_limit,
             turn_limit:turn_limit,
-            current_turn_limit:current_turn_limit,
+            current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
             max_depth:max_depth,
             max_threads:max_threads,
@@ -227,14 +223,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                history:&mut HashSet<(Teban,u64,u64)>,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
-
-        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
-            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
-            return Ok(score);
-        }
-
-        event_dispatcher.dispatch_events(self,&env.event_queue)?;
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
@@ -335,15 +323,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         let mut reached;
 
-        match env.current_turn_limit.read() {
-            l => {
-                reached = l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
-            }
-        }
-
-        match env.current_limit.read() {
-            l => {
-                reached = reached || l.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
+        match *env.current_limit.read() {
+            (current_turn_lmit,current_limit) => {
+                reached = current_turn_lmit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
+                reached = reached || current_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
             }
         }
 
@@ -477,9 +460,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                          quited:&Arc<AtomicBool>,
                                          teban:Teban,
                                          limit:&'a Option<UsiGoTimeLimit>,
-                                         current_limit:&Arc<RwLock<Option<Instant>>>,
                                          turn_limit:&'a Option<u32>,
-                                         current_turn_limit:&Arc<RwLock<Option<Instant>>>)
+                                         current_limit:&Arc<RwLock<(Option<Instant>,Option<Instant>)>>)
                                          -> UserEventDispatcher<'a,T,ApplicationError,L> {
 
         let mut event_dispatcher = USIEventDispatcher::new(&on_error_handler);
@@ -515,20 +497,18 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
 
         {
-            let current_turn_limit = Arc::clone(current_turn_limit);
-            let limit = limit.clone();
             let current_limit = Arc::clone(current_limit);
+            let limit = limit.clone();
             let teban = teban.clone();
 
             event_dispatcher.add_handler(UserEventKind::PonderHit, move |_,e| {
                 match e {
                     &UserEvent::PonderHit(think_start_time) => {
                         {
-                            let mut l = current_turn_limit.write();
-                            *l = turn_limit.map(move |l| think_start_time + Duration::from_millis(l as u64));
-                            let teban = teban.clone();
                             let mut l = current_limit.write();
-                            *l = limit.and_then(move |l| l.to_instant(teban,think_start_time));
+                            l.0 = turn_limit.map(move |l| think_start_time + Duration::from_millis(l as u64));
+                            let teban = teban.clone();
+                            l.1 = limit.and_then(move |l| l.to_instant(teban,think_start_time));
                         }
                         Ok(())
                     },
@@ -562,7 +542,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
         self.thread_pool.spawn(move || {
             let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(
-                &env.on_error_handler, &env.stop, &env.quited, env.teban.clone(), &limit, &env.current_limit, &turn_limit, &env.current_turn_limit
+                &env.on_error_handler, &env.stop, &env.quited, env.teban.clone(), &limit,&turn_limit, &env.current_limit
             );
 
             let mut rng = rand::thread_rng();

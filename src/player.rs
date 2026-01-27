@@ -7,7 +7,6 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
 use nncombinator::layer::{ForwardAll, PreTrain};
-use parking_lot::RwLock;
 use rayon::ThreadPoolBuilder;
 use usiagent::command::{BestMove, CheckMate, UsiInfoSubCommand, UsiOptType};
 use usiagent::error::{PlayerError, UsiProtocolError};
@@ -147,7 +146,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
         let limit = env.limit.clone();
 
         let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher(
-            &on_error_handler,&env.stop,&env.quited,teban,&limit,&env.current_limit,&turn_limit,&env.current_turn_limit
+            &on_error_handler,&env.stop,&env.quited,teban,&limit,&turn_limit,&env.current_limit
         );
 
         match self.evalutor {
@@ -430,9 +429,11 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 hasher,
                 teban,
                 limit,
-                Arc::new(RwLock::new(limit.and_then(move |l| l.to_instant(teban,think_start_time)))),
                 self.turn_limit,
-                Arc::new(RwLock::new(self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)))),
+                (
+                    limit.and_then(move |l| l.to_instant(teban,think_start_time)),
+                    self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64))
+                ),
                 self.base_depth,
                 self.max_depth,
                 self.max_threads,
@@ -471,9 +472,8 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 hasher,
                 teban,
                 limit,
-                Arc::new(RwLock::new(None)),
                 self.turn_limit,
-                Arc::new(RwLock::new(None)),
+                (None,None),
                 self.base_depth,
                 self.max_depth,
                 self.max_threads,
