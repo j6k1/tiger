@@ -21,7 +21,7 @@ use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, T
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, ROOT_SEARCH_OFFSET_WIDTH, GAMMA};
 use crate::transposition_table::{TT, ZobristHash};
 
 pub trait FromOption {
@@ -95,8 +95,9 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     base_depth:u32,
     max_depth:u32,
     max_threads:u32,
-    factor_nodes_per_thread:u8,
+    offset_width:u16,
     nodes_per_leaf_node:u16,
+    gamma:u8,
     turn_limit:Option<u32>,
     model_name:String
 }
@@ -121,8 +122,9 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             base_depth:BASE_DEPTH,
             max_depth:MAX_DEPTH,
             max_threads:MAX_THREADS,
-            factor_nodes_per_thread:FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD,
+            offset_width:ROOT_SEARCH_OFFSET_WIDTH,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
+            gamma:GAMMA,
             turn_limit:None,
             model_name: String::from("nn.bin")
         }
@@ -194,13 +196,14 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     rng:&mut rng,
                     alpha: Score::NEGINFINITE,
                     beta: Score::INFINITE,
+                    search_offset: 0,
                     best_score: Score::NEGINFINITE,
                     m:None,
                     prev_kind: KomaKind::Blank,
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
                     depth:base_depth,
-                    current_depth:0,
+                    current_depth:1,
                     base_depth:base_depth,
                     max_depth:env.max_depth
                 };
@@ -262,8 +265,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
-        kinds.insert(String::from("FactorForNumberOfNodesPerThread"),SysEventOptionKind::Num);
+        kinds.insert(String::from("OffsetWidth"),SysEventOptionKind::Num);
         kinds.insert(String::from("NodesPerLeafNodes"),SysEventOptionKind::Num);
+        kinds.insert(String::from("gamma"),SysEventOptionKind::Num);
         kinds.insert(String::from("ModelFile"),SysEventOptionKind::Str);
 
         Ok(kinds)
@@ -299,10 +303,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         options.insert(String::from("MaxDepth"),UsiOptType::Spin(1,100,Some(MAX_DEPTH as i64)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
-        options.insert(String::from("FactorForNumberOfNodesPerThread"),
-        UsiOptType::Spin(1,255,Some(FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD as i64))
-        );
+        options.insert(String::from("OffsetWidth"),UsiOptType::Spin(1,593,Some(ROOT_SEARCH_OFFSET_WIDTH as i64)));
         options.insert(String::from("NodesPerLeafNodes"), UsiOptType::Spin(1,593,Some(NODES_PER_LEAF_NODE as i64)));
+        options.insert(String::from("gamma"), UsiOptType::Spin(1,100,Some(GAMMA as i64)));
         options.insert(String::from("ModelFile"),UsiOptType::Combo(Some(String::from("nn.bin")),paths));
 
         Ok(options)
@@ -334,11 +337,14 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             "TurnLimit" => {
                 self.turn_limit = u32::from_option(value);
             },
-            "FactorForNumberOfNodesPerThread" => {
-                self.factor_nodes_per_thread = u8::from_option(value).unwrap_or(FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD);
+            "OffsetWidth" => {
+                self.offset_width = u16::from_option(value).unwrap_or(ROOT_SEARCH_OFFSET_WIDTH);
             },
             "NodesPerLeafNodes" => {
                 self.nodes_per_leaf_node = u16::from_option(value).unwrap_or(NODES_PER_LEAF_NODE);
+            },
+            "gamma" => {
+                self.gamma = u8::from_option(value).unwrap_or(GAMMA);
             },
             "ModelFile" => {
                 self.model_name = String::from_option(value).unwrap_or(String::from("nn.bin"));
@@ -431,14 +437,15 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 limit,
                 self.turn_limit,
                 (
-                    limit.and_then(move |l| l.to_instant(teban,think_start_time)),
-                    self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64))
+                    self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)),
+                    limit.and_then(move |l| l.to_instant(teban,think_start_time))
                 ),
                 self.base_depth,
                 self.max_depth,
                 self.max_threads,
-                self.factor_nodes_per_thread,
+                self.offset_width,
                 self.nodes_per_leaf_node,
+                self.gamma,
                 &transposition_table
             );
 
@@ -477,8 +484,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.base_depth,
                 self.max_depth,
                 self.max_threads,
-                self.factor_nodes_per_thread,
+                self.offset_width,
                 self.nodes_per_leaf_node,
+                self.gamma,
                 &transposition_table
             );
 

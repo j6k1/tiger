@@ -32,8 +32,9 @@ pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;
 pub const MAX_DEPTH:u32 = 14;
 pub const MAX_THREADS:u32 = 8;
-pub const FACTOR_FOR_NUMBER_OF_NODES_PER_THREAD:u8 = 14;
+pub const ROOT_SEARCH_OFFSET_WIDTH:u16 = 10;
 pub const NODES_PER_LEAF_NODE:u16 = 5;
+pub const GAMMA:u8 = 100;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
@@ -91,8 +92,9 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub base_depth:u32,
     pub max_depth:u32,
     pub max_threads:u32,
-    pub factor_nodes_per_thread:u8,
+    pub offset_width:u16,
     pub nodes_per_leaf_node:u16,
+    pub gamma:u8,
     pub abort:Arc<AtomicBool>,
     pub stop:Arc<AtomicBool>,
     pub quited:Arc<AtomicBool>,
@@ -114,8 +116,9 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:self.base_depth,
             max_depth:self.max_depth,
             max_threads:self.max_threads,
-            factor_nodes_per_thread:self.factor_nodes_per_thread,
+            offset_width:self.offset_width,
             nodes_per_leaf_node:self.nodes_per_leaf_node,
+            gamma:self.gamma,
             abort:Arc::clone(&self.abort),
             stop:Arc::clone(&self.stop),
             quited:Arc::clone(&self.quited),
@@ -147,8 +150,9 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                base_depth:u32,
                max_depth:u32,
                max_threads:u32,
-               factor_nodes_per_thread:u8,
+               offset_width:u16,
                nodes_per_leaf_node:u16,
+               gamma:u8,
                transposition_table: &Arc<TT<u64,Score,{1 << 20},4>>
     ) -> Environment<L,S> {
         let abort = Arc::new(AtomicBool::new(false));
@@ -167,8 +171,9 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:base_depth,
             max_depth:max_depth,
             max_threads:max_threads,
-            factor_nodes_per_thread:factor_nodes_per_thread,
+            offset_width:offset_width,
             nodes_per_leaf_node:nodes_per_leaf_node,
+            gamma:gamma,
             abort:abort,
             stop:stop,
             quited:quited,
@@ -184,6 +189,7 @@ pub struct GameState<'a> {
     pub rng:&'a mut ThreadRng,
     pub alpha:Score,
     pub beta:Score,
+    pub search_offset:usize,
     pub best_score:Score,
     pub m:Option<LegalMove>,
     pub prev_kind:KomaKind,
@@ -223,6 +229,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                history:&mut HashSet<(Teban,u64,u64)>,
                mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
+
+        event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
@@ -437,6 +445,16 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         }
     }
 }
+pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
+                                     S: InfoSender,
+                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                     PreTrain<f32> + Send + Sync + 'static,
+                                     <M as PreTrain<f32>>::OutStack: Send + Sync + 'static
+{
+    fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
+                      evalutor: &Arc<Evalutor<M>>,
+                      mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError>;
+}
 impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                               S: InfoSender,
                               M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -521,6 +539,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
     }
 
     fn start_thread<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
+                           mvs: Arc<Vec<LegalMove>>,
                            evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer) {
         let sender = self.sender.clone();
         let teban = gs.teban;
@@ -532,19 +551,13 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
         let depth = gs.depth;
-        let current_depth = 0;
+        let current_depth = 1;
         let base_depth = gs.base_depth;
         let max_depth = gs.max_depth;
+        let search_offset = gs.search_offset;
         let best_score = gs.best_score;
 
-        let turn_limit = env.turn_limit.clone();
-        let limit = env.limit.clone();
-
         self.thread_pool.spawn(move || {
-            let mut event_dispatcher = Self::create_event_dispatcher::<Recursive<L,S,M>>(
-                &env.on_error_handler, &env.stop, &env.quited, env.teban.clone(), &limit,&turn_limit, &env.current_limit
-            );
-
             let mut rng = rand::thread_rng();
 
             let mut gs = GameState {
@@ -552,6 +565,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 state: &state,
                 alpha: Score::NEGINFINITE,
                 beta: Score::INFINITE,
+                search_offset: search_offset,
                 best_score: best_score,
                 m: None,
                 prev_kind: KomaKind::Blank,
@@ -564,9 +578,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 rng:&mut rng
             };
 
-            let strategy = Recursive::new();
+            let strategy = Inter::new();
 
-            let r = strategy.search(&mut env, &mut gs, &mut event_dispatcher, &evalutor);
+            let r = strategy.search(&mut env, &mut gs, &evalutor, &mvs);
 
             match r {
                 Ok(EvaluationResult::Immediate(score,mvs,zh)) => {
@@ -612,29 +626,56 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError> {
         let base_depth = gs.depth.min(env.base_depth);
+        let max_depth = (env.max_depth).max(base_depth) as usize;
         let mut depth = 1;
-        let mut thread_index = 0;
-        let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
-        let nodes_per_thread:u128 = nodes_per_leaf_node.pow(env.factor_nodes_per_thread as u32) as u128;
-        let mut search_space:u128 = nodes_per_leaf_node as u128 * 4;
         let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
         let mut busy_threads = 0;
+        let mut remaining_threads = 0;
+        let offset = env.offset_width;
         let mut last_depth = depth;
         let mut result = None;
+        let mut search_offset = vec![0; base_depth as usize + 1];
+
+        let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+
+        let mut mvs = Vec::new();
+        let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
+        let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
+        let mut leafnodes_seacch_space:u128 = search_space * nodes_per_leaf_node;
+        let gamma = env.gamma;
+
+        if Rule::in_check(gs.teban.opposite(),&gs.state) {
+            Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+            mvs = picker.collect::<Vec<LegalMove>>();
+        } else {
+            {
+                Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                let mut v = (&mut picker).collect::<Vec<LegalMove>>();
+                mvs.append(&mut v);
+            }
+
+            {
+                Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                let mut v = (&mut picker).collect::<Vec<LegalMove>>();
+                mvs.append(&mut v);
+            }
+        };
+
+        let mvs = Arc::new(mvs);
 
         env.abort.store(false,Ordering::Release);
 
         loop {
-            if busy_threads == env.max_threads {
+            if env.stop.load(Ordering::Acquire) || env.abort.load(Ordering::Acquire) {
+                self.termination(env,busy_threads)?;
+
+                return Ok(result.unwrap_or(EvaluationResult::Timeout));
+            } else if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || depth > base_depth) {
                 match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth, _)) if base_depth <= depth => {
-                        busy_threads -= 1;
-
-                        self.termination(env,busy_threads)?;
-
+                    Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, _)) if depth > base_depth && busy_threads == 1 => {
                         return Ok(EvaluationResult::Immediate(s, mvs, zh));
                     },
-                    Ok(RootEvaluationResult::Immediate(s, mvs, zh,depth, move_orderer)) => {
+                    Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, move_orderer)) => {
                         busy_threads -= 1;
 
                         if let Err(e) = env.info_sender.flush() {
@@ -644,11 +685,11 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         if depth >= last_depth {
                             last_depth = depth;
 
-                            if depth > last_depth || s > gs.best_score {
+                            if s >= gs.best_score {
                                 gs.best_score = s;
-                            }
 
-                            result = Some(EvaluationResult::Immediate(s, mvs, zh));
+                                result = Some(EvaluationResult::Immediate(s, mvs, zh));
+                            }
                         }
 
                         move_orderer_quque.push_back(move_orderer);
@@ -656,35 +697,49 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     Ok(RootEvaluationResult::Timeout) => {
                         busy_threads -= 1;
 
-                        self.termination(env,busy_threads)?;
+                        self.termination(env, busy_threads)?;
 
                         return Ok(result.unwrap_or(EvaluationResult::Timeout));
                     },
                     Err(e) => {
                         busy_threads -= 1;
 
-                        self.termination(env,busy_threads)?;
+                        self.termination(env, busy_threads)?;
 
                         return Err(e);
                     }
                 }
+            } else if busy_threads == 0 && remaining_threads > 0 {
+                return Ok(result.unwrap_or(EvaluationResult::Timeout));
             } else {
-                if depth < base_depth && thread_index * nodes_per_thread >= search_space {
+                if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
                     depth += 1;
-                    search_space = search_space * nodes_per_leaf_node;
+                    leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
+                    search_space = search_space + leafnodes_seacch_space;
+                }
+
+                if depth == base_depth {
+                    remaining_threads = busy_threads;
                 }
 
                 gs.depth = depth;
                 gs.base_depth = depth;
-                gs.max_depth = env.max_depth - (base_depth - depth);
+                gs.max_depth = max_depth as u32;
 
-                self.start_thread(env,gs,evalutor,
-                                  move_orderer_quque
-                                      .pop_front()
-                                      .unwrap_or(MoveOrderer::new(env.max_depth as usize)));
+                if depth <= base_depth {
+                    gs.search_offset = search_offset[depth as usize];
 
-                busy_threads += 1;
-                thread_index += 1;
+                    search_offset[depth as usize] += offset as usize;
+
+                    let mvs = Arc::clone(&mvs);
+
+                    self.start_thread(env,gs,mvs,evalutor,
+                                      move_orderer_quque
+                                          .pop_front()
+                                          .unwrap_or(MoveOrderer::new(max_depth)));
+
+                    busy_threads += 1;
+                }
             }
         }
     }
@@ -712,12 +767,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
     }
 
     pub fn is_obtained_ou(&self,m:LegalMove) -> Result<bool,ApplicationError> {
-        let obtained = match m {
-            LegalMove::To(m) => m.obtained(),
-            _ => None
-        };
-
-        Ok(Some(ObtainKind::Ou) == obtained)
+        Ok(Some(ObtainKind::Ou) == m.obtained())
     }
 
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
@@ -760,6 +810,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     rng: gs.rng,
                     alpha: -gs.beta,
                     beta: -alpha,
+                    search_offset: 0,
                     best_score: gs.best_score,
                     m: Some(m),
                     prev_kind: prev_kind,
@@ -926,10 +977,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     best_moves = mvs;
                                     prev_move.map(|m| best_moves.push_front(m));
 
-                                    if gs.current_depth == 0 && s > gs.best_score {
-                                        self.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
-                                    }
-
                                     self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
                                     if scoreval >= beta {
@@ -1018,10 +1065,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                             self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
-                            if gs.current_depth == 0 && s > gs.best_score {
-                                self.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
-                            }
-
                             if scoreval >= beta {
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
@@ -1056,6 +1099,147 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     EvaluationResult::Timeout => {
                         return Ok(EvaluationResult::Timeout);
                     }
+                }
+            }
+        }
+
+        Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()))
+    }
+}
+pub struct Inter<L,S,M> where L: Logger + Send + 'static,
+                                  S: InfoSender,
+                                  M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                  PreTrain<f32> + Send + Sync + 'static,
+                                  <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    l:PhantomData<L>,
+    s:PhantomData<S>,
+    m:PhantomData<M>
+}
+impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
+                                   S: InfoSender,
+                                   M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                   PreTrain<f32> + Send + Sync + 'static,
+                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    pub fn new() -> Inter<L,S,M> {
+        Inter {
+            l:PhantomData::<L>,
+            s:PhantomData::<S>,
+            m:PhantomData::<M>
+        }
+    }
+
+    pub fn is_obtained_ou(&self,m:LegalMove) -> Result<bool,ApplicationError> {
+        Ok(Some(ObtainKind::Ou) == m.obtained())
+    }
+
+    pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
+                                    m:LegalMove,alpha:Score,
+                                    event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
+                                    evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
+        let search = Recursive::new();
+
+        Ok(search.search_child_node(env,gs,m,alpha,event_dispatcher,evalutor)?)
+    }
+}
+impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
+                                                     S: InfoSender,
+                                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                                     PreTrain<f32> + Send + Sync + 'static,
+                                                     <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
+                      evalutor: &Arc<Evalutor<M>>,
+                      mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError> {
+        env.nodes.fetch_add(1,Ordering::Release);
+
+        let recur = Recursive::new();
+
+        let limit = env.limit.clone();
+        let turn_limit = env.turn_limit.clone();
+
+        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Timeout);
+        }
+
+        let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher::<Recursive<L,S,M>>(
+            &env.on_error_handler, &env.stop, &env.quited, env.teban.clone(), &limit,&turn_limit, &env.current_limit
+        );
+
+        event_dispatcher.dispatch_events(&recur,&env.event_queue)?;
+
+        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Timeout);
+        }
+
+        let start_alpha = gs.alpha;
+        let mut alpha = gs.alpha;
+        let beta = gs.beta;
+        let mut scoreval = Score::NEGINFINITE;
+        let mut best_moves = VecDeque::new();
+
+        for m in env.move_orderer.ordering(
+            mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset) {
+
+            if self.is_obtained_ou(m)? {
+                let mut mvs = VecDeque::new();
+
+                mvs.push_front(m);
+
+                return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+            }
+
+            match recur.search_child_node(env,gs,m,alpha,&mut event_dispatcher,evalutor)? {
+                EvaluationResult::Immediate(s, mvs, zh) => {
+                    recur.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
+
+                    let s = -s;
+
+                    match m {
+                        LegalMove::To(mv) if mv.obtained().is_none() => {
+                            if s <= start_alpha {
+                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
+                            }
+                        },
+                        LegalMove::Put(_) => {
+                            if s <= start_alpha {
+                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
+                            }
+                        },
+                        _ => ()
+                    };
+
+                    if s > scoreval {
+                        scoreval = s;
+
+                        best_moves = mvs;
+
+                        recur.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
+
+                        if s > gs.best_score {
+                            recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                        }
+
+                        if scoreval >= beta {
+                            match m {
+                                LegalMove::To(mv) if mv.obtained().is_none() => {
+                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                },
+                                LegalMove::Put(_) => {
+                                    env.move_orderer.update_killer(gs.current_depth as usize,m)?;
+                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                },
+                                _ => ()
+                            };
+
+                            return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                        }
+                    }
+
+                    if alpha < s {
+                        alpha = s;
+                    }
+                },
+                EvaluationResult::Timeout => {
+                    return Ok(EvaluationResult::Timeout);
                 }
             }
         }
