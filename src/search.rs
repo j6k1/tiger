@@ -685,7 +685,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         if depth >= last_depth {
                             last_depth = depth;
 
-                            if s >= gs.best_score {
+                            if s >= gs.best_score || depth > last_depth {
                                 gs.best_score = s;
 
                                 result = Some(EvaluationResult::Immediate(s, mvs, zh));
@@ -718,10 +718,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     search_space = search_space + leafnodes_seacch_space;
                 }
 
-                if depth == base_depth {
-                    remaining_threads = busy_threads;
-                }
-
                 gs.depth = depth;
                 gs.base_depth = depth;
                 gs.max_depth = max_depth as u32;
@@ -739,6 +735,10 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                           .unwrap_or(MoveOrderer::new(max_depth)));
 
                     busy_threads += 1;
+                }
+
+                if depth > base_depth {
+                    remaining_threads = busy_threads;
                 }
             }
         }
