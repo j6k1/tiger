@@ -32,7 +32,6 @@ pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;
 pub const MAX_DEPTH:u32 = 14;
 pub const MAX_THREADS:u32 = 8;
-pub const ROOT_SEARCH_OFFSET_WIDTH:u16 = 10;
 pub const NODES_PER_LEAF_NODE:u16 = 5;
 pub const GAMMA:u8 = 100;
 
@@ -92,7 +91,6 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub base_depth:u32,
     pub max_depth:u32,
     pub max_threads:u32,
-    pub offset_width:u16,
     pub nodes_per_leaf_node:u16,
     pub gamma:u8,
     pub abort:Arc<AtomicBool>,
@@ -116,7 +114,6 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:self.base_depth,
             max_depth:self.max_depth,
             max_threads:self.max_threads,
-            offset_width:self.offset_width,
             nodes_per_leaf_node:self.nodes_per_leaf_node,
             gamma:self.gamma,
             abort:Arc::clone(&self.abort),
@@ -128,7 +125,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
         }
     }
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum EvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>),
     Timeout
@@ -150,7 +147,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                base_depth:u32,
                max_depth:u32,
                max_threads:u32,
-               offset_width:u16,
                nodes_per_leaf_node:u16,
                gamma:u8,
                transposition_table: &Arc<TT<u64,Score,{1 << 20},4>>
@@ -171,7 +167,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:base_depth,
             max_depth:max_depth,
             max_threads:max_threads,
-            offset_width:offset_width,
             nodes_per_leaf_node:nodes_per_leaf_node,
             gamma:gamma,
             abort:abort,
@@ -540,6 +535,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
     fn start_thread<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                            mvs: Arc<Vec<LegalMove>>,
+                           search_offset:usize,
                            evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer) {
         let sender = self.sender.clone();
         let teban = gs.teban;
@@ -554,7 +550,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let current_depth = 1;
         let base_depth = gs.base_depth;
         let max_depth = gs.max_depth;
-        let search_offset = gs.search_offset;
         let best_score = gs.best_score;
 
         self.thread_pool.spawn(move || {
@@ -628,13 +623,15 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let base_depth = gs.depth.min(env.base_depth);
         let max_depth = (env.max_depth).max(base_depth) as usize;
         let mut depth = 1;
+        let mut first_times = vec![true;max_depth+1];
+        let mut workings = vec![0;max_depth+1];
+
         let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
         let mut busy_threads = 0;
         let mut remaining_threads = 0;
-        let offset = env.offset_width;
         let mut last_depth = depth;
         let mut result = None;
-        let mut search_offset = vec![0; base_depth as usize + 1];
+        let mut tmp_result = None;
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
@@ -672,27 +669,36 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 return Ok(result.unwrap_or(EvaluationResult::Timeout));
             } else if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || depth > base_depth) {
                 match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                    Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, _)) if depth > base_depth && busy_threads == 1 => {
-                        return Ok(EvaluationResult::Immediate(s, mvs, zh));
-                    },
                     Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, move_orderer)) => {
                         busy_threads -= 1;
+                        workings[depth as usize] -= 1;
 
                         if let Err(e) = env.info_sender.flush() {
                             let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         }
 
                         if depth >= last_depth {
-                            last_depth = depth;
-
-                            if s >= gs.best_score || depth > last_depth {
+                            if depth > last_depth && !first_times[last_depth as usize] && workings[last_depth as usize] == 0 {
                                 gs.best_score = s;
 
-                                result = Some(EvaluationResult::Immediate(s, mvs, zh));
+                                result = tmp_result.take();
+
+                                tmp_result = Some(EvaluationResult::Immediate(s, mvs, zh));
+                            } else if s >= gs.best_score && depth == last_depth {
+                                gs.best_score = s;
+
+                                tmp_result = Some(EvaluationResult::Immediate(s, mvs, zh));
                             }
+
+                            last_depth = depth;
                         }
 
                         move_orderer_quque.push_back(move_orderer);
+
+                        if depth > base_depth && busy_threads == 0 {
+                            result = tmp_result.take();
+                            return Ok(result.unwrap_or(EvaluationResult::Timeout));
+                        }
                     },
                     Ok(RootEvaluationResult::Timeout) => {
                         busy_threads -= 1;
@@ -715,7 +721,12 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
+
                     search_space = search_space + leafnodes_seacch_space;
+
+                    if depth > base_depth && busy_threads == 0 {
+                        result = tmp_result.take();
+                    }
                 }
 
                 gs.depth = depth;
@@ -723,13 +734,19 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 gs.max_depth = max_depth as u32;
 
                 if depth <= base_depth {
-                    gs.search_offset = search_offset[depth as usize];
+                    let search_offset = if first_times[depth as usize] {
+                        first_times[depth as usize] = false;
+                        0
+                    } else {
+                  gs.rng.gen::<usize>() % (mvs.len() / 2).max(1)
+                    };
 
-                    search_offset[depth as usize] += offset as usize;
+                    workings[depth as usize] += 1;
 
                     let mvs = Arc::clone(&mvs);
 
-                    self.start_thread(env,gs,mvs,evalutor,
+                    self.start_thread(env,gs,mvs,
+                                      search_offset,evalutor,
                                       move_orderer_quque
                                           .pop_front()
                                           .unwrap_or(MoveOrderer::new(max_depth)));
