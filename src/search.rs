@@ -629,9 +629,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
         let mut busy_threads = 0;
         let mut remaining_threads = 0;
-        let mut last_depth = depth;
-        let mut result = None;
-        let mut tmp_result = None;
+        let mut result = vec![None;max_depth+1];
+        let mut decided_depth = 0;
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
@@ -663,11 +662,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         env.abort.store(false,Ordering::Release);
 
         loop {
-            if env.stop.load(Ordering::Acquire) || env.abort.load(Ordering::Acquire) {
-                self.termination(env,busy_threads)?;
-
-                return Ok(result.unwrap_or(EvaluationResult::Timeout));
-            } else if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || depth > base_depth) {
+            if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0) {
                 match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
                     Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, move_orderer)) => {
                         busy_threads -= 1;
@@ -677,35 +672,38 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         }
 
-                        if depth >= last_depth {
-                            if depth > last_depth && !first_times[last_depth as usize] && workings[last_depth as usize] == 0 {
-                                gs.best_score = s;
-
-                                result = tmp_result.take();
-
-                                tmp_result = Some(EvaluationResult::Immediate(s, mvs, zh));
-                            } else if s >= gs.best_score && depth == last_depth {
-                                gs.best_score = s;
-
-                                tmp_result = Some(EvaluationResult::Immediate(s, mvs, zh));
+                        while depth > decided_depth {
+                            if workings[decided_depth as usize] == 0 {
+                                decided_depth += 1;
                             }
+                        }
 
-                            last_depth = depth;
+                        match result[depth as usize] {
+                            Some(EvaluationResult::Immediate(bs,_,_)) if s >= bs => {
+                                result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
+                            },
+                            None => {
+                                result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
+                            },
+                            _ => ()
                         }
 
                         move_orderer_quque.push_back(move_orderer);
-
-                        if depth > base_depth && busy_threads == 0 {
-                            result = tmp_result.take();
-                            return Ok(result.unwrap_or(EvaluationResult::Timeout));
-                        }
                     },
                     Ok(RootEvaluationResult::Timeout) => {
                         busy_threads -= 1;
 
                         self.termination(env, busy_threads)?;
 
-                        return Ok(result.unwrap_or(EvaluationResult::Timeout));
+                        for d in (1..=decided_depth).rev() {
+                            if result[d as usize].is_none() {
+                                decided_depth -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
                     },
                     Err(e) => {
                         busy_threads -= 1;
@@ -716,8 +714,32 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
             } else if busy_threads == 0 && remaining_threads > 0 {
-                return Ok(result.unwrap_or(EvaluationResult::Timeout));
+                for d in (1..=decided_depth).rev() {
+                    if result[d as usize].is_none() {
+                        decided_depth -= 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
+                if env.stop.load(Ordering::Acquire) || env.abort.load(Ordering::Acquire) {
+                    for d in (1..=decided_depth).rev() {
+                        if result[d as usize].is_none() {
+                            decided_depth -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
+                }
+
+                if self.timelimit_reached(env)? {
+                    env.abort.store(true, Ordering::Release);
+                }
+                
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
@@ -725,7 +747,11 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     search_space = search_space + leafnodes_seacch_space;
 
                     if depth > base_depth && busy_threads == 0 {
-                        result = tmp_result.take();
+                        while decided_depth < base_depth {
+                            if workings[decided_depth as usize] == 0 {
+                                decided_depth += 1;
+                            }
+                        }
                     }
                 }
 
