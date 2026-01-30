@@ -753,9 +753,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                     if depth > base_depth && busy_threads == 0 {
                         while decided_depth < base_depth {
-                            if workings[decided_depth as usize] == 0 {
-                                decided_depth += 1;
-                            }
+                            decided_depth += 1;
                         }
                     }
                 }
