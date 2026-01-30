@@ -21,7 +21,7 @@ use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, T
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, GAMMA};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, GAMMA, TIMELIMIT_MARGIN};
 use crate::transposition_table::{TT, ZobristHash};
 
 pub trait FromOption {
@@ -31,6 +31,14 @@ impl FromOption for i64 {
     fn from_option(option: SysEventOption) -> Option<i64> {
         match option {
             SysEventOption::Num(v) => Some(v),
+            _ => None
+        }
+    }
+}
+impl FromOption for u64 {
+    fn from_option(option: SysEventOption) -> Option<u64> {
+        match option {
+            SysEventOption::Num(v) => Some(v as u64),
             _ => None
         }
     }
@@ -98,6 +106,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     nodes_per_leaf_node:u16,
     gamma:u8,
     turn_limit:Option<u32>,
+    timelimit_margin:u64,
     model_name:String
 }
 impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -124,6 +133,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             gamma:GAMMA,
             turn_limit:None,
+            timelimit_margin:TIMELIMIT_MARGIN,
             model_name: String::from("nn.bin")
         }
     }
@@ -263,6 +273,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
+        kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
         kinds.insert(String::from("NodesPerLeafNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("gamma"),SysEventOptionKind::Num);
         kinds.insert(String::from("ModelFile"),SysEventOptionKind::Str);
@@ -300,6 +311,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         options.insert(String::from("MaxDepth"),UsiOptType::Spin(1,100,Some(MAX_DEPTH as i64)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
+        options.insert(String::from("TIMELIMIT_MARGIN"),UsiOptType::Spin(0,1000,Some(TIMELIMIT_MARGIN as i64)));
         options.insert(String::from("NodesPerLeafNodes"), UsiOptType::Spin(1,593,Some(NODES_PER_LEAF_NODE as i64)));
         options.insert(String::from("gamma"), UsiOptType::Spin(1,100,Some(GAMMA as i64)));
         options.insert(String::from("ModelFile"),UsiOptType::Combo(Some(String::from("nn.bin")),paths));
@@ -332,6 +344,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             },
             "TurnLimit" => {
                 self.turn_limit = u32::from_option(value);
+            },
+            "TIMELIMIT_MARGIN" => {
+                self.timelimit_margin = u64::from_option(value).unwrap_or(TIMELIMIT_MARGIN);
             },
             "NodesPerLeafNodes" => {
                 self.nodes_per_leaf_node = u16::from_option(value).unwrap_or(NODES_PER_LEAF_NODE);
@@ -429,6 +444,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 teban,
                 limit,
                 self.turn_limit,
+                self.timelimit_margin,
                 (
                     self.turn_limit.map(|l| think_start_time + Duration::from_millis(l as u64)),
                     limit.and_then(move |l| l.to_instant(teban,think_start_time))
@@ -472,6 +488,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 teban,
                 limit,
                 self.turn_limit,
+                self.timelimit_margin,
                 (None,None),
                 self.base_depth,
                 self.max_depth,

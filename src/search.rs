@@ -87,6 +87,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub teban:Teban,
     pub limit:Option<UsiGoTimeLimit>,
     pub turn_limit:Option<u32>,
+    pub timelimit_margin:u64,
     pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
     pub max_depth:u32,
@@ -110,6 +111,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             teban:self.teban.clone(),
             limit:self.limit.clone(),
             turn_limit:self.turn_limit.clone(),
+            timelimit_margin:self.timelimit_margin.clone(),
             current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
             max_depth:self.max_depth,
@@ -143,6 +145,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                teban:Teban,
                limit:Option<UsiGoTimeLimit>,
                turn_limit:Option<u32>,
+               timelimit_margin:u64,
                current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
                max_depth:u32,
@@ -163,6 +166,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             teban:teban,
             limit:limit,
             turn_limit:turn_limit,
+            timelimit_margin:timelimit_margin,
             current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
             max_depth:max_depth,
@@ -207,7 +211,7 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     sender:Sender<Result<RootEvaluationResult, ApplicationError>>,
     thread_pool:ThreadPool
 }
-const TIMELIMIT_MARGIN:u64 = 100;
+pub const TIMELIMIT_MARGIN:u64 = 50;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -325,11 +329,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         let mut reached;
+        let timelimit_margin = env.timelimit_margin;
 
         match *env.current_limit.read() {
             (current_turn_lmit,current_limit) => {
-                reached = current_turn_lmit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
-                reached = reached || current_limit.map(|l| l - Instant::now() <= Duration::from_millis(TIMELIMIT_MARGIN)).unwrap_or(false);
+                reached = current_turn_lmit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
+                reached = reached || current_limit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
             }
         }
 
