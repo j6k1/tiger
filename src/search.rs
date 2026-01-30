@@ -207,7 +207,7 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
     sender:Sender<Result<RootEvaluationResult, ApplicationError>>,
     thread_pool:ThreadPool
 }
-const TIMELIMIT_MARGIN:u64 = 50;
+const TIMELIMIT_MARGIN:u64 = 100;
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -672,7 +672,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         }
 
-                        while depth > decided_depth {
+                        while depth - 1 > decided_depth {
                             if workings[decided_depth as usize] == 0 {
                                 decided_depth += 1;
                             }
@@ -739,7 +739,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 if self.timelimit_reached(env)? {
                     env.abort.store(true, Ordering::Release);
                 }
-                
+
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
