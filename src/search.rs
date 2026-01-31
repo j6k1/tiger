@@ -701,6 +701,10 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         }
 
                         move_orderer_quque.push_back(move_orderer);
+
+                        if busy_threads == 0 && last_depth {
+                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
+                        }
                     },
                     Ok(RootEvaluationResult::Timeout) => {
                         busy_threads -= 1;
@@ -792,10 +796,10 @@ pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
     m:PhantomData<M>
 }
 impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
-                                 S: InfoSender,
-                                 M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                    PreTrain<f32> + Send + Sync + 'static,
-                                 <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+                                   S: InfoSender,
+                                   M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                      PreTrain<f32> + Send + Sync + 'static,
+                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Recursive<L,S,M> {
         Recursive {
             l:PhantomData::<L>,
@@ -1145,19 +1149,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
     }
 }
 pub struct Inter<L,S,M> where L: Logger + Send + 'static,
-                                  S: InfoSender,
-                                  M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                  PreTrain<f32> + Send + Sync + 'static,
-                                  <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+                              S: InfoSender,
+                              M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                 PreTrain<f32> + Send + Sync + 'static,
+                              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
     m:PhantomData<M>
 }
 impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
-                                   S: InfoSender,
-                                   M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                   PreTrain<f32> + Send + Sync + 'static,
-                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+                               S: InfoSender,
+                               M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                  PreTrain<f32> + Send + Sync + 'static,
+                               <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Inter<L,S,M> {
         Inter {
             l:PhantomData::<L>,
@@ -1180,10 +1184,10 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
-                                                     S: InfoSender,
-                                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                     PreTrain<f32> + Send + Sync + 'static,
-                                                     <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+                                                        S: InfoSender,
+                                                        M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                                           PreTrain<f32> + Send + Sync + 'static,
+                                                        <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
                       mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError> {
