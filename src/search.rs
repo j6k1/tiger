@@ -736,22 +736,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
-                if env.stop.load(Ordering::Acquire) || env.abort.load(Ordering::Acquire) {
-                    for d in (1..=decided_depth).rev() {
-                        if result[d as usize].is_none() {
-                            decided_depth -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
-                }
-
-                if self.timelimit_reached(env)? {
-                    env.abort.store(true, Ordering::Release);
-                }
-
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
