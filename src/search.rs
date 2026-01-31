@@ -634,6 +634,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
         let mut busy_threads = 0;
         let mut remaining_threads = 0;
+        let mut last_depth = false;
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
 
@@ -677,9 +678,15 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         }
 
-                        while depth - 1 > decided_depth {
-                            if workings[decided_depth as usize] == 0 {
+                        if busy_threads == 0 && last_depth {
+                            while depth > decided_depth {
                                 decided_depth += 1;
+                            }
+                        } else {
+                            while depth - 1 > decided_depth {
+                                if workings[decided_depth as usize] == 0 {
+                                    decided_depth += 1;
+                                }
                             }
                         }
 
@@ -718,7 +725,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         return Err(e);
                     }
                 }
-            } else if busy_threads == 0 && remaining_threads > 0 {
+            } else if busy_threads == 0 && (remaining_threads > 0 || last_depth) {
                 for d in (1..=decided_depth).rev() {
                     if result[d as usize].is_none() {
                         decided_depth -= 1;
@@ -785,6 +792,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                 if depth > base_depth {
                     remaining_threads = busy_threads;
+                    last_depth = true;
                 }
             }
         }
