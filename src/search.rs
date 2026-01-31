@@ -666,6 +666,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mvs = Arc::new(mvs);
 
         env.abort.store(false,Ordering::Release);
+        env.stop.store(false, Ordering::Release);
 
         loop {
             if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0) {
@@ -686,6 +687,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             while depth - 1 > decided_depth {
                                 if workings[decided_depth as usize] == 0 {
                                     decided_depth += 1;
+                                } else {
+                                    break;
                                 }
                             }
                         }
