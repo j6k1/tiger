@@ -313,7 +313,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
         options.insert(String::from("TIMELIMIT_MARGIN"),UsiOptType::Spin(0,60000,Some(TIMELIMIT_MARGIN as i64)));
         options.insert(String::from("NodesPerLeafNodes"), UsiOptType::Spin(1,593,Some(NODES_PER_LEAF_NODE as i64)));
-        options.insert(String::from("gamma"), UsiOptType::Spin(1,100,Some(GAMMA as i64)));
+        options.insert(String::from("gamma"), UsiOptType::Spin(1,500,Some(GAMMA as i64)));
         options.insert(String::from("ModelFile"),UsiOptType::Combo(Some(String::from("nn.bin")),paths));
 
         Ok(options)

@@ -635,6 +635,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut busy_threads = 0;
         let mut remaining_threads = 0;
         let mut last_depth = false;
+        let mut search_done_threads = vec![0;max_depth+1];
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
 
@@ -674,6 +675,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, move_orderer)) => {
                         busy_threads -= 1;
                         workings[depth as usize] -= 1;
+                        search_done_threads[depth as usize] += 1;
 
                         if let Err(e) = env.info_sender.flush() {
                             let _ = env.on_error_handler.lock().map(|h| h.call(&e));
@@ -743,7 +745,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
-                if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 {
+                if env.nodes.load(Ordering::Acquire) as u128 >= search_space * gamma as u128 / 100 ||
+                    search_done_threads[depth as usize] >= env.max_threads {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
 
