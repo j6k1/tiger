@@ -631,6 +631,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
     }
 }
+const MIN_INCREASE_NODES:u64 = 100;
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
                                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -651,6 +652,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut remaining_threads = 0;
         let mut last_depth = false;
         let mut search_done_threads = vec![0;max_depth+1];
+        let mut before_nodes = 0;
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
 
@@ -770,7 +772,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space ||
-                    search_done_threads[depth as usize] >= env.max_threads {
+                    search_done_threads[depth as usize] >= env.max_threads ||
+                    env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
 
@@ -783,6 +786,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
                 }
+
+                before_nodes = env.nodes.load(Ordering::Acquire);
 
                 gs.depth = depth;
                 gs.base_depth = depth;
