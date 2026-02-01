@@ -133,12 +133,14 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
 pub enum EvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>),
     Timeout,
+    Stop,
     Repetition
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, MoveOrderer),
     Timeout,
+    Stop,
     Repetition
 }
 impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
@@ -602,6 +604,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 Ok(EvaluationResult::Repetition) => {
                     let _ = sender.send(Ok(RootEvaluationResult::Repetition));
                 },
+                Ok(EvaluationResult::Stop) => {
+                    let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                },
                 Err(e) => {
                     let _ = sender.send(Err(e));
                 }
@@ -631,8 +636,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
     }
 }
-const MIN_INCREASE_NODES:u64 = 3;
-const MIN_INCREASE_NODES_MARGIN:u64 = 0;
+const MIN_INCREASE_NODES:u64 = 5;
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
                                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -685,7 +689,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mvs = Arc::new(mvs);
 
         env.abort.store(false,Ordering::Release);
-        env.stop.store(false, Ordering::Release);
 
         loop {
             if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || pending_results.load(Ordering::SeqCst) > 0) {
@@ -747,6 +750,9 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                             return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
                         },
+                        Ok(RootEvaluationResult::Stop) => {
+                            return Ok(EvaluationResult::Stop);
+                        },
                         Ok(RootEvaluationResult::Repetition) => {
                             busy_threads -= 1;
 
@@ -769,6 +775,31 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
                 }
+
+                if depth <= base_depth {
+                    if search_done_threads[depth as usize] >= env.max_threads ||
+                        env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES.pow(depth as u32 - 1) * mvs.len() as u64 {
+                        depth += 1;
+
+                        if depth > base_depth && busy_threads == 0 {
+                            while decided_depth < base_depth {
+                                decided_depth += 1;
+                            }
+                        } else {
+                            decided_depth = depth - 1;
+
+                            while decided_depth > 0 {
+                                if already_started[decided_depth as usize] && workings[decided_depth as usize] == 0 {
+                                    break;
+                                } else {
+                                    decided_depth -= 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                before_nodes = env.nodes.load(Ordering::Acquire);
             } else if busy_threads == 0 && (remaining_threads > 0 || last_depth) {
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
@@ -783,15 +814,15 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         while decided_depth < base_depth {
                             decided_depth += 1;
                         }
-                    }
-                } else if search_done_threads[depth as usize] >= env.max_threads ||
-                          env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES.pow(depth as u32 - 1) +
-                                                                             MIN_INCREASE_NODES_MARGIN {
-                    depth += 1;
+                    } else {
+                        decided_depth = depth - 1;
 
-                    if depth > base_depth && busy_threads == 0 {
-                        while decided_depth < base_depth {
-                            decided_depth += 1;
+                        while decided_depth > 0 {
+                            if already_started[decided_depth as usize] && workings[decided_depth as usize] == 0 {
+                                break;
+                            } else {
+                                decided_depth -= 1;
+                            }
                         }
                     }
                 }
@@ -931,7 +962,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let (mk,sk) = gs.zh.keys();
 
-        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+        if env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Stop);
+        }
+
+        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
 
@@ -941,7 +976,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
-        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+        if env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Stop);
+        }
+
+        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
 
@@ -1025,7 +1064,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
             prev_move.map(|m| mvs.push_front(m));
 
-            return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone()))
+            if env.stop.load(Ordering::Acquire) {
+                return Ok(EvaluationResult::Stop);
+            } else {
+                return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone()));
+            }
         }
 
         let start_alpha = gs.alpha;
@@ -1115,6 +1158,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 env.history.remove(&(gs.teban,mk,sk));
 
                                 return Ok(EvaluationResult::Timeout);
+                            },
+                            EvaluationResult::Stop => {
+                                env.history.remove(&(gs.teban,mk,sk));
+
+                                return Ok(EvaluationResult::Stop);
                             },
                             EvaluationResult::Repetition => {
 
@@ -1209,6 +1257,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                         return Ok(EvaluationResult::Timeout);
                     },
+                    EvaluationResult::Stop => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Stop);
+                    },
                     EvaluationResult::Repetition => {
                     }
                 }
@@ -1272,7 +1325,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         let (mk,sk) = gs.zh.keys();
 
-        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+        if env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Stop);
+        }
+
+        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
 
@@ -1286,7 +1343,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         event_dispatcher.dispatch_events(&recur,&env.event_queue)?;
 
-        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+        if env.stop.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Stop);
+        }
+
+        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
 
@@ -1368,6 +1429,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     env.history.remove(&(gs.teban,mk,sk));
 
                     return Ok(EvaluationResult::Timeout);
+                },
+                EvaluationResult::Stop => {
+                    env.history.remove(&(gs.teban,mk,sk));
+
+                    return Ok(EvaluationResult::Stop);
                 },
                 EvaluationResult::Repetition => {
                 }

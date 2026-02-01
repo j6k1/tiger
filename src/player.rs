@@ -236,6 +236,12 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
 
                         BestMove::Resign
                     },
+                    Ok(EvaluationResult::Stop) => {
+                        strategy.send_message(&mut env,"stop!")?;
+                        env.info_sender.flush()?;
+
+                        BestMove::Resign
+                    },
                     Ok(EvaluationResult::Repetition) => {
                         strategy.send_message(&mut env,"repetition!")?;
                         env.info_sender.flush()?;
