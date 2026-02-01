@@ -138,7 +138,7 @@ pub enum EvaluationResult {
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
-    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, MoveOrderer),
+    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, usize, MoveOrderer),
     Timeout,
     Stop,
     Repetition
@@ -596,7 +596,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
             match r {
                 Ok(EvaluationResult::Immediate(score,mvs,zh)) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,env.move_orderer)));
+                    let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,search_offset,env.move_orderer)));
                 },
                 Ok(EvaluationResult::Timeout) => {
                     let _ = sender.send(Ok(RootEvaluationResult::Timeout));
@@ -636,7 +636,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
     }
 }
-const MIN_INCREASE_NODES:u64 = 5;
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
                                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -657,7 +656,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut remaining_threads = 0;
         let mut last_depth = false;
         let mut search_done_threads = vec![0;max_depth+1];
-        let mut before_nodes = 0;
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
 
@@ -666,7 +664,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut mvs = Vec::new();
         let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
         let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
-        let mut leafnodes_seacch_space:u128 = search_space * nodes_per_leaf_node;
+        let mut leafnodes_seacch_space:u128 = nodes_per_leaf_node;
         let gamma = env.gamma;
 
         if Rule::in_check(gs.teban.opposite(),&gs.state) {
@@ -694,7 +692,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
             if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || pending_results.load(Ordering::SeqCst) > 0) {
                 while pending_results.load(Ordering::Acquire) > 0 {
                     match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                        Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, move_orderer)) => {
+                        Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth,search_offset, move_orderer)) => {
                             busy_threads -= 1;
                             workings[depth as usize] -= 1;
                             search_done_threads[depth as usize] += 1;
@@ -705,11 +703,15 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                 let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                             }
 
-                            if busy_threads == 0 && last_depth {
-                                while depth > decided_depth {
-                                    decided_depth += 1;
-                                }
+                            // If you're examining the root node with search_offset=0,
+                            // you should have already exhausted all legal moves at this depth.
+                            // Therefore, once the result of exploring nodes up to max_depth is returned,
+                            // it can be considered finalized.
+                            if search_offset == 0 && depth == base_depth {
+                                decided_depth = depth;
                             } else {
+                                // Otherwise, since this depth is still under exploration,
+                                // the confirmed depth is the deepest explored node that has been completed at a depth less than this one.
                                 decided_depth = depth - 1;
 
                                 while decided_depth > 0 {
@@ -737,7 +739,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                                            decided_depth, result[decided_depth as usize].is_some()
                             ).as_str())?;
 
-                            if busy_threads == 0 && last_depth {
+                            if busy_threads == 0 && last_depth && decided_depth == depth {
                                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
                             }
                         },
@@ -751,7 +753,13 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
                         },
                         Ok(RootEvaluationResult::Stop) => {
-                            return Ok(EvaluationResult::Stop);
+                            busy_threads -= 1;
+
+                            pending_results.fetch_sub(1, Ordering::SeqCst);
+
+                            self.termination(env, busy_threads, &pending_results)?;
+
+                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Stop));
                         },
                         Ok(RootEvaluationResult::Repetition) => {
                             busy_threads -= 1;
@@ -775,31 +783,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
                 }
-
-                if depth <= base_depth {
-                    if search_done_threads[depth as usize] >= env.max_threads ||
-                        env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES.pow(depth as u32 - 1) * mvs.len() as u64 {
-                        depth += 1;
-
-                        if depth > base_depth && busy_threads == 0 {
-                            while decided_depth < base_depth {
-                                decided_depth += 1;
-                            }
-                        } else {
-                            decided_depth = depth - 1;
-
-                            while decided_depth > 0 {
-                                if already_started[decided_depth as usize] && workings[decided_depth as usize] == 0 {
-                                    break;
-                                } else {
-                                    decided_depth -= 1;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                before_nodes = env.nodes.load(Ordering::Acquire);
             } else if busy_threads == 0 && (remaining_threads > 0 || last_depth) {
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
@@ -810,11 +793,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     search_space = search_space + leafnodes_seacch_space;
                     search_space = search_space * gamma as u128 / 100;
 
-                    if depth > base_depth && busy_threads == 0 {
-                        while decided_depth < base_depth {
-                            decided_depth += 1;
-                        }
-                    } else {
+                    if depth <= base_depth {
                         decided_depth = depth - 1;
 
                         while decided_depth > 0 {
@@ -826,8 +805,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
                 }
-
-                before_nodes = env.nodes.load(Ordering::Acquire);
 
                 gs.depth = depth;
                 gs.base_depth = depth;
@@ -857,7 +834,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     busy_threads += 1;
                 }
 
-                if depth > base_depth {
+                if depth >= base_depth {
                     remaining_threads = busy_threads;
                     last_depth = true;
                 }
@@ -1316,8 +1293,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
                       mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError> {
-        env.nodes.fetch_add(1,Ordering::Release);
-
         let recur = Recursive::new();
 
         let limit = env.limit.clone();
