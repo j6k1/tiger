@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
@@ -236,6 +236,12 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
 
                         BestMove::Resign
                     },
+                    Ok(EvaluationResult::Repetition) => {
+                        strategy.send_message(&mut env,"repetition!")?;
+                        env.info_sender.flush()?;
+
+                        BestMove::Resign
+                    },
                     Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
                         BestMove::Resign
                     },
@@ -454,6 +460,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,
+                HashSet::new(),
                 &transposition_table
             );
 
@@ -495,6 +502,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,
+                HashSet::new(),
                 &transposition_table
             );
 
