@@ -631,7 +631,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         }
     }
 }
-const MIN_INCREASE_NODES:u64 = 100;
+const MIN_INCREASE_NODES:u64 = 3;
+const MIN_INCREASE_NODES_MARGIN:u64 = 0;
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
                                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -771,14 +772,22 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
             } else if busy_threads == 0 && (remaining_threads > 0 || last_depth) {
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
-                if env.nodes.load(Ordering::Acquire) as u128 >= search_space ||
-                    search_done_threads[depth as usize] >= env.max_threads ||
-                    env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES {
+                if env.nodes.load(Ordering::Acquire) as u128 >= search_space {
                     depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
 
                     search_space = search_space + leafnodes_seacch_space;
                     search_space = search_space * gamma as u128 / 100;
+
+                    if depth > base_depth && busy_threads == 0 {
+                        while decided_depth < base_depth {
+                            decided_depth += 1;
+                        }
+                    }
+                } else if search_done_threads[depth as usize] >= env.max_threads ||
+                          env.nodes.load(Ordering::Acquire) < before_nodes + MIN_INCREASE_NODES.pow(depth as u32 - 1) +
+                                                                             MIN_INCREASE_NODES_MARGIN {
+                    depth += 1;
 
                     if depth > base_depth && busy_threads == 0 {
                         while decided_depth < base_depth {
