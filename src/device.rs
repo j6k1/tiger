@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-
+use std::simd::Simd;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
@@ -27,48 +27,88 @@ pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a Self::BatchOutput) -> Result<T,TrainingError>;
     fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a Self::BatchOutput) -> Result<B,TrainingError>;
 }
-impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> for DeviceCpu<U> 
-    where U: UnitValue<U>, [(); NO*2]: {
+#[cfg(target_feature = "avx512f")]
+pub const LANES_F32: usize = 16;
 
-    type Output = Arr<U,{NO*2}>;
-    type BatchOutput = SerializedVec<U,Arr<U,{NO*2}>>;
+#[cfg(all(target_feature = "avx2", not(target_feature = "avx512f")))]
+pub const LANES_F32: usize = 8;
+
+#[cfg(all(target_arch = "aarch64", not(any(target_feature = "avx2", target_feature = "avx512f"))))]
+pub const LANES_F32: usize = 4;
+
+#[cfg(not(any(
+    target_feature = "avx2",
+    target_feature = "avx512f",
+    target_arch = "aarch64"
+)))]
+pub const LANES_F32: usize = 4;
+impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+    where [(); NO*2]: {
+
+    type Output = Arr<f32,{NO*2}>;
+    type BatchOutput = SerializedVec<f32,Arr<f32,{NO*2}>>;
     #[inline]
-    fn forward_feature_transform<'a>(&self,bias:&Arr<U,NO>,units:&Arr2<U,NI,NO>,input:HalfKPView<'a,NI>) 
-        -> Result<Arr<U,{NO*2}>,EvaluateError> {
-        let mut so = Vec::with_capacity(NO);
-        let mut oo = Vec::with_capacity(NO);
+    fn forward_feature_transform<'a>(&self,bias:&Arr<f32,NO>,units:&Arr2<f32,NI,NO>,input:HalfKPView<'a,NI>)
+        -> Result<Arr<f32,{NO*2}>,EvaluateError> {
+        let mut result = [0.0;NO*2];
 
-        so.extend_from_slice(&bias);
+        let mut oi = 0;
 
-        let it = input.iter().nth(0);
+        for (i,indexes) in input.iter().enumerate() {
+            while oi + LANES_F32 <= NO * (i + 1) {
+                let mut acc = Simd::<f32,LANES_F32>::splat(0.0);
 
-        let mut so = so.iter().enumerate().map(|(oi,&o)| {
-            it.map(|it| it.iter().fold(o,|acc,&i| acc + units[(i,oi)])).unwrap_or(o)
-        }).collect::<Vec<U>>();
+                for index in indexes.iter() {
+                    units.iter().nth(*index).map(|w| {
+                        let w_row = &w[(oi - NO * i)..];
+                        let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]);
 
-        oo.extend_from_slice(&bias);
+                        acc += wv;
+                    });
+                }
 
-        let it = input.iter().nth(1);
+                let bias = bias.as_raw_slice();
+                let bias = &bias[(oi - NO * i)..];
 
-        let oo = oo.iter().enumerate().map(|(oi,&o)| {
-            it.map(|it| it.iter().fold(o,|acc,&i| acc + units[(i,oi)])).unwrap_or(o)
-        }).collect::<Vec<U>>();
+                acc += Simd::<f32,LANES_F32>::from_slice(&bias[..LANES_F32]);
 
-        so.extend_from_slice(&oo);
+                acc.copy_to_slice(&mut result[(oi)..(oi + LANES_F32)]);
 
-        Ok(so.try_into()?)
+                oi += LANES_F32;
+            }
+
+            if NO % LANES_F32 > 0 {
+                let offset = NO / LANES_F32 * LANES_F32 + (NO * i);
+
+                for oi in offset..(NO * (i + 1)){
+                    let mut acc = 0.;
+
+                    for index in indexes.iter() {
+                        units.iter().nth(*index).map(|w| {
+                            acc += w[oi - NO * i];
+                        });
+                    }
+
+                    result[oi] += bias[oi - (NO * i)];
+                }
+            }
+
+            oi = NO;
+        }
+
+        Ok(Arr::from(result))
     }
 
     #[inline]
-    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a Arr<U,{NO*2}>) -> Result<Arr2<U,NI,NO>,TrainingError> {
-        let mut acc = Arr2::<U,NI,NO>::new();
+    fn backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPView<'a,NI>,loss:&'a Arr<f32,{NO*2}>) -> Result<Arr2<f32,NI,NO>,TrainingError> {
+        let mut acc = Arr2::<f32,NI,NO>::new();
 
         let (sl,ol) = loss.split_at(NO);
 
-        let sl = <&[U;NO]>::try_from(sl)?;
-        let ol = <&[U;NO]>::try_from(ol)?;
+        let sl = <&[f32;NO]>::try_from(sl)?;
+        let ol = <&[f32;NO]>::try_from(ol)?;
 
-        let input = input.to_vec::<U>();
+        let input = input.to_vec::<f32>();
 
         let (si,oi) = input.split_at(NI);
 
@@ -84,8 +124,8 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a Arr<U,{NO*2}>) -> Result<Arr<U,NO>,TrainingError> {
-        let mut acc = Arr::<U,NO>::new();
+    fn backward_feature_transform_bias_gradient<'a>(&self,loss:&'a Arr<f32,{NO*2}>) -> Result<Arr<f32,NO>,TrainingError> {
+        let mut acc = Arr::<f32,NO>::new();
 
         {
             let (sl,ol) = loss.as_raw_slice().split_at(NO);
@@ -103,27 +143,27 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn batch_forward_feature_transform<'a>(&self,bias:&Arr<U,NO>,units:&Arr2<U,NI,NO>,input:HalfKPListView<'a,NI>)
-         -> Result<SerializedVec<U,Arr<U,{NO*2}>>,TrainingError> {
+    fn batch_forward_feature_transform<'a>(&self,bias:&Arr<f32,NO>,units:&Arr2<f32,NI,NO>,input:HalfKPListView<'a,NI>)
+         -> Result<SerializedVec<f32,Arr<f32,{NO*2}>>,TrainingError> {
         
         Ok(<&'a Vec<HalfKP<NI>>>::from(input).par_iter().map(|input| {
             self.forward_feature_transform(bias, units, input.into())
-        }).collect::<Result<Vec<Arr<U,{NO*2}>>,EvaluateError>>()?.into())
+        }).collect::<Result<Vec<Arr<f32,{NO*2}>>,EvaluateError>>()?.into())
     }
 
     #[inline]
-    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a SerializedVec<U,Arr<U,{NO*2}>>)
-        -> Result<Arr2<U,NI,NO>,TrainingError> {
+    fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a SerializedVec<f32,Arr<f32,{NO*2}>>)
+        -> Result<Arr2<f32,NI,NO>,TrainingError> {
 
         <&'a Vec<HalfKP<NI>>>::from(input).par_iter().zip(loss.par_iter()).map(|(i,loss)| {
-            let mut acc = Arr2::<U,NI,NO>::new();
+            let mut acc = Arr2::<f32,NI,NO>::new();
 
             let (sl,ol) = loss.split_at(NO);
 
-            let sl = <&[U;NO]>::try_from(sl)?;
-            let ol = <&[U;NO]>::try_from(ol)?;
+            let sl = <&[f32;NO]>::try_from(sl)?;
+            let ol = <&[f32;NO]>::try_from(ol)?;
 
-            let input = i.to_vec::<U>();
+            let input = i.to_vec::<f32>();
 
             let (si,oi) = input.split_at(NI);
 
@@ -151,8 +191,8 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
     }
 
     #[inline]
-    fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a SerializedVec<U,Arr<U,{NO*2}>>) -> Result<Arr<U,NO>,TrainingError> {
-        let g = loss.par_iter().fold(|| Arr::<U,{NO*2}>::new(), | mut acc, loss | {
+    fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a SerializedVec<f32,Arr<f32,{NO*2}>>) -> Result<Arr<f32,NO>,TrainingError> {
+        let g = loss.par_iter().fold(|| Arr::<f32,{NO*2}>::new(), | mut acc, loss | {
             for (acc,&loss) in acc.iter_mut().zip(loss.iter()) {
                 *acc += loss;
             }
@@ -166,7 +206,7 @@ impl<U,const NI: usize,const NO:usize> DeviceFeatureTransform<U,Arr2<U,NI,NO>,Ar
             acc
         });
 
-        let mut acc = Arr::<U,NO>::new();
+        let mut acc = Arr::<f32,NO>::new();
 
         {
             let (sl,ol) = g.as_raw_slice().split_at(NO);

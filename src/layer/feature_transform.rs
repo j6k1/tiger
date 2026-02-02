@@ -389,6 +389,7 @@ impl<U,P,I,A,OP,const NI:usize,const NO:usize> UpdateWeight<U>
 impl<U,P,I,OP,const NI:usize,const NO:usize> Loss<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
     where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> +
              BackwardAll<U,LossInput=()> + Loss<U> + 'static,
+          DeviceCpu<U>: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
@@ -590,6 +591,7 @@ impl<U,P,I,OP,const NI:usize,const NO:usize> BatchLoss<U> for FeatureTransformLa
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchForward +
              BatchPreTrainBase<U> + BatchPreTrain<U,BatchPreOutput=<HalfKP<NI> as BatchDataType>::Type> + BatchBackward<U> +
              BatchLoss<U,BatchLossInput=()> + 'static,
+          DeviceCpu<U>: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static + BatchDataType,
           OP: Optimizer<U,DeviceCpu<U>> + 'static,
