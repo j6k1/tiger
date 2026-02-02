@@ -646,7 +646,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError> {
         let base_depth = gs.depth.min(env.base_depth);
         let max_depth = (env.max_depth).max(base_depth) as usize;
-        let mut depth = 1;
+        let mut current_depth = 1;
         let mut already_started = vec![false;max_depth+1];
         let mut workings = vec![0;max_depth+1];
         let pending_results = Arc::new(AtomicUsize::new(0));
@@ -664,7 +664,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut mvs = Vec::new();
         let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
         let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
-        let mut leafnodes_seacch_space:u128 = nodes_per_leaf_node;
+        let mut leafnodes_seacch_space:u128 = mvs.len() as u128;
         let gamma = env.gamma;
 
         if Rule::in_check(gs.teban.opposite(),&gs.state) {
@@ -703,26 +703,6 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                 let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                             }
 
-                            // If you're examining the root node with search_offset=0,
-                            // you should have already exhausted all legal moves at this depth.
-                            // Therefore, once the result of exploring nodes up to max_depth is returned,
-                            // it can be considered finalized.
-                            if search_offset == 0 && depth == base_depth {
-                                decided_depth = depth;
-                            } else {
-                                // Otherwise, since this depth is still under exploration,
-                                // the confirmed depth is the deepest explored node that has been completed at a depth less than this one.
-                                decided_depth = depth - 1;
-
-                                while decided_depth > 0 {
-                                    if already_started[decided_depth as usize] && workings[decided_depth as usize] == 0 {
-                                        break;
-                                    } else {
-                                        decided_depth -= 1;
-                                    }
-                                }
-                            }
-
                             match result[depth as usize] {
                                 Some(EvaluationResult::Immediate(bs, _, _)) if s >= bs => {
                                     result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
@@ -733,15 +713,41 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                 _ => ()
                             }
 
+                            // If you're examining the root node with search_offset=0,
+                            // you should have already exhausted all legal moves at this depth.
+                            // Therefore, once the result of exploring nodes up to max_depth is returned,
+                            // it can be considered finalized.
+                            if search_offset == 0 && depth == base_depth {
+                                decided_depth = depth;
+
+                                self.termination(env, busy_threads, &pending_results)?;
+
+                                return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
+                            // When search_offset=0,
+                            // all legal moves at the root node should have been examined at this search depth,
+                            // so it is considered searched.
+                            } else if search_offset == 0 {
+                                if depth > decided_depth {
+                                    decided_depth = depth;
+                                }
+
+                                if depth >= current_depth {
+                                    while current_depth <= depth {
+                                        current_depth += 1;
+
+                                        leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
+
+                                        search_space = search_space + leafnodes_seacch_space;
+                                        search_space = search_space * gamma as u128 / 100;
+                                    }
+                                }
+                            }
+
                             move_orderer_quque.push_back(move_orderer);
 
                             self.send_message(env, format!("decided_depth = {}, {}",
                                                            decided_depth, result[decided_depth as usize].is_some()
                             ).as_str())?;
-
-                            if busy_threads == 0 && last_depth && decided_depth == depth {
-                                return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
-                            }
                         },
                         Ok(RootEvaluationResult::Timeout) => {
                             busy_threads -= 1;
@@ -787,38 +793,26 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
             } else {
                 if env.nodes.load(Ordering::Acquire) as u128 >= search_space {
-                    depth += 1;
+                    current_depth += 1;
                     leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
 
                     search_space = search_space + leafnodes_seacch_space;
                     search_space = search_space * gamma as u128 / 100;
-
-                    if depth <= base_depth {
-                        decided_depth = depth - 1;
-
-                        while decided_depth > 0 {
-                            if already_started[decided_depth as usize] && workings[decided_depth as usize] == 0 {
-                                break;
-                            } else {
-                                decided_depth -= 1;
-                            }
-                        }
-                    }
                 }
 
-                gs.depth = depth;
-                gs.base_depth = depth;
+                gs.depth = current_depth;
+                gs.base_depth = current_depth;
                 gs.max_depth = max_depth as u32;
 
-                if depth <= base_depth {
-                    let search_offset = if !already_started[depth as usize] {
-                        already_started[depth as usize] = true;
+                if current_depth <= base_depth {
+                    let search_offset = if !already_started[current_depth as usize] {
+                        already_started[current_depth as usize] = true;
                         0
                     } else {
                   gs.rng.gen::<usize>() % (mvs.len() / 4).max(1)
                     };
 
-                    workings[depth as usize] += 1;
+                    workings[current_depth as usize] += 1;
 
                     let mvs = Arc::clone(&mvs);
 
@@ -834,7 +828,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     busy_threads += 1;
                 }
 
-                if depth >= base_depth {
+                if current_depth >= base_depth {
                     remaining_threads = busy_threads;
                     last_depth = true;
                 }
