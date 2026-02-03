@@ -200,6 +200,7 @@ pub struct GameState<'a> {
     pub best_score:Score,
     pub m:Option<LegalMove>,
     pub prev_kind:KomaKind,
+    pub pv:&'a VecDeque<LegalMove>,
     pub mc:&'a Arc<MochigomaCollections>,
     pub zh:ZobristHash<u64>,
     pub depth:u32,
@@ -551,6 +552,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                            env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                            mvs: Arc<Vec<LegalMove>>,
                            search_offset:usize,
+                           pv:VecDeque<LegalMove>,
                            evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer) {
         let sender = self.sender.clone();
         let teban = gs.teban;
@@ -562,7 +564,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
         let depth = gs.depth;
-        let current_depth = 1;
+        let current_depth = 0;
         let base_depth = gs.base_depth;
         let max_depth = gs.max_depth;
         let best_score = gs.best_score;
@@ -579,6 +581,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 best_score: best_score,
                 m: None,
                 prev_kind: KomaKind::Blank,
+                pv:&pv,
                 mc: &mc,
                 zh: zh,
                 depth: depth,
@@ -818,9 +821,19 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                     let pending_results = Arc::clone(&pending_results);
 
+                    let pv = if decided_depth == 0 || search_offset != 0 {
+                        VecDeque::new()
+                    } else if let Some(EvaluationResult::Immediate(_, ref mvs, _)) = result[decided_depth as usize].as_ref() {
+                        mvs.clone()
+                    } else {
+                        VecDeque::new()
+                    };
+
                     self.start_thread(pending_results,
                                       env,gs,mvs,
-                                      search_offset,evalutor,
+                                      search_offset,
+                                      pv,
+                                      evalutor,
                                       move_orderer_quque
                                           .pop_front()
                                           .unwrap_or(MoveOrderer::new(max_depth)));
@@ -863,7 +876,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
     }
 
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
-                                     m:LegalMove,alpha:Score,
+                                     m:LegalMove,pv:&VecDeque<LegalMove>,
+                                     alpha:Score,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let o = match m {
@@ -906,6 +920,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     best_score: gs.best_score,
                     m: Some(m),
                     prev_kind: prev_kind,
+                    pv:pv,
                     mc: &mc,
                     zh: zh.clone(),
                     depth: depth - 1,
@@ -1058,16 +1073,55 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         env.history.insert((gs.teban,mk,sk));
 
+        let mut pv_move = None;
+        let mut tt_move = None;
+
+        let pv_non = VecDeque::new();
+
         for i in 0..count {
             if i == 0 {
-                if let Some(TTPartialEntry {
-                                depth: _,
-                                score: _,
-                                beta: _,
-                                alpha: _,
-                                best_move: m
-                            }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
-                    if let Some(m) = m {
+                tt_move = if let Some(TTPartialEntry {
+                                              depth: _,
+                                              score: _,
+                                              beta: _,
+                                              alpha: _,
+                                              best_move: m
+                                          }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
+                    m
+                } else {
+                    None
+                };
+
+                pv_move = if gs.pv.len() > gs.current_depth as usize {
+                    Some(gs.pv[gs.current_depth as usize])
+                } else {
+                    None
+                };
+
+                {
+                    let mvs = if let Some(pv) = pv_move {
+                        if let Some(m) = tt_move {
+                            vec![pv, m]
+                        } else {
+                            vec![pv]
+                        }
+                    } else {
+                        if let Some(m) = tt_move {
+                            vec![m]
+                        } else {
+                            vec![]
+                        }
+                    };
+
+                    for m in mvs {
+                        let pv = pv_move.map(|pv| {
+                            if pv == m {
+                                gs.pv
+                            } else {
+                                &pv_non
+                            }
+                        }).unwrap_or(&pv_non);
+
                         if self.is_obtained_ou(m)? {
                             let mut mvs = VecDeque::new();
 
@@ -1078,7 +1132,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
                         }
 
-                        match self.search_child_node(env, gs, m, alpha, event_dispatcher, evalutor)? {
+                        match self.search_child_node(env, gs, m, pv, alpha, event_dispatcher, evalutor)? {
                             EvaluationResult::Immediate(s, mvs, zh) => {
                                 self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
 
@@ -1088,7 +1142,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     scoreval = s;
 
                                     best_moves = mvs;
-                                    prev_move.map(|m| best_moves.push_front(m));
 
                                     self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
@@ -1116,6 +1169,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         };
 
                                         env.history.remove(&(gs.teban,mk,sk));
+
+                                        prev_move.map(|m| best_moves.push_front(m));
 
                                         return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                                     }
@@ -1153,6 +1208,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
             for m in env.move_orderer.ordering(
                 &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)? {
+
+                if pv_move.map(|pv | pv == m).unwrap_or(false) {
+                    continue;
+                }
+
+                if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
+                    continue;
+                }
+
                 if self.is_obtained_ou(m)? {
                     let mut mvs = VecDeque::new();
 
@@ -1163,7 +1227,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                 }
 
-                match self.search_child_node(env,gs,m,alpha,event_dispatcher,evalutor)? {
+                match self.search_child_node(env,gs,m,&pv_non,alpha,event_dispatcher,evalutor)? {
                     EvaluationResult::Immediate(s, mvs, zh) => {
                         self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
 
@@ -1187,7 +1251,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             scoreval = s;
 
                             best_moves = mvs;
-                            prev_move.map(|m| best_moves.push_front(m));
 
                             self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
 
@@ -1215,6 +1278,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 };
                                 env.history.remove(&(gs.teban,mk,sk));
 
+                                prev_move.map(|m| best_moves.push_front(m));
+
                                 return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
                             }
                         }
@@ -1240,6 +1305,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         env.history.remove(&(gs.teban,mk,sk));
+
+        prev_move.map(|m| best_moves.push_front(m));
 
         Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()))
     }
@@ -1271,12 +1338,14 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
     }
 
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
-                                    m:LegalMove,alpha:Score,
+                                    m:LegalMove,
+                                    pv:&VecDeque<LegalMove>,
+                                    alpha:Score,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,alpha,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -1320,6 +1389,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             return Ok(EvaluationResult::Timeout);
         }
 
+        let prev_move = gs.m.clone();
+
         let start_alpha = gs.alpha;
         let mut alpha = gs.alpha;
         let beta = gs.beta;
@@ -1328,20 +1399,143 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         env.history.insert((gs.teban,mk,sk));
 
+        let tt_move = if let Some(TTPartialEntry {
+                        depth: _,
+                        score: _,
+                        beta: _,
+                        alpha: _,
+                        best_move: m
+                    }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
+            m
+        } else {
+            None
+        };
+
+        let pv_move = if gs.pv.len() > gs.current_depth as usize {
+            Some(gs.pv[gs.current_depth as usize])
+        } else {
+            None
+        };
+
+        let pv_non = VecDeque::new();
+
+        {
+            let mvs = if let Some(pv) = pv_move {
+                if let Some(m) = tt_move {
+                    vec![pv, m]
+                } else {
+                    vec![pv]
+                }
+            } else {
+                if let Some(m) = tt_move {
+                    vec![m]
+                } else {
+                    vec![]
+                }
+            };
+
+            for m in mvs {
+                if self.is_obtained_ou(m)? {
+                    let mut mvs = VecDeque::new();
+
+                    mvs.push_front(m);
+                    env.history.remove(&(gs.teban,mk,sk));
+
+                    return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                }
+
+                let pv = pv_move.map(|pv| {
+                    if pv == m {
+                        gs.pv
+                    } else {
+                        &pv_non
+                    }
+                }).unwrap_or(&pv_non);
+
+                match recur.search_child_node(env, gs, m, pv, alpha, &mut event_dispatcher, evalutor)? {
+                    EvaluationResult::Immediate(s, mvs, zh) => {
+                        recur.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
+
+                        let s = -s;
+
+                        if s > scoreval {
+                            scoreval = s;
+
+                            best_moves = mvs;
+
+                            recur.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
+
+                            if scoreval >= beta {
+                                match m {
+                                    LegalMove::To(mv) if mv.obtained().is_none() => {
+                                        if !mv.is_nari() {
+                                            env.move_orderer.update_killer(gs.current_depth as usize, m)?;
+                                            let _ = prev_move.map(|prev_move| {
+                                                env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                            }).unwrap_or(Ok(()))?;
+                                        }
+
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                    },
+                                    LegalMove::Put(_) => {
+                                        env.move_orderer.update_killer(gs.current_depth as usize,m)?;
+                                        let _ = prev_move.map(|prev_move| {
+                                            env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
+                                        }).unwrap_or(Ok(()))?;
+
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                    },
+                                    _ => ()
+                                };
+
+                                env.history.remove(&(gs.teban,mk,sk));
+
+                                return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                            }
+                        }
+
+                        if alpha < s {
+                            alpha = s;
+                        }
+                    },
+                    EvaluationResult::Timeout => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Timeout);
+                    },
+                    EvaluationResult::Stop => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Stop);
+                    },
+                    EvaluationResult::Repetition => {
+
+                    }
+                }
+            }
+        }
+
         for m in env.move_orderer.ordering(
             mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset) {
+
+            if pv_move.map(|pv | pv == m).unwrap_or(false) {
+                continue;
+            }
+
+            if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
+                continue;
+            }
 
             if self.is_obtained_ou(m)? {
                 let mut mvs = VecDeque::new();
 
                 mvs.push_front(m);
-
                 env.history.remove(&(gs.teban,mk,sk));
 
                 return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
             }
 
-            match recur.search_child_node(env,gs,m,alpha,&mut event_dispatcher,evalutor)? {
+            match recur.search_child_node(env,gs,m,&pv_non,alpha,&mut event_dispatcher,evalutor)? {
                 EvaluationResult::Immediate(s, mvs, zh) => {
                     recur.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
 

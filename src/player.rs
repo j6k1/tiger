@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
@@ -208,6 +208,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     best_score: Score::NEGINFINITE,
                     m:None,
                     prev_kind: KomaKind::Blank,
+                    pv:&VecDeque::new(),
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
                     depth:base_depth,
