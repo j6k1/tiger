@@ -214,7 +214,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     depth:base_depth,
                     current_depth:0,
                     base_depth:base_depth,
-                    max_depth:env.max_depth
+                    extend_depth:(env.max_depth as i32 - base_depth as i32).max(0) as u32
                 };
 
                 let strategy  = Root::new(ThreadPoolBuilder::new()

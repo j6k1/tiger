@@ -206,7 +206,7 @@ pub struct GameState<'a> {
     pub depth:u32,
     pub current_depth:u32,
     pub base_depth:u32,
-    pub max_depth:u32
+    pub extend_depth:u32
 }
 pub struct Root<L,S,M> where L: Logger + Send + 'static,
                              S: InfoSender,
@@ -566,7 +566,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let depth = gs.depth;
         let current_depth = 0;
         let base_depth = gs.base_depth;
-        let max_depth = gs.max_depth;
+        let extend_depth = gs.extend_depth;
         let best_score = gs.best_score;
 
         self.thread_pool.spawn(move || {
@@ -587,7 +587,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 depth: depth,
                 current_depth: current_depth,
                 base_depth: base_depth,
-                max_depth: max_depth,
+                extend_depth: extend_depth,
                 rng:&mut rng
             };
 
@@ -805,7 +805,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                 gs.depth = current_depth;
                 gs.base_depth = current_depth;
-                gs.max_depth = max_depth as u32;
+                gs.extend_depth = (max_depth as i32 - base_depth as i32).max(0) as u32;
 
                 if current_depth <= base_depth {
                     let search_offset = if !already_started[current_depth as usize] {
@@ -886,6 +886,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         };
 
         let mut depth = gs.depth;
+        let mut extend_depth = gs.extend_depth;
 
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
@@ -893,8 +894,9 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         match next {
             (state, mc, _) => {
-                if Rule::in_check(gs.teban,&state) {
+                if extend_depth > 0 && Rule::in_check(gs.teban,&state) {
                     depth += 1;
+                    extend_depth -= 1;
                 }
 
                 let state = Arc::new(state);
@@ -926,7 +928,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
                     base_depth: gs.base_depth,
-                    max_depth: gs.max_depth
+                    extend_depth: extend_depth
                 };
 
                 let strategy = Recursive::new();
@@ -1032,7 +1034,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
-        if gs.depth == 0 || gs.current_depth >= gs.max_depth {
+        if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
                                        &gs.state,
                                        &gs.mc,
