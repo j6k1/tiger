@@ -887,16 +887,16 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut depth = gs.depth;
 
-        if o.is_some() {
-            depth += 1;
-        }
-
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
         let next = Rule::apply_move_none_check(&gs.state, gs.teban, gs.mc, m.to_applied_move());
 
         match next {
             (state, mc, _) => {
+                if Rule::in_check(gs.teban,&state) {
+                    depth += 1;
+                }
+
                 let state = Arc::new(state);
 
                 let mc = Arc::new(mc);
