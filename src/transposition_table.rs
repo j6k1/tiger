@@ -8,6 +8,16 @@ use usiagent::rule::{LegalMove,AppliedMove};
 use usiagent::shogi::{Banmen, Mochigoma, MochigomaCollections, MochigomaKind, Teban};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Bound {
+    None,
+    UpperBound,
+    LowerBound,
+    Exact,
+}
+pub trait ExactScoreBound {
+    fn exact_score_bound(&self) -> bool;
+}
 pub trait ToBucketIndex {
     fn to_bucket_index(self) -> usize;
 }
@@ -85,6 +95,7 @@ pub struct TTPartialEntry<T> where T: Default + Neg<Output = T> {
     pub score:T,
     pub beta:T,
     pub alpha:T,
+    pub bound:Bound,
     pub best_move:Option<LegalMove>
 }
 impl<T> Default for TTPartialEntry<T> where T: Default + Neg<Output = T> {
@@ -94,6 +105,7 @@ impl<T> Default for TTPartialEntry<T> where T: Default + Neg<Output = T> {
             score:T::default(),
             beta:-T::default(),
             alpha:T::default(),
+            bound:Bound::None,
             best_move: None
         }
     }
@@ -266,7 +278,7 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
              Wrapping<K>: Add<Output = Wrapping<K>> + Sub<Output = Wrapping<K>> + BitXor<Output = Wrapping<K>> + Copy,
              Standard: Distribution<K>,
              [TTEntry<T,K>;N]: Default,
-             T: Default + Neg<Output = T> {
+             T: Default + Neg<Output = T> + ExactScoreBound {
     pub fn new() -> TT<K,T,S,N> {
         let mut buckets = Vec::with_capacity(S);
         buckets.resize_with(S,RwLock::default);
@@ -310,7 +322,28 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
         }
     }
 
-    pub fn get_mut(&self,zh: &ZobristHash<K>) -> Option<WriteGuard<'_,T,K,N>> {
+    pub fn update<'a>(&self,
+                      zh: &'a ZobristHash<K>,
+                      depth: i8,
+                      score: T,
+                      beta: T,
+                      alpha:T,
+                      bound:Bound,
+                      best_move: Option<LegalMove>) {
+        let mut tte = self.entry(zh);
+        let tte = tte.or_default();
+
+        if score.exact_score_bound() || bound > tte.bound || (bound == tte.bound && depth >= tte.depth){
+            tte.bound = bound;
+            tte.depth = depth;
+            tte.score = score;
+            tte.beta = beta;
+            tte.alpha = alpha;
+            tte.best_move = best_move;
+        }
+    }
+    #[allow(dead_code)]
+    fn get_mut(&self,zh: &ZobristHash<K>) -> Option<WriteGuard<'_,T,K,N>> {
         let index = self.bucket_index(zh);
 
         match self.buckets[index].write() {
@@ -332,7 +365,8 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
         }
     }
 
-    pub fn insert(&self,zh: &ZobristHash<K>, entry:TTPartialEntry<T>) -> Option<TTPartialEntry<T>> {
+    #[allow(dead_code)]
+    fn insert(&self,zh: &ZobristHash<K>, entry:TTPartialEntry<T>) -> Option<TTPartialEntry<T>> {
         let index = self.bucket_index(zh);
 
         let tte = TTEntry {
@@ -380,8 +414,7 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
             }
         }
     }
-
-    pub fn entry(&self,zh: &ZobristHash<K>) -> Entry<'_,T,K,N> {
+    fn entry(&self,zh: &ZobristHash<K>) -> Entry<'_,T,K,N> {
         let index = self.bucket_index(zh);
 
         match self.buckets[index].write() {

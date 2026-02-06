@@ -26,7 +26,7 @@ use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind,
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, ZobristHash, TTPartialEntry};
+use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactScoreBound};
 
 pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;
@@ -72,6 +72,11 @@ impl Sub<i32> for Score {
             Score::INFINITE => Score::INFINITE,
             Score::NEGINFINITE => Score::NEGINFINITE,
         }
+    }
+}
+impl ExactScoreBound for Score {
+    fn exact_score_bound(&self) -> bool {
+        self == &Score::INFINITE || self == &Score::NEGINFINITE
     }
 }
 impl Default for Score {
@@ -388,70 +393,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         commands.push(UsiInfoSubCommand::Str(String::from(message)));
 
         Ok(env.info_sender.send(commands)?)
-    }
-
-    fn update_tt<'a>(&self, env: &mut Environment<L, S>,
-                     zh: &'a ZobristHash<u64>,
-                     depth: u32,
-                     score: Score,
-                     beta: Score,
-                     alpha:Score) {
-        let mut tte = env.transposition_table.entry(&zh);
-        let tte = tte.or_default();
-
-        // Update only if the entry is not registered in the replacement table, or if it is Score::INFINITE or Score::NEGINFINITE.
-        // And alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth.
-        // alpha and beta are pruning-related parameters.
-        // Widening the range lowers pruning probability but reduces speed,
-        // while narrowing the range increases pruning probability but improves speed.
-        // Furthermore, if the above conditions are not met,
-        // entries susceptible to pruning may overwrite less susceptible entries, causing issues.
-        // The condition making an entry susceptible to pruning means its search result
-        // may differ from one using alpha and beta values less susceptible to pruning at the same position.
-        // This necessitates the above condition. Depth represents the remaining search depth;
-        // a larger value yields more accurate search results.
-        if tte.depth == -1 || score == Score::INFINITE || score == Score::NEGINFINITE ||
-            ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 - 1 >= tte.depth) &&
-             (beta > tte.beta || alpha < tte.alpha || depth as i8 - 1 > tte.depth)) {
-            tte.depth = depth as i8 - 1;
-            tte.score = score;
-            tte.beta = beta;
-            tte.alpha = alpha;
-        }
-    }
-
-    fn update_best_move<'a>(&self, env: &mut Environment<L, S>,
-                            zh: &'a ZobristHash<u64>,
-                            depth: u32,
-                            score:Score,
-                            beta:Score,
-                            alpha:Score,
-                            m: Option<LegalMove>) {
-        let mut tte = env.transposition_table.entry(zh);
-        let tte = tte.or_default();
-
-        // Update only if the entry is not registered in the replacement table or if Score::INFINITE.
-        // And alpha <= tte.alpha <= tte.beta <= beta and depth >= tte.depth && tte.score < score.
-        // alpha and beta are parameters related to pruning.
-        // Widening the range lowers the likelihood of pruning but reduces speed,
-        // while narrowing the range increases the likelihood of pruning but improves speed.
-        // Furthermore, if the above conditions are not met,
-        // entries susceptible to pruning may overwrite entries less susceptible to pruning, causing problems.
-        // Conditions making an entry susceptible to pruning mean its search result
-        // may differ from one using alpha and beta values less susceptible to pruning at the same position.
-        // This necessitates the above conditions. Depth represents the remaining search depth;
-        // a larger value yields more accurate search results.
-        // Additionally, entries with Score::NEGINIFINITE or decreasing scores are excluded.
-        // This is because this function registers the best move in that position,
-        // and registering moves that decrease the score or guarantee a loss is pointless.
-        if tte.depth == -1 || score == Score::INFINITE ||
-            ((beta >= tte.beta && alpha <= tte.alpha && depth as i8 >= tte.depth) && tte.score < score) {
-            tte.depth = depth as i8;
-            tte.score = score;
-            tte.beta = beta;
-            tte.alpha = alpha;
-            tte.best_move = m;
-        }
     }
 }
 pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
@@ -980,44 +921,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             score: s,
                             beta,
                             alpha,
+                            bound,
                             best_move: _
                         }) = r {
 
-                match s {
-                    Score::INFINITE => {
-                        let mut mvs = VecDeque::new();
+                if s == Score::INFINITE || s == Score::NEGINFINITE ||
+                   (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                   (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= beta) ||
+                   (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= alpha) {
+                    let mut mvs = VecDeque::new();
 
-                        mvs.push_front(prev_move);
+                    mvs.push_front(prev_move);
 
-                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
-                    },
-                    Score::NEGINFINITE => {
-                        let mut mvs = VecDeque::new();
-
-                        mvs.push_front(prev_move);
-
-                        return Ok(EvaluationResult::Immediate(Score::NEGINFINITE,mvs,gs.zh.clone()));
-                    },
-                    // When the conditions tte.alpha <= alpha <= beta <= tte.beta and tte.depth <= depth are satisfied,
-                    // the score of the substitution table directly becomes the score for this position.
-                    //
-                    // alpha and beta are parameters related to pruning.
-                    // Widening the range lowers the likelihood of pruning but reduces speed,
-                    // while narrowing the range increases the likelihood of pruning but improves speed.
-                    // Furthermore, when the above conditions are not met,
-                    // entries susceptible to pruning may overwrite entries less susceptible to pruning, potentially causing issues.
-                    // An entry being susceptible to pruning refers to a state where the search result differs from the result
-                    // obtained using alpha and beta values less susceptible to pruning at the same position.
-                    // depth is the remaining search depth; a larger value means deeper exploration,
-                    // resulting in a more accurate score.
-                    Score::Value(s) if d as u32 >= gs.depth && beta >= gs.beta && alpha <= gs.alpha => {
-                        let mut mvs = VecDeque::new();
-
-                        mvs.push_front(prev_move);
-
-                        return Ok(EvaluationResult::Immediate(Score::Value(s),mvs,gs.zh.clone()));
-                    },
-                    _ => ()
+                    return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone()));
                 }
             }
         }
@@ -1026,6 +942,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         if Rule::in_check(gs.teban,&gs.state) {
             if let Some(m) = prev_move.clone() {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+
                 let mut mvs = VecDeque::new();
 
                 mvs.push_front(m);
@@ -1087,6 +1005,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                               score: _,
                                               beta: _,
                                               alpha: _,
+                                              bound: _,
                                               best_move: m
                                           }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
                     m
@@ -1125,6 +1044,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         }).unwrap_or(&pv_non);
 
                         if self.is_obtained_ou(m)? {
+                            env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
                             let mut mvs = VecDeque::new();
 
                             mvs.push_front(m);
@@ -1135,9 +1056,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         }
 
                         match self.search_child_node(env, gs, m, pv, alpha, event_dispatcher, evalutor)? {
-                            EvaluationResult::Immediate(s, mvs, zh) => {
-                                self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
-
+                            EvaluationResult::Immediate(s, mvs, _) => {
                                 let s = -s;
 
                                 if s > scoreval {
@@ -1145,9 +1064,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                     best_moves = mvs;
 
-                                    self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
-
                                     if scoreval >= beta {
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
                                         match m {
                                             LegalMove::To(mv) if mv.obtained().is_none() => {
                                                 if !mv.is_nari() {
@@ -1220,6 +1139,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
 
                 if self.is_obtained_ou(m)? {
+                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+
                     let mut mvs = VecDeque::new();
 
                     mvs.push_front(m);
@@ -1230,9 +1151,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
 
                 match self.search_child_node(env,gs,m,&pv_non,alpha,event_dispatcher,evalutor)? {
-                    EvaluationResult::Immediate(s, mvs, zh) => {
-                        self.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
-
+                    EvaluationResult::Immediate(s, mvs, _) => {
                         let s = -s;
 
                         match m {
@@ -1254,9 +1173,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                             best_moves = mvs;
 
-                            self.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
-
                             if scoreval >= beta {
+                                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
                                         if !mv.is_nari() {
@@ -1304,6 +1223,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
             }
+        }
+
+        if scoreval <= start_alpha {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+        } else {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
@@ -1406,6 +1331,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         score: _,
                         beta: _,
                         alpha: _,
+                        bound: _,
                         best_move: m
                     }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
             m
@@ -1438,6 +1364,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
             for m in mvs {
                 if self.is_obtained_ou(m)? {
+                    env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
                     let mut mvs = VecDeque::new();
 
                     mvs.push_front(m);
@@ -1455,9 +1383,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                 }).unwrap_or(&pv_non);
 
                 match recur.search_child_node(env, gs, m, pv, alpha, &mut event_dispatcher, evalutor)? {
-                    EvaluationResult::Immediate(s, mvs, zh) => {
-                        recur.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
-
+                    EvaluationResult::Immediate(s, mvs, _) => {
                         let s = -s;
 
                         if s > scoreval {
@@ -1465,9 +1391,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                             best_moves = mvs;
 
-                            recur.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
-
                             if scoreval >= beta {
+                                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
                                         if !mv.is_nari() {
@@ -1529,6 +1455,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             }
 
             if self.is_obtained_ou(m)? {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
                 let mut mvs = VecDeque::new();
 
                 mvs.push_front(m);
@@ -1538,9 +1466,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             }
 
             match recur.search_child_node(env,gs,m,&pv_non,alpha,&mut event_dispatcher,evalutor)? {
-                EvaluationResult::Immediate(s, mvs, zh) => {
-                    recur.update_tt(env, &zh, gs.depth, s, -alpha, -beta);
-
+                EvaluationResult::Immediate(s, mvs, _) => {
                     let s = -s;
 
                     match m {
@@ -1562,13 +1488,13 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                         best_moves = mvs;
 
-                        recur.update_best_move(env, &gs.zh, gs.depth, scoreval, beta, start_alpha, Some(m));
-
                         if s > gs.best_score {
                             recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                         }
 
                         if scoreval >= beta {
+                            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
                             match m {
                                 LegalMove::To(mv) if mv.obtained().is_none() => {
                                     env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
@@ -1603,6 +1529,12 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                 EvaluationResult::Repetition => {
                 }
             }
+        }
+
+        if scoreval <= start_alpha {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+        } else {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
