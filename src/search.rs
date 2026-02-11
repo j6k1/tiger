@@ -12,12 +12,13 @@ use rand::Rng;
 use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
+use usiagent::consts::PIECE_SCORE_MAP;
 use usiagent::error::EventHandlerError;
 use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher, UsiGoTimeLimit};
 use usiagent::hash::KyokumenHash;
 use usiagent::logger::Logger;
 use usiagent::math::Prng;
-use usiagent::move_orderer::MoveOrderer;
+use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
@@ -34,6 +35,7 @@ pub const MAX_DEPTH:u32 = 14;
 pub const MAX_THREADS:u32 = 8;
 pub const NODES_PER_LEAF_NODE:u16 = 5;
 pub const GAMMA:u8 = 100;
+pub const QUIET_SEE_FACTOR:i64 = 128;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
@@ -104,7 +106,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub quited:Arc<AtomicBool>,
     pub history:HashSet<(Teban,u64,u64)>,
     pub transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
-    pub move_orderer:MoveOrderer,
+    pub move_orderer:MoveOrderer<UnusedQuietSee>,
     pub nodes:Arc<AtomicU64>
 }
 impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
@@ -143,7 +145,7 @@ pub enum EvaluationResult {
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
-    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, usize, MoveOrderer),
+    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, usize, MoveOrderer<UnusedQuietSee>),
     Timeout,
     Stop,
     Repetition
@@ -190,7 +192,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             quited:quited,
             history:history,
             transposition_table:Arc::clone(transposition_table),
-            move_orderer:MoveOrderer::new(max_depth as usize),
+            move_orderer:MoveOrderer::<UnusedQuietSee>::new(max_depth as usize),
             nodes:Arc::new(AtomicU64::new(0))
         }
     }
@@ -253,7 +255,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
-        let in_check = Rule::in_check(teban.opposite(),state);
+        let in_check = Rule::in_check(teban,state);
 
         if in_check {
             Rule::generate_moves::<Evasions>(teban,state,mc,&mut picker)?;
@@ -355,6 +357,57 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         Ok(reached)
     }
 
+    fn calc_lmr(&self, env:&mut Environment<L,S>,
+                       depth:u32,
+                       index:usize,
+                       teban: Teban,
+                       state: &State,
+                       m:LegalMove,
+                       pv:Option<&LegalMove>,
+                       zh:&ZobristHash<u64>) -> u32 {
+        let is_nari = match m {
+            LegalMove::To(m) => m.is_nari(),
+            _ => false
+        };
+
+        if depth <= 2 || is_nari ||
+            m.obtained().is_some() ||
+            pv.map(|pm| pm == &m).unwrap_or(false) ||
+            Rule::in_check(teban,state) ||
+            Rule::is_oute_move(state,teban,m) {
+            0
+        } else if index >= 4 + 1 {
+            let mut r = (
+                (
+                    (depth as f32).ln() * (index as f32 + 1.).ln() / 2.25
+                ).floor() as u32
+            ).clamp(0,2);
+
+            let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
+
+            if let Some(TTPartialEntry {
+                            depth: _,
+                            score: _,
+                            beta: _,
+                            alpha: _,
+                            bound,
+                            best_move
+                        }) = tte {
+
+                if best_move.map(|bm| bm == m).unwrap_or(false) {
+                    if bound == Bound::Exact {
+                        r = 0;
+                    } else if bound == Bound::LowerBound {
+                        r = (r as i32 - 1).max(0) as u32;
+                    }
+                }
+            }
+
+            r
+        } else {
+            0
+        }
+    }
     fn send_info(&self, env:&mut Environment<L,S>,
                  depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
         where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
@@ -494,7 +547,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                            mvs: Arc<Vec<LegalMove>>,
                            search_offset:usize,
                            pv:VecDeque<LegalMove>,
-                           evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer) {
+                           evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer<UnusedQuietSee>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
         let state = Arc::clone(&gs.state);
@@ -595,7 +648,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut workings = vec![0;max_depth+1];
         let pending_results = Arc::new(AtomicUsize::new(0));
 
-        let mut move_orderer_quque = VecDeque::<MoveOrderer>::new();
+        let mut move_orderer_quque = VecDeque::<MoveOrderer<UnusedQuietSee>>::new();
         let mut busy_threads = 0;
         let mut remaining_threads = 0;
         let mut last_depth = false;
@@ -611,7 +664,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut leafnodes_seacch_space:u128 = mvs.len() as u128;
         let gamma = env.gamma;
 
-        if Rule::in_check(gs.teban.opposite(),&gs.state) {
+        if Rule::in_check(gs.teban,&gs.state) {
             Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             mvs = picker.collect::<Vec<LegalMove>>();
         } else {
@@ -819,6 +872,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
+                                     depth:u32,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let o = match m {
@@ -826,7 +880,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             _ => None
         };
 
-        let mut depth = gs.depth;
+        let mut depth = depth;
         let mut extend_depth = gs.extend_depth;
 
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
@@ -835,7 +889,14 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         match next {
             (state, mc, _) => {
-                if extend_depth > 0 && Rule::in_check(gs.teban,&state) {
+                if extend_depth > 0 && (Rule::in_check(gs.teban.opposite(),&state) || gs.m.map(|pm| {
+                    if let LegalMove::To(pm) = pm {
+                        if let LegalMove::To(m) = m {
+                            return pm.obtained().is_some() && m.obtained().is_some() && pm.dst() == m.dst();
+                        }
+                    }
+                    false
+                }).unwrap_or(false)) {
                     depth += 1;
                     extend_depth -= 1;
                 }
@@ -940,7 +1001,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let prev_move = gs.m.clone();
 
-        if Rule::in_check(gs.teban,&gs.state) {
+        if Rule::in_check(gs.teban.opposite(),&gs.state) {
             if let Some(m) = prev_move.clone() {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,gs.beta,gs.alpha,Bound::Exact,None);
 
@@ -985,7 +1046,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
-        let count = if Rule::in_check(gs.teban.opposite(),&gs.state) {
+        let count = if Rule::in_check(gs.teban,&gs.state) {
             2
         } else {
             3
@@ -1034,7 +1095,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         }
                     };
 
-                    for m in mvs {
+                    for (j,m) in mvs.into_iter().enumerate() {
+                        let mut r = self.calc_lmr(env,gs.depth,j,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+
                         let pv = pv_move.map(|pv| {
                             if pv == m {
                                 gs.pv
@@ -1043,83 +1106,112 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             }
                         }).unwrap_or(&pv_non);
 
-                        if self.is_obtained_ou(m)? {
-                            env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                        for k in 0..2 {
+                            let depth = if k == 0 {
+                                gs.depth - r
+                            } else {
+                                gs.depth
+                            };
 
-                            let mut mvs = VecDeque::new();
+                            if self.is_obtained_ou(m)? {
+                                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
 
-                            mvs.push_front(m);
-                            prev_move.map(|m| mvs.push_front(m));
-                            env.history.remove(&(gs.teban,mk,sk));
+                                let mut mvs = VecDeque::new();
 
-                            return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
-                        }
+                                mvs.push_front(m);
+                                prev_move.map(|m| mvs.push_front(m));
+                                env.history.remove(&(gs.teban,mk,sk));
 
-                        match self.search_child_node(env, gs, m, pv, alpha, event_dispatcher, evalutor)? {
-                            EvaluationResult::Immediate(s, mvs, _) => {
-                                let s = -s;
+                                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                            }
 
-                                if s > scoreval {
-                                    scoreval = s;
+                            match self.search_child_node(env, gs, m, pv, alpha, depth, event_dispatcher, evalutor)? {
+                                EvaluationResult::Immediate(s, mvs, _) => {
+                                    let s = -s;
 
-                                    best_moves = mvs;
+                                    match m {
+                                        LegalMove::To(mv) if mv.obtained().is_none() => {
+                                            if s <= start_alpha {
+                                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                            }
+                                        },
+                                        LegalMove::Put(_) => {
+                                            if s <= start_alpha {
+                                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                            }
+                                        },
+                                        _ => ()
+                                    };
 
-                                    if scoreval >= beta {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
-
-                                        match m {
-                                            LegalMove::To(mv) if mv.obtained().is_none() => {
-                                                if !mv.is_nari() {
-                                                    env.move_orderer.update_killer(gs.current_depth as usize, m)?;
-                                                    let _ = prev_move.map(|prev_move| {
-                                                        env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
-                                                    }).unwrap_or(Ok(()))?;
-                                                }
-
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                            },
-                                            LegalMove::Put(_) => {
-                                                env.move_orderer.update_killer(gs.current_depth as usize,m)?;
-                                                let _ = prev_move.map(|prev_move| {
-                                                    env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
-                                                }).unwrap_or(Ok(()))?;
-
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                            },
-                                            _ => ()
-                                        };
-
-                                        env.history.remove(&(gs.teban,mk,sk));
-
-                                        prev_move.map(|m| best_moves.push_front(m));
-
-                                        return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                    if r > 0 && (s >= beta || s > start_alpha) {
+                                        r = 0;
+                                        continue;
                                     }
+
+                                    if s > scoreval {
+                                        scoreval = s;
+
+                                        best_moves = mvs;
+
+                                        if scoreval >= beta {
+                                            env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
+                                            match m {
+                                                LegalMove::To(mv) if mv.obtained().is_none() => {
+                                                    if !mv.is_nari() {
+                                                        env.move_orderer.update_killer(gs.current_depth as usize, m)?;
+                                                        let _ = prev_move.map(|prev_move| {
+                                                            env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                                        }).unwrap_or(Ok(()))?;
+                                                    }
+
+                                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                                },
+                                                LegalMove::Put(_) => {
+                                                    env.move_orderer.update_killer(gs.current_depth as usize,m)?;
+                                                    let _ = prev_move.map(|prev_move| {
+                                                        env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
+                                                    }).unwrap_or(Ok(()))?;
+
+                                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                                },
+                                                _ => ()
+                                            };
+
+                                            env.history.remove(&(gs.teban,mk,sk));
+
+                                            prev_move.map(|m| best_moves.push_front(m));
+
+                                            return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                        }
+                                    }
+
+                                    if alpha < s {
+                                        alpha = s;
+                                    }
+
+                                    break;
+                                },
+                                EvaluationResult::Timeout => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Timeout);
+                                },
+                                EvaluationResult::Stop => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Stop);
+                                },
+                                EvaluationResult::Repetition => {
+
                                 }
-
-                                if alpha < s {
-                                    alpha = s;
-                                }
-                            },
-                            EvaluationResult::Timeout => {
-                                env.history.remove(&(gs.teban,mk,sk));
-
-                                return Ok(EvaluationResult::Timeout);
-                            },
-                            EvaluationResult::Stop => {
-                                env.history.remove(&(gs.teban,mk,sk));
-
-                                return Ok(EvaluationResult::Stop);
-                            },
-                            EvaluationResult::Repetition => {
-
                             }
                         }
                     }
                 }
 
                 continue;
-            } else if i == 1 && Rule::in_check(gs.teban.opposite(),&gs.state) {
+            } else if i == 1 && Rule::in_check(gs.teban,&gs.state) {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             } else if i == 1 {
                 Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
@@ -1127,8 +1219,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
-            for m in env.move_orderer.ordering(
-                &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)? {
+            for (j,(m,see)) in env.move_orderer.ordering(
+                &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.enumerate() {
 
                 if pv_move.map(|pv | pv == m).unwrap_or(false) {
                     continue;
@@ -1138,88 +1230,111 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     continue;
                 }
 
-                if self.is_obtained_ou(m)? {
-                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
-
-                    let mut mvs = VecDeque::new();
-
-                    mvs.push_front(m);
-                    prev_move.map(|m| mvs.push_front(m));
-                    env.history.remove(&(gs.teban,mk,sk));
-
-                    return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                if let Some(o) = m.obtained() {
+                    if see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                        continue;
+                    }
                 }
 
-                match self.search_child_node(env,gs,m,&pv_non,alpha,event_dispatcher,evalutor)? {
-                    EvaluationResult::Immediate(s, mvs, _) => {
-                        let s = -s;
+                let mut r  = self.calc_lmr(env,gs.depth,j+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
 
-                        match m {
-                            LegalMove::To(mv) if mv.obtained().is_none() => {
-                                if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
-                                }
-                            },
-                            LegalMove::Put(_) => {
-                                if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
-                                }
-                            },
-                            _ => ()
-                        };
+                for k in 0..2 {
+                    let depth = if k == 0 {
+                        gs.depth - r
+                    } else {
+                        gs.depth
+                    };
 
-                        if s > scoreval {
-                            scoreval = s;
+                    if self.is_obtained_ou(m)? {
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
 
-                            best_moves = mvs;
+                        let mut mvs = VecDeque::new();
 
-                            if scoreval >= beta {
-                                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                        mvs.push_front(m);
+                        prev_move.map(|m| mvs.push_front(m));
+                        env.history.remove(&(gs.teban,mk,sk));
 
-                                match m {
-                                    LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        if !mv.is_nari() {
-                                            env.move_orderer.update_killer(gs.current_depth as usize, m)?;
-                                            let _ = prev_move.map(|prev_move| {
-                                                env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
-                                            }).unwrap_or(Ok(()))?;
-                                        }
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                    }
 
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                    },
-                                    LegalMove::Put(_) => {
-                                        env.move_orderer.update_killer(gs.current_depth as usize,m)?;
-                                        let _ = prev_move.map(|prev_move| {
-                                            env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
-                                        }).unwrap_or(Ok(()))?;
+                    match self.search_child_node(env,gs,m,&pv_non,alpha,depth,event_dispatcher,evalutor)? {
+                        EvaluationResult::Immediate(s, mvs, _) => {
+                            let s = -s;
 
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                    },
-                                    _ => ()
-                                };
-                                env.history.remove(&(gs.teban,mk,sk));
+                            match m {
+                                LegalMove::To(mv) if mv.obtained().is_none() => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                    }
+                                },
+                                LegalMove::Put(_) => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                    }
+                                },
+                                _ => ()
+                            };
 
-                                prev_move.map(|m| best_moves.push_front(m));
-
-                                return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                            if r > 0 && (s >= beta || s > start_alpha) {
+                                r = 0;
+                                continue
                             }
+
+                            if s > scoreval {
+                                scoreval = s;
+
+                                best_moves = mvs;
+
+                                if scoreval >= beta {
+                                    env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
+                                    match m {
+                                        LegalMove::To(mv) if mv.obtained().is_none() => {
+                                            if !mv.is_nari() {
+                                                env.move_orderer.update_killer(gs.current_depth as usize, m)?;
+                                                let _ = prev_move.map(|prev_move| {
+                                                    env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                                }).unwrap_or(Ok(()))?;
+                                            }
+
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        LegalMove::Put(_) => {
+                                            env.move_orderer.update_killer(gs.current_depth as usize,m)?;
+                                            let _ = prev_move.map(|prev_move| {
+                                                env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
+                                            }).unwrap_or(Ok(()))?;
+
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        _ => ()
+                                    };
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    prev_move.map(|m| best_moves.push_front(m));
+
+                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                }
+                            }
+
+                            if alpha < s {
+                                alpha = s;
+                            }
+
+                            break;
+                        },
+                        EvaluationResult::Timeout => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Timeout);
+                        },
+                        EvaluationResult::Stop => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Stop);
+                        },
+                        EvaluationResult::Repetition => {
                         }
-
-                        if alpha < s {
-                            alpha = s;
-                        }
-                    },
-                    EvaluationResult::Timeout => {
-                        env.history.remove(&(gs.teban,mk,sk));
-
-                        return Ok(EvaluationResult::Timeout);
-                    },
-                    EvaluationResult::Stop => {
-                        env.history.remove(&(gs.teban,mk,sk));
-
-                        return Ok(EvaluationResult::Stop);
-                    },
-                    EvaluationResult::Repetition => {
                     }
                 }
             }
@@ -1268,11 +1383,12 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     m:LegalMove,
                                     pv:&VecDeque<LegalMove>,
                                     alpha:Score,
+                                    depth:u32,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -1362,7 +1478,144 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                 }
             };
 
-            for m in mvs {
+            for (i,m) in mvs.into_iter().enumerate() {
+                let mut r = recur.calc_lmr(env,gs.depth,i,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+
+                for j in 0..2 {
+                    let depth = if j == 0 {
+                        gs.depth - r
+                    } else {
+                        gs.depth
+                    };
+
+                    if self.is_obtained_ou(m)? {
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(m);
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                    }
+
+                    let pv = pv_move.map(|pv| {
+                        if pv == m {
+                            gs.pv
+                        } else {
+                            &pv_non
+                        }
+                    }).unwrap_or(&pv_non);
+
+                    match recur.search_child_node(env, gs, m, pv, alpha, depth, &mut event_dispatcher, evalutor)? {
+                        EvaluationResult::Immediate(s, mvs, _) => {
+                            let s = -s;
+
+                            match m {
+                                LegalMove::To(mv) if mv.obtained().is_none() => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban, &gs.state, m, depth)?;
+                                    }
+                                },
+                                LegalMove::Put(_) => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban, &gs.state, m, depth)?;
+                                    }
+                                },
+                                _ => ()
+                            };
+
+                            if r > 0 && (s >= beta || s > start_alpha) {
+                                r = 0;
+                                continue;
+                            }
+
+                            if s > scoreval {
+                                scoreval = s;
+
+                                best_moves = mvs;
+
+                                if scoreval >= beta {
+                                    env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+
+                                    match m {
+                                        LegalMove::To(mv) if mv.obtained().is_none() => {
+                                            if !mv.is_nari() {
+                                                env.move_orderer.update_killer(gs.current_depth as usize, m)?;
+                                                let _ = prev_move.map(|prev_move| {
+                                                    env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                                }).unwrap_or(Ok(()))?;
+                                            }
+
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        LegalMove::Put(_) => {
+                                            env.move_orderer.update_killer(gs.current_depth as usize,m)?;
+                                            let _ = prev_move.map(|prev_move| {
+                                                env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
+                                            }).unwrap_or(Ok(()))?;
+
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        _ => ()
+                                    };
+
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                }
+                            }
+
+                            if alpha < s {
+                                alpha = s;
+                            }
+
+                            break;
+                        },
+                        EvaluationResult::Timeout => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Timeout);
+                        },
+                        EvaluationResult::Stop => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Stop);
+                        },
+                        EvaluationResult::Repetition => {
+
+                        }
+                    }
+                }
+            }
+        }
+
+        for (i,(m,see)) in env.move_orderer.ordering(
+            mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
+
+            if pv_move.map(|pv | pv == m).unwrap_or(false) {
+                continue;
+            }
+
+            if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
+                continue;
+            }
+
+            if let Some(o) = m.obtained() {
+                if see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                    continue;
+                }
+            }
+
+            let mut r = recur.calc_lmr(env,gs.depth,i+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+
+            for j in 0..2 {
+                let depth = if j == 0 {
+                    gs.depth - r
+                } else {
+                    gs.depth
+                };
+
                 if self.is_obtained_ou(m)? {
                     env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
 
@@ -1371,47 +1624,51 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     mvs.push_front(m);
                     env.history.remove(&(gs.teban,mk,sk));
 
-                    return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                    return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                 }
 
-                let pv = pv_move.map(|pv| {
-                    if pv == m {
-                        gs.pv
-                    } else {
-                        &pv_non
-                    }
-                }).unwrap_or(&pv_non);
-
-                match recur.search_child_node(env, gs, m, pv, alpha, &mut event_dispatcher, evalutor)? {
+                match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,&mut event_dispatcher,evalutor)? {
                     EvaluationResult::Immediate(s, mvs, _) => {
                         let s = -s;
+
+                        match m {
+                            LegalMove::To(mv) if mv.obtained().is_none() => {
+                                if s <= start_alpha {
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                }
+                            },
+                            LegalMove::Put(_) => {
+                                if s <= start_alpha {
+                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                }
+                            },
+                            _ => ()
+                        };
+
+                        if r > 0 && (s >= beta || s > start_alpha) {
+                            r = 0;
+                            continue;
+                        }
 
                         if s > scoreval {
                             scoreval = s;
 
                             best_moves = mvs;
 
+                            if s > gs.best_score {
+                                recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                            }
+
                             if scoreval >= beta {
                                 env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
 
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        if !mv.is_nari() {
-                                            env.move_orderer.update_killer(gs.current_depth as usize, m)?;
-                                            let _ = prev_move.map(|prev_move| {
-                                                env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
-                                            }).unwrap_or(Ok(()))?;
-                                        }
-
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
                                     },
                                     LegalMove::Put(_) => {
                                         env.move_orderer.update_killer(gs.current_depth as usize,m)?;
-                                        let _ = prev_move.map(|prev_move| {
-                                            env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
-                                        }).unwrap_or(Ok(()))?;
-
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
+                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
                                     },
                                     _ => ()
                                 };
@@ -1425,6 +1682,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         if alpha < s {
                             alpha = s;
                         }
+
+                        break;
                     },
                     EvaluationResult::Timeout => {
                         env.history.remove(&(gs.teban,mk,sk));
@@ -1437,96 +1696,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         return Ok(EvaluationResult::Stop);
                     },
                     EvaluationResult::Repetition => {
-
                     }
-                }
-            }
-        }
-
-        for m in env.move_orderer.ordering(
-            mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset) {
-
-            if pv_move.map(|pv | pv == m).unwrap_or(false) {
-                continue;
-            }
-
-            if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
-                continue;
-            }
-
-            if self.is_obtained_ou(m)? {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
-
-                let mut mvs = VecDeque::new();
-
-                mvs.push_front(m);
-                env.history.remove(&(gs.teban,mk,sk));
-
-                return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
-            }
-
-            match recur.search_child_node(env,gs,m,&pv_non,alpha,&mut event_dispatcher,evalutor)? {
-                EvaluationResult::Immediate(s, mvs, _) => {
-                    let s = -s;
-
-                    match m {
-                        LegalMove::To(mv) if mv.obtained().is_none() => {
-                            if s <= start_alpha {
-                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
-                            }
-                        },
-                        LegalMove::Put(_) => {
-                            if s <= start_alpha {
-                                env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
-                            }
-                        },
-                        _ => ()
-                    };
-
-                    if s > scoreval {
-                        scoreval = s;
-
-                        best_moves = mvs;
-
-                        if s > gs.best_score {
-                            recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
-                        }
-
-                        if scoreval >= beta {
-                            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
-
-                            match m {
-                                LegalMove::To(mv) if mv.obtained().is_none() => {
-                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                },
-                                LegalMove::Put(_) => {
-                                    env.move_orderer.update_killer(gs.current_depth as usize,m)?;
-                                    env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth)?;
-                                },
-                                _ => ()
-                            };
-
-                            env.history.remove(&(gs.teban,mk,sk));
-
-                            return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
-                        }
-                    }
-
-                    if alpha < s {
-                        alpha = s;
-                    }
-                },
-                EvaluationResult::Timeout => {
-                    env.history.remove(&(gs.teban,mk,sk));
-
-                    return Ok(EvaluationResult::Timeout);
-                },
-                EvaluationResult::Stop => {
-                    env.history.remove(&(gs.teban,mk,sk));
-
-                    return Ok(EvaluationResult::Stop);
-                },
-                EvaluationResult::Repetition => {
                 }
             }
         }
