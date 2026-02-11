@@ -81,6 +81,14 @@ impl<T> ZobristHash<T>
         }
     }
 
+    pub fn flip_teban(&self) -> ZobristHash<T> {
+        ZobristHash {
+            mhash:self.mhash,
+            shash:self.shash,
+            teban:self.teban.opposite()
+        }
+    }
+    
     pub fn keys(&self) -> (T,T) {
         (self.mhash,self.shash)
     }

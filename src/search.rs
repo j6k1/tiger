@@ -24,6 +24,7 @@ use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
+use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
@@ -939,6 +940,41 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
     }
+
+    pub fn search_null_move<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
+                                   alpha:Score,
+                                   beta:Score,
+                                   depth:u32,
+                                   event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
+                                   evalutor: &Arc<Evalutor<M>>)
+        -> Result<EvaluationResult, ApplicationError> {
+        let state = gs.state;
+        let mc = gs.mc;
+        let zh = gs.zh.flip_teban();
+
+        let mut gs = GameState {
+            teban: gs.teban.opposite(),
+            state: state,
+            rng: gs.rng,
+            alpha: alpha,
+            beta: beta,
+            search_offset: 0,
+            best_score: gs.best_score,
+            m: None,
+            prev_kind: Blank,
+            pv:&VecDeque::new(),
+            mc: &mc,
+            zh: zh.clone(),
+            depth: depth - 1,
+            current_depth: gs.current_depth + 1,
+            base_depth: gs.base_depth,
+            extend_depth: gs.extend_depth
+        };
+
+        let strategy = Recursive::new();
+
+        strategy.search(env, &mut gs, event_dispatcher, evalutor)
+    }
 }
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                      S: InfoSender,
@@ -1010,6 +1046,55 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 mvs.push_front(m);
 
                 return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+            }
+        }
+
+        {
+            const R:u32 = 2;
+
+            let ou_surrounding_threats_count = match gs.teban {
+                Teban::Sente => Rule::sente_ou_surrounding_threats_count(&gs.state.get_part()),
+                Teban::Gote => Rule::gote_ou_surrounding_threats_count(&gs.state.get_part())
+            };
+
+            let mcount = match &gs.mc.deref() {
+                &MochigomaCollections::Empty => 0,
+                &MochigomaCollections::Pair(ms,mg) => {
+                    ms.iter().fold(0,|acc,(_,c)| acc + c) +
+                    mg.iter().fold(0,|acc,(_,c)| acc + c)
+                }
+            };
+
+            if gs.depth >= 4 && !Rule::in_check(gs.teban,&gs.state) &&
+                ((gs.state.get_part().sente_self_board | gs.state.get_part().sente_opponent_board).bitcount() > 12 ||
+                  mcount > 6) && ou_surrounding_threats_count < 3 {
+
+                let depth = gs.depth - R;
+
+                match self.search_null_move(env, gs,-gs.beta,-gs.beta+1, depth, event_dispatcher, evalutor)? {
+                    EvaluationResult::Immediate(s, _, _) => {
+                        let s = -s;
+
+                        if s >= gs.beta {
+                            env.transposition_table.update(&gs.zh,depth as i8,s,gs.beta,gs.alpha,Bound::LowerBound,None);
+
+                            let mut best_moves = VecDeque::new();
+
+                            gs.m.map(|m| best_moves.push_front(m));
+
+                            return Ok(EvaluationResult::Immediate(s, best_moves, gs.zh.clone()));
+                        }
+                    },
+                    EvaluationResult::Timeout => {
+                        return Ok(EvaluationResult::Timeout);
+                    },
+                    EvaluationResult::Stop => {
+                        return Ok(EvaluationResult::Stop);
+                    },
+                    EvaluationResult::Repetition => {
+
+                    }
+                }
             }
         }
 
