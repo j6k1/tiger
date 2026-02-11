@@ -1613,7 +1613,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             };
 
             if let Some(o) = m.obtained() {
-                if !is_nari && Rule::is_oute_move(gs.state,gs.teban,m) && see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
+                    see < -PIECE_SCORE_MAP[o as usize] / 4 {
                     continue;
                 }
             }
