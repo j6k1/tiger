@@ -1230,8 +1230,14 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     continue;
                 }
 
+                let is_nari = match m {
+                    LegalMove::To(mv) => mv.is_nari(),
+                    _ => false
+                };
+
                 if let Some(o) = m.obtained() {
-                    if see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                    if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
+                        see < -PIECE_SCORE_MAP[o as usize] / 4 {
                         continue;
                     }
                 }
@@ -1601,8 +1607,13 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                 continue;
             }
 
+            let is_nari = match m {
+                LegalMove::To(mv) => mv.is_nari(),
+                _ => false
+            };
+
             if let Some(o) = m.obtained() {
-                if see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                if !is_nari && Rule::is_oute_move(gs.state,gs.teban,m) && see < -PIECE_SCORE_MAP[o as usize] / 4 {
                     continue;
                 }
             }
