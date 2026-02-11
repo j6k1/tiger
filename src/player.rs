@@ -213,6 +213,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     zh:zh,
                     depth:base_depth,
                     current_depth:0,
+                    current_max_ply:1,
                     base_depth:base_depth,
                     extend_depth:(env.max_depth as i32 - base_depth as i32).max(0) as u32
                 };
