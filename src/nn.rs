@@ -736,10 +736,14 @@ impl InputCreator {
     pub fn make_input(t:Teban,state:&State,mc:&MochigomaCollections) -> Vec<size_t> {
         let mut inputs = Vec::new();
 
+        let p = Rule::ou_square(t,state);
+
+        assert_ne!(p,-1);
+        
         let ou_position = if t == Teban::Sente {
-            Rule::ou_square(t,state)
+            p
         } else {
-            80 -  Rule::ou_square(t,state)
+            80 - p
         };
 
         match state.get_banmen() {

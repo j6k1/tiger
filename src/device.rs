@@ -59,6 +59,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
                 let mut acc = Simd::<f32,LANES_F32>::splat(0.0);
 
                 for index in indexes.iter() {
+                    assert!(*index < NI,"{} >= {}",*index,NI);
                     units.iter().nth(*index).map(|w| {
                         let w_row = &w[(oi - NO * i)..];
                         let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]);
@@ -84,6 +85,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
                     let mut acc = 0.;
 
                     for index in indexes.iter() {
+                        assert!(*index < NI,"{} >= {}",*index,NI);
                         units.iter().nth(*index).map(|w| {
                             acc += w[oi - NO * i];
                         });

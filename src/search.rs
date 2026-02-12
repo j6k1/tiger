@@ -193,7 +193,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             quited:quited,
             history:history,
             transposition_table:Arc::clone(transposition_table),
-            move_orderer:MoveOrderer::<UnusedQuietSee>::new(max_depth as usize, 1),
+            move_orderer:MoveOrderer::<UnusedQuietSee>::new(max_depth as usize),
             nodes:Arc::new(AtomicU64::new(0))
         }
     }
@@ -554,6 +554,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let teban = gs.teban;
         let state = Arc::clone(&gs.state);
         let mut env = env.clone();
+        let mut move_orderer = move_orderer;
+        move_orderer.on_start_search(gs.depth);
         env.move_orderer = move_orderer;
 
         let evalutor = Arc::clone(&evalutor);
@@ -705,7 +707,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             }
 
                             match result[depth as usize] {
-                                Some(EvaluationResult::Immediate(bs, _, _)) if s >= bs => {
+                                Some(EvaluationResult::Immediate(bs, _, _)) if (depth > decided_depth && s >= bs)
+                                    || search_offset == 0 => {
                                     result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
                                 },
                                 None => {
@@ -835,7 +838,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                       evalutor,
                                       move_orderer_quque
                                           .pop_front()
-                                          .unwrap_or(MoveOrderer::new(max_depth, 1)));
+                                          .unwrap_or(MoveOrderer::new(max_depth)));
 
                     busy_threads += 1;
                 }
@@ -1028,8 +1031,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             best_move: _
                         }) = r {
 
-                if s == Score::INFINITE || s == Score::NEGINFINITE ||
-                   (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                if (bound == Bound::Exact && d as u32 >= gs.depth) ||
                    (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= beta) ||
                    (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= alpha) {
                     let mut mvs = VecDeque::new();
@@ -1071,7 +1073,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             };
 
-            if gs.depth >= 4 && !Rule::in_check(gs.teban,&gs.state) &&
+            if gs.depth >= 4 &&
+                gs.beta < Score::INFINITE &&
+                gs.beta > Score::NEGINFINITE &&
+                !Rule::in_check(gs.teban,&gs.state) &&
                 ((gs.state.get_part().sente_self_board | gs.state.get_part().sente_opponent_board).bitcount() > 12 ||
                   mcount > 6) && ou_surrounding_threats_count < 3 {
 
@@ -1149,6 +1154,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         let mut tt_move = None;
 
         let pv_non = VecDeque::new();
+
+        #[allow(unused)]
+        let mut search_count = 0;
+        #[allow(unused)]
+        let mut mvs_count = 0;
 
         for i in 0..count {
             if i == 0 {
@@ -1251,7 +1261,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                 LegalMove::To(mv) if mv.obtained().is_none() => {
                                                     if !mv.is_nari() {
                                                         if depth >= 3 {
-                                                            env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                            env.move_orderer.update_killer(gs.current_depth, m)?;
                                                         }
                                                         let _ = prev_move.map(|prev_move| {
                                                             env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
@@ -1262,7 +1272,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                 },
                                                 LegalMove::Put(_) => {
                                                     if depth >= 3 {
-                                                        env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                        env.move_orderer.update_killer(gs.current_depth, m)?;
                                                     }
                                                     let _ = prev_move.map(|prev_move| {
                                                         env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
@@ -1298,10 +1308,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                     return Ok(EvaluationResult::Stop);
                                 },
                                 EvaluationResult::Repetition => {
-
                                 }
                             }
                         }
+
+                        search_count += 1;
                     }
                 }
 
@@ -1314,8 +1325,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
+            mvs_count += picker.len();
+
             for (j,(m,see)) in env.move_orderer.ordering(
-                &mut picker, gs.current_depth, gs.current_max_ply as u32, gs.teban, &gs.state, gs.m, gs.prev_kind)?.enumerate() {
+                &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.enumerate() {
 
                 if pv_move.map(|pv | pv == m).unwrap_or(false) {
                     continue;
@@ -1393,7 +1406,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         LegalMove::To(mv) if mv.obtained().is_none() => {
                                             if !mv.is_nari() {
                                                 if depth >= 3 {
-                                                    env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                    env.move_orderer.update_killer(gs.current_depth, m)?;
                                                 }
                                                 let _ = prev_move.map(|prev_move| {
                                                     env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
@@ -1404,7 +1417,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         },
                                         LegalMove::Put(_) => {
                                             if depth >= 3 {
-                                                env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
                                             }
                                             let _ = prev_move.map(|prev_move| {
                                                 env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
@@ -1442,8 +1455,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
                 }
+
+                search_count += 1;
             }
         }
+
+        /*
+        if tt_move.is_some() || pv_move.is_some() || mvs_count > 0 {
+            assert!(search_count > 0,
+                    "search_count = {}, tt_move = {}, pv_move = {}, mvs_count = {}",
+                    search_count,tt_move.is_some(),pv_move.is_some(),mvs_count
+            );
+        }
+         */
 
         if scoreval <= start_alpha {
             env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
@@ -1568,6 +1592,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         let pv_non = VecDeque::new();
 
+        let mut search_count =  0;
+
         {
             let mvs = if let Some(pv) = pv_move {
                 if let Some(m) = tt_move {
@@ -1594,7 +1620,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     };
 
                     if self.is_obtained_ou(m)? {
-                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                        if gs.search_offset == 0 {
+                            env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                        }
 
                         let mut mvs = VecDeque::new();
 
@@ -1641,13 +1669,15 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 best_moves = mvs;
 
                                 if scoreval >= beta {
-                                    env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                    if gs.search_offset == 0 {
+                                        env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                    }
 
                                     match m {
                                         LegalMove::To(mv) if mv.obtained().is_none() => {
                                             if !mv.is_nari() {
                                                 if depth >= 3 {
-                                                    env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                    env.move_orderer.update_killer(gs.current_depth, m)?;
                                                 }
                                                 let _ = prev_move.map(|prev_move| {
                                                     env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
@@ -1658,7 +1688,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                         },
                                         LegalMove::Put(_) => {
                                             if depth >= 3 {
-                                                env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
                                             }
                                             let _ = prev_move.map(|prev_move| {
                                                 env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
@@ -1692,15 +1722,16 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                             return Ok(EvaluationResult::Stop);
                         },
                         EvaluationResult::Repetition => {
-
                         }
                     }
                 }
+
+                search_count += 1;
             }
         }
 
         for (i,(m,see)) in env.move_orderer.ordering(
-            mvs.iter().cloned(), gs.current_depth, gs.current_max_ply as u32, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
+            mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
 
             if pv_move.map(|pv | pv == m).unwrap_or(false) {
                 continue;
@@ -1732,7 +1763,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                 };
 
                 if self.is_obtained_ou(m)? {
-                    env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                    if gs.search_offset == 0 {
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                    }
 
                     let mut mvs = VecDeque::new();
 
@@ -1770,12 +1803,15 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                             best_moves = mvs;
 
-                            if s > gs.best_score {
+                            if s > gs.best_score && gs.search_offset == 0 {
+                                assert_eq!(gs.search_offset,0);
                                 recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                             }
 
                             if scoreval >= beta {
-                                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                if gs.search_offset == 0 {
+                                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                }
 
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
@@ -1783,7 +1819,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                     },
                                     LegalMove::Put(_) => {
                                         if depth >= 3 {
-                                            env.move_orderer.update_killer(gs.current_depth as usize, gs.current_max_ply, m)?;
+                                            env.move_orderer.update_killer(gs.current_depth, m)?;
                                         }
                                         env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
                                     },
@@ -1816,11 +1852,17 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     }
                 }
             }
+
+            search_count += 1;
         }
 
-        if scoreval <= start_alpha {
+        if tt_move.is_some() || pv_move.is_some() || mvs.len() - gs.search_offset > 0 {
+            assert!(search_count > 0);
+        }
+
+        if gs.search_offset == 0 && scoreval <= start_alpha {
             env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
-        } else {
+        } else if gs.search_offset == 0 {
             env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 
