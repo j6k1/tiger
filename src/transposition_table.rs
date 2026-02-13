@@ -341,7 +341,8 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
         let mut tte = self.entry(zh);
         let tte = tte.or_default();
 
-        if bound > tte.bound || (bound == tte.bound && depth >= tte.depth){
+        if score.exact_score_bound() || bound > tte.bound ||
+            (bound == tte.bound && depth >= tte.depth) {
             tte.bound = bound;
             tte.depth = depth;
             tte.score = score;

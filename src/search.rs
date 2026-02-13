@@ -41,7 +41,9 @@ pub const QUIET_SEE_FACTOR:i64 = 128;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
     NEGINFINITE,
+    MAYBENEGINFINITE,
     Value(i32),
+    MAYBEINFINITE,
     INFINITE,
 }
 impl Neg for Score {
@@ -52,6 +54,8 @@ impl Neg for Score {
             Score::Value(v) => Score::Value(-v),
             Score::INFINITE => Score::NEGINFINITE,
             Score::NEGINFINITE => Score::INFINITE,
+            Score::MAYBEINFINITE => Score::MAYBENEGINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBEINFINITE,
         }
     }
 }
@@ -63,6 +67,8 @@ impl Add<i32> for Score {
             Score::Value(v) => Score::Value(v + other),
             Score::INFINITE => Score::INFINITE,
             Score::NEGINFINITE => Score::NEGINFINITE,
+            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
         }
     }
 }
@@ -74,17 +80,19 @@ impl Sub<i32> for Score {
             Score::Value(v) => Score::Value(v - other),
             Score::INFINITE => Score::INFINITE,
             Score::NEGINFINITE => Score::NEGINFINITE,
+            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
         }
-    }
-}
-impl ExactScoreBound for Score {
-    fn exact_score_bound(&self) -> bool {
-        self == &Score::INFINITE || self == &Score::NEGINFINITE
     }
 }
 impl Default for Score {
     fn default() -> Self {
         Score::NEGINFINITE
+    }
+}
+impl ExactScoreBound for Score {
+    fn exact_score_bound(&self) -> bool {
+        *self == Score::INFINITE
     }
 }
 pub struct Environment<L,S> where L: Logger, S: InfoSender {
@@ -422,6 +430,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             },
             Score::NEGINFINITE => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Minus)))
+            },
+            Score::MAYBEINFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(1000000)))
+            },
+            Score::MAYBENEGINFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(-1000000)))
             },
             Score::Value(s) => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(*s as i64)))
@@ -1031,7 +1045,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             best_move: _
                         }) = r {
 
-                if (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                if s.exact_score_bound() ||
+                   (bound == Bound::Exact && d as u32 >= gs.depth) ||
                    (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= beta) ||
                    (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= alpha) {
                     let mut mvs = VecDeque::new();
@@ -1074,8 +1089,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             };
 
             if gs.depth >= 4 &&
-                gs.beta < Score::INFINITE &&
-                gs.beta > Score::NEGINFINITE &&
+                gs.beta < Score::MAYBEINFINITE &&
+                gs.beta > Score::MAYBENEGINFINITE &&
                 !Rule::in_check(gs.teban,&gs.state) &&
                 ((gs.state.get_part().sente_self_board | gs.state.get_part().sente_opponent_board).bitcount() > 12 ||
                   mcount > 6) && ou_surrounding_threats_count < 3 {
@@ -1254,7 +1269,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                         best_moves = mvs;
 
-                                        if scoreval >= beta {
+                                        if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
                                             if scoreval == Score::INFINITE {
                                                 env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                             } else {
@@ -1293,7 +1308,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         }
                                     }
 
-                                    if alpha < s {
+                                    if alpha < s && s != Score::MAYBENEGINFINITE {
                                         alpha = s;
                                     }
 
@@ -1401,8 +1416,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                 best_moves = mvs;
 
-                                if scoreval >= beta {
-                                    if scoreval == Score::INFINITE {
+                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                    if Score::INFINITE == scoreval {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                     } else {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
@@ -1439,7 +1454,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 }
                             }
 
-                            if alpha < s {
+                            if alpha < s && s != Score::MAYBENEGINFINITE {
                                 alpha = s;
                             }
 
@@ -1472,6 +1487,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             );
         }
          */
+
+        if scoreval == Score::NEGINFINITE {
+            scoreval = Score::MAYBENEGINFINITE;
+        }
 
         if scoreval <= start_alpha {
             env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
@@ -1670,8 +1689,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                                 best_moves = mvs;
 
-                                if scoreval >= beta {
-                                    if scoreval == Score::INFINITE {
+                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                    if Score::INFINITE == scoreval {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                     } else {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
@@ -1707,7 +1726,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 }
                             }
 
-                            if alpha < s {
+                            if alpha < s && s != Score::MAYBENEGINFINITE {
                                 alpha = s;
                             }
 
@@ -1808,8 +1827,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                             }
 
-                            if scoreval >= beta {
-                                if gs.search_offset == 0 {
+                            if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                if Score::INFINITE == scoreval {
+                                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+                                } else {
                                     env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
                                 }
 
@@ -1830,7 +1851,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                             }
                         }
 
-                        if alpha < s {
+                        if alpha < s && s != Score::MAYBENEGINFINITE {
                             alpha = s;
                         }
 
@@ -1856,6 +1877,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         if tt_move.is_some() || pv_move.is_some() || mvs.len() - gs.search_offset > 0 {
             assert!(search_count > 0);
+        }
+
+        if scoreval == Score::NEGINFINITE {
+            scoreval = Score::MAYBENEGINFINITE;
         }
 
         if gs.search_offset == 0 && scoreval <= start_alpha {
