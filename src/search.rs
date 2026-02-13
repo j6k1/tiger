@@ -1609,9 +1609,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         let pv_non = VecDeque::new();
 
+        #[allow(unused)]
         let mut search_count =  0;
 
         let mut pruned_count = 0;
+        let mut enable_pruning_by_see = true;
 
         {
             let mvs = if let Some(pv) = pv_move {
@@ -1747,129 +1749,138 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             }
         }
 
-        for (i,(m,see)) in env.move_orderer.ordering(
-            mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
+        for _ in 0..2{
+            for (i,(m,see)) in env.move_orderer.ordering(
+                mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
 
-            if pv_move.map(|pv | pv == m).unwrap_or(false) {
-                continue;
-            }
-
-            if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
-                continue;
-            }
-
-            let is_nari = match m {
-                LegalMove::To(mv) => mv.is_nari(),
-                _ => false
-            };
-
-            if let Some(o) = m.obtained() {
-                if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
-                    see < -PIECE_SCORE_MAP[o as usize] / 4 {
-                    pruned_count += 1;
+                if pv_move.map(|pv | pv == m).unwrap_or(false) {
                     continue;
                 }
-            }
 
-            let mut r = recur.calc_lmr(env,gs.depth,i+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+                if tt_move.map(|tt_move | tt_move == m).unwrap_or(false) {
+                    continue;
+                }
 
-            for j in 0..2 {
-                let depth = if j == 0 {
-                    gs.depth - r
-                } else {
-                    gs.depth
+                let is_nari = match m {
+                    LegalMove::To(mv) => mv.is_nari(),
+                    _ => false
                 };
 
-                if self.is_obtained_ou(m)? {
-                    env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
-
-                    let mut mvs = VecDeque::new();
-
-                    mvs.push_front(m);
-                    env.history.remove(&(gs.teban,mk,sk));
-
-                    return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
-                }
-
-                match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,&mut event_dispatcher,evalutor)? {
-                    EvaluationResult::Immediate(s, mvs, _) => {
-                        let s = -s;
-
-                        match m {
-                            LegalMove::To(mv) if mv.obtained().is_none() => {
-                                if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
-                                }
-                            },
-                            LegalMove::Put(_) => {
-                                if s <= start_alpha {
-                                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
-                                }
-                            },
-                            _ => ()
-                        };
-
-                        if r > 0 && (s >= beta || s > start_alpha) {
-                            r = 0;
-                            continue;
-                        }
-
-                        if s > scoreval {
-                            scoreval = s;
-
-                            best_moves = mvs;
-
-                            if s > gs.best_score && gs.search_offset == 0 {
-                                assert_eq!(gs.search_offset,0);
-                                recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
-                            }
-
-                            if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
-                                if Score::INFINITE == scoreval {
-                                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
-                                } else {
-                                    env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
-                                }
-
-                                match m {
-                                    LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
-                                    },
-                                    LegalMove::Put(_) => {
-                                        env.move_orderer.update_killer(gs.current_depth, m)?;
-                                        env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
-                                    },
-                                    _ => ()
-                                };
-
-                                env.history.remove(&(gs.teban,mk,sk));
-
-                                return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
-                            }
-                        }
-
-                        if alpha < s && s != Score::MAYBENEGINFINITE {
-                            alpha = s;
-                        }
-
-                        break;
-                    },
-                    EvaluationResult::Timeout => {
-                        env.history.remove(&(gs.teban,mk,sk));
-
-                        return Ok(EvaluationResult::Timeout);
-                    },
-                    EvaluationResult::Stop => {
-                        env.history.remove(&(gs.teban,mk,sk));
-
-                        return Ok(EvaluationResult::Stop);
-                    },
-                    EvaluationResult::Repetition => {
+                if let Some(o) = m.obtained() {
+                    if enable_pruning_by_see && !is_nari &&
+                        !Rule::is_oute_move(gs.state,gs.teban,m) &&
+                        see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                        pruned_count += 1;
+                        continue;
                     }
                 }
+
+                let mut r = recur.calc_lmr(env,gs.depth,i+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+
+                for j in 0..2 {
+                    let depth = if j == 0 {
+                        gs.depth - r
+                    } else {
+                        gs.depth
+                    };
+
+                    if self.is_obtained_ou(m)? {
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(m);
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                    }
+
+                    match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,&mut event_dispatcher,evalutor)? {
+                        EvaluationResult::Immediate(s, mvs, _) => {
+                            let s = -s;
+
+                            match m {
+                                LegalMove::To(mv) if mv.obtained().is_none() => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                    }
+                                },
+                                LegalMove::Put(_) => {
+                                    if s <= start_alpha {
+                                        env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,depth)?;
+                                    }
+                                },
+                                _ => ()
+                            };
+
+                            if r > 0 && (s >= beta || s > start_alpha) {
+                                r = 0;
+                                continue;
+                            }
+
+                            if s > scoreval {
+                                scoreval = s;
+
+                                best_moves = mvs;
+
+                                if s > gs.best_score && gs.search_offset == 0 {
+                                    assert_eq!(gs.search_offset,0);
+                                    recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                                }
+
+                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                    if Score::INFINITE == scoreval {
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+                                    } else {
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                    }
+
+                                    match m {
+                                        LegalMove::To(mv) if mv.obtained().is_none() => {
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        LegalMove::Put(_) => {
+                                            env.move_orderer.update_killer(gs.current_depth, m)?;
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
+                                        },
+                                        _ => ()
+                                    };
+
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                }
+                            }
+
+                            if alpha < s && s != Score::MAYBENEGINFINITE {
+                                alpha = s;
+                            }
+
+                            break;
+                        },
+                        EvaluationResult::Timeout => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Timeout);
+                        },
+                        EvaluationResult::Stop => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::Stop);
+                        },
+                        EvaluationResult::Repetition => {
+                        }
+                    }
+                }
+
+                search_count += 1;
             }
 
-            search_count += 1;
+            if pruned_count < mvs.len() {
+                break;
+            } else {
+                enable_pruning_by_see = false;
+            }
         }
 
         if pruned_count > 0 && scoreval == Score::NEGINFINITE {
