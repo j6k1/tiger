@@ -1175,6 +1175,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         #[allow(unused)]
         let mut mvs_count = 0;
 
+        let mut pruned_count = 0;
+
         for i in 0..count {
             if i == 0 {
                 tt_move = if let Some(TTPartialEntry {
@@ -1363,6 +1365,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 if let Some(o) = m.obtained() {
                     if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
                         see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                        pruned_count += 1;
                         continue;
                     }
                 }
@@ -1479,16 +1482,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
-        /*
-        if tt_move.is_some() || pv_move.is_some() || mvs_count > 0 {
-            assert!(search_count > 0,
-                    "search_count = {}, tt_move = {}, pv_move = {}, mvs_count = {}",
-                    search_count,tt_move.is_some(),pv_move.is_some(),mvs_count
-            );
-        }
-         */
-
-        if scoreval == Score::NEGINFINITE {
+        if pruned_count > 0 && scoreval == Score::NEGINFINITE {
             scoreval = Score::MAYBENEGINFINITE;
         }
 
@@ -1616,6 +1610,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
         let pv_non = VecDeque::new();
 
         let mut search_count =  0;
+
+        let mut pruned_count = 0;
 
         {
             let mvs = if let Some(pv) = pv_move {
@@ -1770,6 +1766,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             if let Some(o) = m.obtained() {
                 if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
                     see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                    pruned_count += 1;
                     continue;
                 }
             }
@@ -1875,11 +1872,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             search_count += 1;
         }
 
-        if tt_move.is_some() || pv_move.is_some() || mvs.len() - gs.search_offset > 0 {
-            assert!(search_count > 0);
-        }
-
-        if scoreval == Score::NEGINFINITE {
+        if pruned_count > 0 && scoreval == Score::NEGINFINITE {
             scoreval = Score::MAYBENEGINFINITE;
         }
 
