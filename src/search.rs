@@ -1486,12 +1486,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             scoreval = Score::MAYBENEGINFINITE;
         }
 
-        if scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
-        } else {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
+        if scoreval != Score::MAYBENEGINFINITE {
+            if scoreval <= start_alpha {
+                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
+            } else {
+                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::Exact, best_moves.front().map(|m| m.clone()));
+            }
         }
-
         env.history.remove(&(gs.teban,mk,sk));
 
         prev_move.map(|m| best_moves.push_front(m));
@@ -1558,10 +1559,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
-        }
-
-        if env.history.contains(&(gs.teban,mk,sk)) {
-            return Ok(EvaluationResult::Repetition);
         }
 
         let mut event_dispatcher = Root::<L,S,M>::create_event_dispatcher::<Recursive<L,S,M>>(
@@ -1887,10 +1884,12 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             scoreval = Score::MAYBENEGINFINITE;
         }
 
-        if gs.search_offset == 0 && scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
-        } else if gs.search_offset == 0 {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
+        if scoreval != Score::MAYBENEGINFINITE {
+            if gs.search_offset == 0 && scoreval <= start_alpha {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+            } else if gs.search_offset == 0 {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
+            }
         }
 
         env.history.remove(&(gs.teban,mk,sk));
