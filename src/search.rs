@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use rand::Rng;
 use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
+use usiagent::bitboard::BitBoard;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
 use usiagent::consts::PIECE_SCORE_MAP;
 use usiagent::error::EventHandlerError;
@@ -22,7 +23,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
@@ -375,6 +376,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        m:LegalMove,
                        pv:Option<&LegalMove>,
                        zh:&ZobristHash<u64>) -> u32 {
+        /*
         let is_nari = match m {
             LegalMove::To(m) => m.is_nari(),
             _ => false
@@ -416,6 +418,168 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             r
         } else {
             0
+        }
+
+         */
+        0
+    }
+
+    fn in_danger(teban: Teban, state:&State) -> bool {
+        match teban {
+            Teban::Sente => {
+                let p = Rule::ou_square(Teban::Sente,state) as u32;
+
+                let danger_mask = Rule::gen_candidate_bits(Teban::Sente,state.get_part().sente_self_board,p,KomaKind::SOu);
+
+                Rule::sente_ou_surrounding_threats_count(state.get_part()) >= 2 ||
+                Rule::sente_danger_count(state.get_part(),
+                                         danger_mask,p as i32 - 10,
+                                         BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),p as i32 - 20) <= 2
+            },
+            Teban::Gote => {
+                let p = Rule::ou_square(Teban::Gote,state) as u32;
+
+                let danger_mask = Rule::gen_candidate_bits(Teban::Gote,state.get_part().sente_self_board,p,KomaKind::GOu).reverse();
+
+                Rule::gote_ou_surrounding_threats_count(state.get_part()) >= 2 ||
+                    Rule::gote_danger_count(state.get_part(),
+                                             danger_mask,p as i32 - 10,
+                                             BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),p as i32 - 19) <= 2
+            }
+        }
+    }
+
+    fn in_threat(teban: Teban, state:&State, m:LegalMove) -> bool {
+        const ZONE_LARGE:u128 = 0b000011111_000011111_000011011_000011111_000011111;
+        const ZONE_SMALL:u128 = 0b000000111_000000101_000000111;
+
+        let ps = state.get_part();
+
+        match teban {
+            Teban::Sente => {
+                let ou_square = Rule::ou_square(Teban::Sente,state) as u32;
+
+                let (_,oy) = ou_square.square_to_point();
+
+                let mask = ps.sente_gin_board |
+                                    ps.sente_kin_board | ps.sente_nari_board |
+                                    ps.sente_kaku_board | ps.sente_hisha_board;
+                match m {
+                    LegalMove::To(m) => {
+                        let mut zone_mask = ZONE_LARGE;
+
+                        if oy == 0 {
+                            zone_mask &= 0b111111100_111111100_111111100_111111100_111111100;
+                        } else if oy == 1 {
+                            zone_mask &= 0b111111110_111111110_111111110_111111110_111111110;
+                        } else if oy == 8 {
+                            zone_mask &= 0b000000111_000000111_000000111_000000111_000000111;
+                        } else if oy == 7 {
+                            zone_mask &= 0b000001111_000001111_000001111_000001111_000001111;
+                        }
+
+                        let zone_mask = if m.dst() >= 20 {
+                            zone_mask << m.dst() - 20
+                        } else {
+                            zone_mask << 20 - m.dst()
+                        };
+
+                        (m.obtained() == Some(ObtainKind::Gin) || m.obtained() == Some(ObtainKind::Kin) &&
+                            BitBoard::from(ZONE_SMALL) & (1 << m.dst() + 1) != 0) ||
+                        (
+                            (1 << m.src() + 1) & mask != 0 && (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                        )
+                    },
+                    LegalMove::Put(m) => {
+                        let mut zone_mask = ZONE_LARGE;
+
+                        if oy == 0 {
+                            zone_mask &= 0b111111100_111111100_111111100_111111100_111111100;
+                        } else if oy == 1 {
+                            zone_mask &= 0b111111110_111111110_111111110_111111110_111111110;
+                        } else if oy == 8 {
+                            zone_mask &= 0b000000111_000000111_000000111_000000111_000000111;
+                        } else if oy == 7 {
+                            zone_mask &= 0b000001111_000001111_000001111_000001111_000001111;
+                        }
+
+                        let zone_mask = if m.dst() >= 20 {
+                            zone_mask << m.dst() - 20
+                        } else {
+                            zone_mask << 20 - m.dst()
+                        };
+
+                        match m.kind() {
+                            MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
+                                (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                            },
+                            _ => false
+                        }
+                    }
+                }
+            },
+            Teban::Gote => {
+                let ou_square = Rule::ou_square(Teban::Sente,state) as u32;
+
+                let (_,oy) = ou_square.square_to_point();
+
+                let mask = ps.gote_gin_board |
+                    ps.gote_kin_board | ps.gote_nari_board |
+                    ps.gote_kaku_board | ps.gote_hisha_board;
+                match m {
+                    LegalMove::To(m) => {
+                        let mut zone_mask = ZONE_LARGE;
+
+                        if oy == 0 {
+                            zone_mask &= 0b111111100_111111100_111111100_111111100_111111100;
+                        } else if oy == 1 {
+                            zone_mask &= 0b111111110_111111110_111111110_111111110_111111110;
+                        } else if oy == 8 {
+                            zone_mask &= 0b000000111_000000111_000000111_000000111_000000111;
+                        } else if oy == 7 {
+                            zone_mask &= 0b000001111_000001111_000001111_000001111_000001111;
+                        }
+
+                        let zone_mask = if m.dst() >= 20 {
+                            zone_mask << m.dst() - 20
+                        } else {
+                            zone_mask << 20 - m.dst()
+                        };
+
+                        (m.obtained() == Some(ObtainKind::Gin) || m.obtained() == Some(ObtainKind::Kin) &&
+                            BitBoard::from(ZONE_SMALL) & (1 << m.dst() + 1) != 0) ||
+                            (
+                                (1 << m.src() + 1) & mask != 0 && (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                            )
+                    },
+                    LegalMove::Put(m) => {
+                        let mut zone_mask = ZONE_LARGE;
+
+                        if oy == 0 {
+                            zone_mask &= 0b111111100_111111100_111111100_111111100_111111100;
+                        } else if oy == 1 {
+                            zone_mask &= 0b111111110_111111110_111111110_111111110_111111110;
+                        } else if oy == 8 {
+                            zone_mask &= 0b000000111_000000111_000000111_000000111_000000111;
+                        } else if oy == 7 {
+                            zone_mask &= 0b000001111_000001111_000001111_000001111_000001111;
+                        }
+
+                        let zone_mask = if m.dst() >= 20 {
+                            zone_mask << m.dst() - 20
+                        } else {
+                            zone_mask << 20 - m.dst()
+                        };
+
+                        match m.kind() {
+                            MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
+                                (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                            },
+                            _ => false
+                        }
+                    }
+                }
+            }
         }
     }
     fn send_info(&self, env:&mut Environment<L,S>,
@@ -911,14 +1075,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         match next {
             (state, mc, _) => {
-                if extend_depth > 0 && (Rule::in_check(gs.teban.opposite(),&state) || gs.m.map(|pm| {
-                    if let LegalMove::To(pm) = pm {
-                        if let LegalMove::To(m) = m {
-                            return pm.obtained().is_some() && m.obtained().is_some() && pm.dst() == m.dst();
-                        }
-                    }
-                    false
-                }).unwrap_or(false)) {
+                if extend_depth > 0 && Rule::in_check(gs.teban.opposite(),&state) {
                     depth += 1;
                     extend_depth -= 1;
                 }
@@ -972,7 +1129,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         -> Result<EvaluationResult, ApplicationError> {
         let state = gs.state;
         let mc = gs.mc;
-        let zh = gs.zh.flip_teban();
+        let zh = gs.zh.teban_fliped();
 
         let mut gs = GameState {
             teban: gs.teban.opposite(),
@@ -1039,16 +1196,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             if let Some(TTPartialEntry {
                             depth: d,
                             score: s,
-                            beta,
-                            alpha,
+                            beta: _,
+                            alpha: _,
                             bound,
                             best_move: _
                         }) = r {
 
-                if s.exact_score_bound() ||
-                   (bound == Bound::Exact && d as u32 >= gs.depth) ||
-                   (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= beta) ||
-                   (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= alpha) {
+                if (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                   (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= gs.beta) ||
+                   (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= gs.alpha) {
                     let mut mvs = VecDeque::new();
 
                     mvs.push_front(prev_move);
@@ -1072,6 +1228,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
+        /*
         {
             const R:u32 = 2;
 
@@ -1123,6 +1280,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             }
         }
+
+         */
 
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
@@ -1357,6 +1516,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     continue;
                 }
 
+                /*
                 let is_nari = match m {
                     LegalMove::To(mv) => mv.is_nari(),
                     _ => false
@@ -1369,6 +1529,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         continue;
                     }
                 }
+
+                 */
 
                 let mut r  = self.calc_lmr(env,gs.depth,j+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
 
@@ -1746,7 +1908,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             }
         }
 
-        for _ in 0..2{
+        for _ in 0..2 {
             for (i,(m,see)) in env.move_orderer.ordering(
                 mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, gs.prev_kind)?.skip(gs.search_offset).enumerate() {
 
@@ -1758,6 +1920,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     continue;
                 }
 
+                /*
                 let is_nari = match m {
                     LegalMove::To(mv) => mv.is_nari(),
                     _ => false
@@ -1771,6 +1934,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         continue;
                     }
                 }
+
+                 */
 
                 let mut r = recur.calc_lmr(env,gs.depth,i+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
 
