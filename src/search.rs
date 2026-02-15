@@ -429,22 +429,32 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             Teban::Sente => {
                 let p = Rule::ou_square(Teban::Sente,state) as u32;
 
-                let danger_mask = Rule::gen_candidate_bits(Teban::Sente,state.get_part().sente_self_board,p,KomaKind::SOu);
+                let candidate_bits = Rule::gen_candidate_bits(Teban::Sente,state.get_part().sente_self_board,p,KomaKind::SOu);
+
+                let candidate_count = candidate_bits.bitcount();
+
+                let danger_mask = candidate_bits;
 
                 Rule::sente_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                Rule::sente_danger_count(state.get_part(),
-                                         danger_mask,p as i32 - 10,
-                                         BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),p as i32 - 20) <= 2
+                candidate_count - Rule::sente_danger_count(state.get_part(),
+                                                           danger_mask,p as i32 - 10,
+                                                           BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),
+                                                           p as i32 - 20) <= 2
             },
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote,state) as u32;
 
-                let danger_mask = Rule::gen_candidate_bits(Teban::Gote,state.get_part().sente_self_board,p,KomaKind::GOu).reverse();
+                let candidate_bits = Rule::gen_candidate_bits(Teban::Gote,state.get_part().sente_self_board,p,KomaKind::GOu).reverse();
+
+                let candidate_count = candidate_bits.bitcount();
+
+                let danger_mask = candidate_bits;
 
                 Rule::gote_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                    Rule::gote_danger_count(state.get_part(),
-                                             danger_mask,p as i32 - 10,
-                                             BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),p as i32 - 19) <= 2
+                candidate_count - Rule::gote_danger_count(state.get_part(),
+                                                          danger_mask,p as i32 - 10,
+                                                          BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),
+                                                          p as i32 - 19) <= 2
             }
         }
     }
