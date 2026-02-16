@@ -48,20 +48,20 @@ impl Evalutor {
         match teban {
             Teban::Sente => {
                 score += state.get_part().sente_self_board.iter().map(|p| {
-                    Rule::control_count(teban,state,p) as i32
+                    Rule::control_count(teban,state.get_part(),p) as i32
                 }).fold(0,|acc,c| acc + c);
 
                 score -= state.get_part().gote_self_board.iter().map(|p| {
-                    Rule::control_count(teban,state,p) as i32
+                    Rule::control_count(teban,state.get_part(),p) as i32
                 }).fold(0,|acc,c| acc + c);
             },
             Teban::Gote => {
                 score += state.get_part().gote_self_board.iter().map(|p| {
-                    Rule::control_count(teban,state,p) as i32
+                    Rule::control_count(teban,state.get_part(),p) as i32
                 }).fold(0,|acc,c| acc + c);
 
                 score -= state.get_part().sente_self_board.iter().map(|p| {
-                    Rule::control_count(teban,state,p) as i32
+                    Rule::control_count(teban,state.get_part(),p) as i32
                 }).fold(0,|acc,c| acc + c);
             }
         }

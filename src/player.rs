@@ -101,7 +101,6 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     hasher:Arc<KyokumenHash<u64>>,
     transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
     base_depth:u32,
-    max_depth:u32,
     max_threads:u32,
     nodes_per_leaf_node:u16,
     gamma:u8,
@@ -128,7 +127,6 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             hasher:Arc::new(KyokumenHash::new()),
             transposition_table:Arc::new(TT::new()),
             base_depth:BASE_DEPTH,
-            max_depth:MAX_DEPTH,
             max_threads:MAX_THREADS,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             gamma:GAMMA,
@@ -215,7 +213,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     current_depth:0,
                     current_max_ply:1,
                     base_depth:base_depth,
-                    extend_depth:(env.max_depth as i32 - base_depth as i32).max(0) as u32
+                    extend_depth:2
                 };
 
                 let strategy  = Root::new(ThreadPoolBuilder::new()
@@ -322,7 +320,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
-        options.insert(String::from("MaxDepth"),UsiOptType::Spin(1,100,Some(MAX_DEPTH as i64)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
         options.insert(String::from("TIMELIMIT_MARGIN"),UsiOptType::Spin(0,60000,Some(TIMELIMIT_MARGIN as i64)));
@@ -347,9 +344,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
 
     fn set_option(&mut self,name:String,value:SysEventOption) -> Result<(),ApplicationError> {
         match &*name {
-            "MaxDepth" => {
-                self.max_depth = u32::from_option(value).unwrap_or(MAX_DEPTH);
-            },
             "BaseDepth" => {
                 self.base_depth = u32::from_option(value).unwrap_or(BASE_DEPTH);
             },
@@ -464,7 +458,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                     limit.and_then(move |l| l.to_instant(teban,think_start_time))
                 ),
                 self.base_depth,
-                self.max_depth,
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,
@@ -506,7 +499,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.timelimit_margin,
                 (None,None),
                 self.base_depth,
-                self.max_depth,
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,

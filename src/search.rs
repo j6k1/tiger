@@ -107,7 +107,6 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub timelimit_margin:u64,
     pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
-    pub max_depth:u32,
     pub max_threads:u32,
     pub nodes_per_leaf_node:u16,
     pub gamma:u8,
@@ -132,7 +131,6 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:self.timelimit_margin.clone(),
             current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
-            max_depth:self.max_depth,
             max_threads:self.max_threads,
             nodes_per_leaf_node:self.nodes_per_leaf_node,
             gamma:self.gamma,
@@ -171,7 +169,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                timelimit_margin:u64,
                current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
-               max_depth:u32,
                max_threads:u32,
                nodes_per_leaf_node:u16,
                gamma:u8,
@@ -193,7 +190,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:timelimit_margin,
             current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
-            max_depth:max_depth,
             max_threads:max_threads,
             nodes_per_leaf_node:nodes_per_leaf_node,
             gamma:gamma,
@@ -202,7 +198,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             quited:quited,
             history:history,
             transposition_table:Arc::clone(transposition_table),
-            move_orderer:MoveOrderer::<UnusedQuietSee>::new(max_depth as usize),
+            move_orderer:MoveOrderer::<UnusedQuietSee>::new(base_depth as usize + 2),
             nodes:Arc::new(AtomicU64::new(0))
         }
     }
@@ -376,7 +372,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        m:LegalMove,
                        pv:Option<&LegalMove>,
                        zh:&ZobristHash<u64>) -> u32 {
-        /*
         let is_nari = match m {
             LegalMove::To(m) => m.is_nari(),
             _ => false
@@ -385,10 +380,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if depth <= 2 || is_nari ||
             m.obtained().is_some() ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
-            Rule::in_check(teban,state) ||
+            self.in_danger(teban.opposite(),state) ||
             Rule::is_oute_move(state,teban,m) {
             0
-        } else if index >= 4 + 1 {
+        } else if index < 4 + 1 {
+            0
+        } else {
             let mut r = (
                 (
                     (depth as f32).ln() * (index as f32 + 1.).ln() / 2.25
@@ -416,15 +413,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             }
 
             r
-        } else {
-            0
         }
-
-         */
-        0
     }
 
-    fn in_danger(teban: Teban, state:&State) -> bool {
+    fn in_danger(&self, teban: Teban, state:&State) -> bool {
         match teban {
             Teban::Sente => {
                 let p = Rule::ou_square(Teban::Sente,state) as u32;
@@ -444,7 +436,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote,state) as u32;
 
-                let candidate_bits = Rule::gen_candidate_bits(Teban::Gote,state.get_part().sente_self_board,p,KomaKind::GOu).reverse();
+                let candidate_bits = Rule::gen_candidate_bits(Teban::Gote,state.get_part().gote_self_board,p,KomaKind::GOu).reverse();
 
                 let candidate_count = candidate_bits.bitcount();
 
@@ -459,7 +451,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         }
     }
 
-    fn in_threat(teban: Teban, state:&State, m:LegalMove) -> bool {
+    fn is_threat_move(&self, teban: Teban, state:&State, m:LegalMove) -> bool {
         const ZONE_LARGE:u128 = 0b000011111_000011111_000011011_000011111_000011111;
         const ZONE_SMALL:u128 = 0b000000111_000000101_000000111;
 
@@ -836,8 +828,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError> {
         let base_depth = gs.depth.min(env.base_depth);
-        let max_depth = (env.max_depth).max(base_depth) as usize;
         let mut current_depth = 1;
+        let max_depth = base_depth as usize + 2;
         let mut already_started = vec![false;max_depth+1];
         let mut workings = vec![0;max_depth+1];
         let pending_results = Arc::new(AtomicUsize::new(0));
@@ -857,9 +849,11 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
         let mut leafnodes_seacch_space:u128 = mvs.len() as u128;
         let gamma = env.gamma;
+        let mut evasions_count;
 
         if Rule::in_check(gs.teban,&gs.state) {
             Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+            evasions_count = Some(picker.len());
             mvs = picker.collect::<Vec<LegalMove>>();
         } else {
             {
@@ -873,6 +867,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 let mut v = (&mut picker).collect::<Vec<LegalMove>>();
                 mvs.append(&mut v);
             }
+
+            evasions_count = None;
         };
 
         let mvs = Arc::new(mvs);
@@ -1069,6 +1065,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
                                      depth:u32,
+                                     evasions_count: Option<usize>,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let o = match m {
@@ -1085,7 +1082,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         match next {
             (state, mc, _) => {
-                if extend_depth > 0 && Rule::in_check(gs.teban.opposite(),&state) {
+                if extend_depth > 0 && (Rule::in_check(gs.teban.opposite(),&state) ||
+                    self.in_danger(gs.teban.opposite(),&state)) {
                     depth += 1;
                     extend_depth -= 1;
                 }
@@ -1346,6 +1344,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut pruned_count = 0;
 
+        let mut evasions_count = None;
+
         for i in 0..count {
             if i == 0 {
                 tt_move = if let Some(TTPartialEntry {
@@ -1412,7 +1412,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
                             }
 
-                            match self.search_child_node(env, gs, m, pv, alpha, depth, event_dispatcher, evalutor)? {
+                            match self.search_child_node(env, gs, m, pv, alpha, depth, evasions_count, event_dispatcher, evalutor)? {
                                 EvaluationResult::Immediate(s, mvs, _) => {
                                     let s = -s;
 
@@ -1507,10 +1507,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 continue;
             } else if i == 1 && Rule::in_check(gs.teban,&gs.state) {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                evasions_count = Some(picker.len());
             } else if i == 1 {
                 Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                evasions_count = None;
             } else {
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                evasions_count = None;
             }
 
             mvs_count += picker.len();
@@ -1563,7 +1566,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                     }
 
-                    match self.search_child_node(env,gs,m,&pv_non,alpha,depth,event_dispatcher,evalutor)? {
+                    match self.search_child_node(env,gs,m,&pv_non,alpha,depth,evasions_count,event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
@@ -1703,11 +1706,12 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     pv:&VecDeque<LegalMove>,
                                     alpha:Score,
                                     depth:u32,
+                                    evasions_count: Option<usize>,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -1784,6 +1788,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
         let mut pruned_count = 0;
         let mut enable_pruning_by_see = true;
 
+        let mut evasions_count = None;
+
         {
             let mvs = if let Some(pv) = pv_move {
                 if let Some(m) = tt_move {
@@ -1828,7 +1834,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         }
                     }).unwrap_or(&pv_non);
 
-                    match recur.search_child_node(env, gs, m, pv, alpha, depth, &mut event_dispatcher, evalutor)? {
+                    match recur.search_child_node(env, gs, m, pv, alpha, depth, evasions_count, &mut event_dispatcher, evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
@@ -1855,6 +1861,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 scoreval = s;
 
                                 best_moves = mvs;
+
+                                if gs.search_offset == 0 {
+                                    assert_eq!(gs.search_offset,0);
+                                    recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                                }
 
                                 if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
                                     if Score::INFINITE == scoreval {
@@ -1967,7 +1978,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                     }
 
-                    match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,&mut event_dispatcher,evalutor)? {
+                    match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,evasions_count,&mut event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
@@ -1995,7 +2006,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                                 best_moves = mvs;
 
-                                if s > gs.best_score && gs.search_offset == 0 {
+                                if gs.search_offset == 0 {
                                     assert_eq!(gs.search_offset,0);
                                     recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                                 }
