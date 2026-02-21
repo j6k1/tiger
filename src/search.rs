@@ -23,7 +23,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, Square, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
@@ -220,7 +220,10 @@ pub struct GameState<'a> {
     pub current_depth:u32,
     pub current_max_ply:usize,
     pub base_depth:u32,
-    pub extend_depth:u32
+    pub extend_depth:u32,
+    pub extend_check:u32,
+    pub extend_threatmate:u32
+
 }
 pub struct Root<L,S,M> where L: Logger + Send + 'static,
                              S: InfoSender,
@@ -372,15 +375,16 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        m:LegalMove,
                        pv:Option<&LegalMove>,
                        zh:&ZobristHash<u64>) -> u32 {
+        /*
         let is_nari = match m {
             LegalMove::To(m) => m.is_nari(),
             _ => false
         };
 
-        if depth <= 2 || is_nari ||
+        if depth <= 3 || is_nari ||
             m.obtained().is_some() ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
-            self.in_danger(teban.opposite(),state) ||
+            self.in_danger(teban.opposite(),state, m) ||
             Rule::is_oute_move(state,teban,m) {
             0
         } else if index < 4 + 1 {
@@ -395,7 +399,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
 
             if let Some(TTPartialEntry {
-                            depth: _,
+                            depth: d,
                             score: _,
                             beta: _,
                             alpha: _,
@@ -403,7 +407,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             best_move
                         }) = tte {
 
-                if best_move.map(|bm| bm == m).unwrap_or(false) {
+                if d as u32 >= depth && best_move.map(|bm| bm == m).unwrap_or(false) {
                     if bound == Bound::Exact {
                         r = 0;
                     } else if bound == Bound::LowerBound {
@@ -414,58 +418,99 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             r
         }
+
+         */
+        0
     }
 
-    fn in_danger(&self, teban: Teban, state:&State) -> bool {
+    fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
         match teban {
             Teban::Sente => {
                 let p = Rule::ou_square(Teban::Sente,state) as u32;
 
-                let candidate_bits = Rule::gen_candidate_bits(Teban::Sente,state.get_part().sente_self_board,p,KomaKind::SOu);
+                let mut danger_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
-                let candidate_count = candidate_bits.bitcount();
+                let (_,y) = p.square_to_point();
 
-                let danger_mask = candidate_bits;
+                if y == 0 {
+                    danger_mask &= OU_SURROUNDING_TOP_MASK;
+                } else if y == 8 {
+                    danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
+                }
 
-                Rule::sente_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                candidate_count - Rule::sente_danger_count(state.get_part(),
-                                                           danger_mask,p as i32 - 10,
-                                                           BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),
-                                                           p as i32 - 20) <= 2
+                let capture_mask = match m {
+                    LegalMove::To(m) => {
+                        1 << m.dst()
+                    },
+                    _ => 0
+                };
+
+                let capture_mask = BitBoard::from(capture_mask);
+
+                ((m.obtained() == Some(ObtainKind::Kin) || m.obtained() == Some(ObtainKind::Gin)) &&
+                    capture_mask & if p >= 10 {
+                        danger_mask << (p - 10) as u128
+                    } else {
+                        danger_mask >> (10 - p) as u128
+                    } != 0) || Rule::sente_ou_surrounding_threats_count(state.get_part()) >= 2 ||
+                Rule::sente_danger_count(state.get_part(),
+                   danger_mask,p as i32 - 10,
+                   BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),
+                   p as i32 - 20) >= 2
+
             },
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote,state) as u32;
 
-                let candidate_bits = Rule::gen_candidate_bits(Teban::Gote,state.get_part().gote_self_board,p,KomaKind::GOu).reverse();
+                let mut danger_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
-                let candidate_count = candidate_bits.bitcount();
+                let (_,y) = p.square_to_point();
 
-                let danger_mask = candidate_bits;
+                if y == 0 {
+                    danger_mask &= OU_SURROUNDING_TOP_MASK;
+                } else if y == 8 {
+                    danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
+                }
 
-                Rule::gote_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                candidate_count - Rule::gote_danger_count(state.get_part(),
-                                                          danger_mask,p as i32 - 10,
-                                                          BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),
-                                                          p as i32 - 19) <= 2
+                let capture_mask = match m {
+                    LegalMove::To(m) => {
+                        1 << m.dst()
+                    },
+                    _ => 0
+                };
+
+                let capture_mask = BitBoard::from(capture_mask);
+
+                ((m.obtained() == Some(ObtainKind::Kin) || m.obtained() == Some(ObtainKind::Gin)) &&
+                    capture_mask & if p >= 10 {
+                        danger_mask << (p - 10) as u128
+                    } else {
+                        danger_mask >> (10 - p) as u128
+                    } != 0
+                ) || Rule::gote_ou_surrounding_threats_count(state.get_part()) >= 2 ||
+                Rule::gote_danger_count(state.get_part(),
+                      danger_mask,p as i32 - 10,
+                      BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),
+                      p as i32 - 19) >= 2
             }
         }
     }
 
-    fn is_threat_move(&self, teban: Teban, state:&State, m:LegalMove) -> bool {
+    fn is_threat(&self, teban: Teban, state:&State, m:LegalMove) -> bool {
         const ZONE_LARGE:u128 = 0b000011111_000011111_000011011_000011111_000011111;
-        const ZONE_SMALL:u128 = 0b000000111_000000101_000000111;
 
         let ps = state.get_part();
 
         match teban {
             Teban::Sente => {
-                let ou_square = Rule::ou_square(Teban::Sente,state) as u32;
+                let ou_square = Rule::ou_square(Teban::Gote,state) as u32;
 
                 let (_,oy) = ou_square.square_to_point();
 
                 let mask = ps.sente_gin_board |
                                     ps.sente_kin_board | ps.sente_nari_board |
                                     ps.sente_kaku_board | ps.sente_hisha_board;
+
                 match m {
                     LegalMove::To(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -486,10 +531,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        (m.obtained() == Some(ObtainKind::Gin) || m.obtained() == Some(ObtainKind::Kin) &&
-                            BitBoard::from(ZONE_SMALL) & (1 << m.dst() + 1) != 0) ||
-                        (
-                            (1 << m.src() + 1) & mask != 0 && (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                        ((m.obtained().is_some() || m.is_nari()) && Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0) ||
+                        (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
+                            BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                            BitBoard::from(1 << m.dst() + 1) & mask != 0
                         )
                     },
                     LegalMove::Put(m) => {
@@ -513,7 +558,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
                             },
                             _ => false
                         }
@@ -548,11 +593,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        (m.obtained() == Some(ObtainKind::Gin) || m.obtained() == Some(ObtainKind::Kin) &&
-                            BitBoard::from(ZONE_SMALL) & (1 << m.dst() + 1) != 0) ||
-                            (
-                                (1 << m.src() + 1) & mask != 0 && (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
-                            )
+                        ((m.obtained().is_some() || m.is_nari()) && Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0) ||
+                        (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
+                            BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                            BitBoard::from(1 << m.dst() + 1) & mask != 0
+                        )
                     },
                     LegalMove::Put(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -575,7 +620,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                (1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
                             },
                             _ => false
                         }
@@ -768,6 +813,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 current_max_ply: current_max_ply,
                 base_depth: base_depth,
                 extend_depth: extend_depth,
+                extend_check: 1,
+                extend_threatmate: 1,
                 rng:&mut rng
             };
 
@@ -841,6 +888,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut search_done_threads = vec![0;max_depth+1];
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
+        let mut extend_depth = 1;
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
@@ -915,6 +963,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             // all legal moves at the root node should have been examined at this search depth,
                             // so it is considered searched.
                             } else if search_offset == 0 {
+                                extend_depth = 2;
+
                                 if depth > decided_depth {
                                     decided_depth = depth;
                                 }
@@ -991,7 +1041,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 gs.depth = current_depth;
                 gs.base_depth = current_depth;
                 gs.current_max_ply = current_depth as usize;
-                gs.extend_depth = (max_depth as i32 - base_depth as i32).max(0) as u32;
+                gs.extend_depth = extend_depth;
 
                 if current_depth <= base_depth {
                     let search_offset = if !already_started[current_depth as usize] {
@@ -1075,6 +1125,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut depth = depth;
         let mut extend_depth = gs.extend_depth;
+        let mut extend_check = gs.extend_check;
+        let mut extend_threatmate = gs.extend_threatmate;
 
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
@@ -1082,10 +1134,17 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         match next {
             (state, mc, _) => {
-                if extend_depth > 0 && (Rule::in_check(gs.teban.opposite(),&state) ||
-                    self.in_danger(gs.teban.opposite(),&state)) {
-                    depth += 1;
-                    extend_depth -= 1;
+                if extend_depth > 0 {
+                    if extend_check > 0 && Rule::in_check(gs.teban.opposite(),&state) {
+                        depth += 1;
+                        extend_depth -= 1;
+                        extend_check -= 1;
+                    } else if extend_threatmate > 0 &&
+                        (self.in_danger(gs.teban.opposite(),&state, m) || self.is_threat(gs.teban,&state,m)) {
+                        depth += 1;
+                        extend_depth -= 1;
+                        extend_threatmate -= 1;
+                    }
                 }
 
                 let state = Arc::new(state);
@@ -1118,7 +1177,9 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     current_depth: gs.current_depth + 1,
                     current_max_ply: gs.current_max_ply,
                     base_depth: gs.base_depth,
-                    extend_depth: extend_depth
+                    extend_depth: extend_depth,
+                    extend_check: extend_check,
+                    extend_threatmate: extend_threatmate,
                 };
 
                 let strategy = Recursive::new();
@@ -1156,7 +1217,9 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             current_depth: gs.current_depth + 1,
             current_max_ply: gs.current_max_ply,
             base_depth: gs.base_depth,
-            extend_depth: gs.extend_depth
+            extend_depth: gs.extend_depth,
+            extend_check: gs.extend_check,
+            extend_threatmate: gs.extend_threatmate,
         };
 
         let strategy = Recursive::new();

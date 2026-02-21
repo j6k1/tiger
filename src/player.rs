@@ -21,7 +21,7 @@ use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, T
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_DEPTH, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, GAMMA, TIMELIMIT_MARGIN};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, GAMMA, TIMELIMIT_MARGIN};
 use crate::transposition_table::{TT, ZobristHash};
 
 pub trait FromOption {
@@ -213,7 +213,9 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     current_depth:0,
                     current_max_ply:1,
                     base_depth:base_depth,
-                    extend_depth:2
+                    extend_depth:2,
+                    extend_check:1,
+                    extend_threatmate:1,
                 };
 
                 let strategy  = Root::new(ThreadPoolBuilder::new()
