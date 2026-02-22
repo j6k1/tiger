@@ -101,6 +101,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     hasher:Arc<KyokumenHash<u64>>,
     transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
     base_depth:u32,
+    max_nodes:Option<u64>,
     max_threads:u32,
     nodes_per_leaf_node:u16,
     gamma:u8,
@@ -127,6 +128,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             hasher:Arc::new(KyokumenHash::new()),
             transposition_table:Arc::new(TT::new()),
             base_depth:BASE_DEPTH,
+            max_nodes:None,
             max_threads:MAX_THREADS,
             nodes_per_leaf_node:NODES_PER_LEAF_NODE,
             gamma:GAMMA,
@@ -232,6 +234,12 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                         let _ = env.on_error_handler.lock().map(|h| h.call(e));
                         BestMove::Resign
                     },
+                    Ok(EvaluationResult::NodeLimits) => {
+                        strategy.send_message(&mut env,"node limits!")?;
+                        env.info_sender.flush()?;
+
+                        BestMove::Resign
+                    },
                     Ok(EvaluationResult::Timeout) => {
                         strategy.send_message(&mut env,"timeout!")?;
                         env.info_sender.flush()?;
@@ -283,9 +291,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
 
         kinds.insert(String::from("USI_Hash"),SysEventOptionKind::Num);
         kinds.insert(String::from("USI_Ponder"),SysEventOptionKind::Bool);
-        kinds.insert(String::from("MaxDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
+        kinds.insert(String::from("MaxNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
         kinds.insert(String::from("NodesPerLeafNodes"),SysEventOptionKind::Num);
@@ -322,6 +330,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
+        options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
         options.insert(String::from("TIMELIMIT_MARGIN"),UsiOptType::Spin(0,60000,Some(TIMELIMIT_MARGIN as i64)));
@@ -348,6 +357,15 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         match &*name {
             "BaseDepth" => {
                 self.base_depth = u32::from_option(value).unwrap_or(BASE_DEPTH);
+            },
+            "MaxNodes" => {
+                self.max_nodes = u64::from_option(value).and_then(|n| {
+                    if n == 0 {
+                        None
+                    } else {
+                        Some(n)
+                    }
+                });
             },
             "Threads" => {
                 self.max_threads = u32::from_option(value).unwrap_or(MAX_THREADS);
@@ -460,6 +478,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                     limit.and_then(move |l| l.to_instant(teban,think_start_time))
                 ),
                 self.base_depth,
+                self.max_nodes.clone(),
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,
@@ -501,6 +520,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.timelimit_margin,
                 (None,None),
                 self.base_depth,
+                self.max_nodes.clone(),
                 self.max_threads,
                 self.nodes_per_leaf_node,
                 self.gamma,

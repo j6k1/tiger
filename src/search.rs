@@ -107,6 +107,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub timelimit_margin:u64,
     pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
+    pub max_nodes:Option<u64>,
     pub max_threads:u32,
     pub nodes_per_leaf_node:u16,
     pub gamma:u8,
@@ -131,6 +132,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:self.timelimit_margin.clone(),
             current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
+            max_nodes:self.max_nodes.clone(),
             max_threads:self.max_threads,
             nodes_per_leaf_node:self.nodes_per_leaf_node,
             gamma:self.gamma,
@@ -147,6 +149,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
 #[derive(Debug,Clone)]
 pub enum EvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>),
+    NodeLimits,
     Timeout,
     Stop,
     Repetition
@@ -154,6 +157,7 @@ pub enum EvaluationResult {
 #[derive(Debug)]
 pub enum RootEvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, usize, MoveOrderer<UnusedQuietSee>),
+    NodeLimits,
     Timeout,
     Stop,
     Repetition
@@ -169,6 +173,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                timelimit_margin:u64,
                current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
+               max_nodes:Option<u64>,
                max_threads:u32,
                nodes_per_leaf_node:u16,
                gamma:u8,
@@ -190,6 +195,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:timelimit_margin,
             current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
+            max_nodes:max_nodes,
             max_threads:max_threads,
             nodes_per_leaf_node:nodes_per_leaf_node,
             gamma:gamma,
@@ -286,28 +292,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
         }
 
-        let mut self_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
         let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
-
-        {
-            let p = Rule::ou_square(teban,state) as u32;
-
-            let (_,y) = p.square_to_point();
-
-            if y == 0 {
-                self_surrounding_mask &= OU_SURROUNDING_TOP_MASK;
-            } else if y == 8 {
-                self_surrounding_mask &= OU_SURROUNDING_BOTTOM_MASK;
-            }
-
-            if p >= 10 {
-                self_surrounding_mask = self_surrounding_mask << (p - 10) as u128;
-            } else {
-                self_surrounding_mask = self_surrounding_mask >> (10 - p) as u128;
-            }
-
-            self_surrounding_mask = self_surrounding_mask << 1;
-        }
 
         {
             let p = Rule::ou_square(teban.opposite(),state) as u32;
@@ -348,13 +333,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             if Rule::is_oute_move(state,teban,m) {
                 (MoveOrder::Check, m)
             } else if m.obtained().is_some() && (
-                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0 ||
-                self_surrounding_mask & (1 << (m.dst() - 1)) != 0
+                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0
             ) {
                 (MoveOrder::ThreatCaptures,m)
             } else if is_pawn_move && is_nari && (
-                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0 ||
-                self_surrounding_mask & (1 << (m.dst() - 1)) != 0
+                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0
             ) {
                 (MoveOrder::ThreatPromotions, m)
             } else if m.obtained().is_some() {
@@ -371,14 +354,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if in_check && picker.len() == 0 {
             return Ok(Score::NEGINFINITE);
         }
-
-        let mvs = mvs.into_iter().filter(|(o,m)| {
-            if let &MoveOrder::Quiet = o {
-                false
-            } else {
-                true
-            }
-        }).collect::<Vec<(MoveOrder,LegalMove)>>();
 
         if mvs.len() == 0 {
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
@@ -424,11 +399,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 _ => false
             };
 
-            if extend_depth == 0 {
+            let extend_depth = if extend_depth == 0 || !expand {
                 expand = false;
-            } else if expand {
-                extend_depth -= 1;
-            }
+                0
+            } else {
+                extend_depth - 1
+            };
 
             let score = -self.qsearch(teban.opposite(),
                                       &next,
@@ -567,6 +543,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask = danger_mask >> (10 - p) as u128;
                 }
 
+                /*
                 possible_move_mask.iter().fold(0i32,|acc,p| {
                     acc + Rule::control_count(teban.opposite(),state.get_part(),p as Square) as i32 -
                           Rule::control_count(teban,state.get_part(),p as Square) as i32
@@ -577,6 +554,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                         ) &&
                         (danger_mask << 1) & (1 << (m.dst() + 1)) != 0
                     )
+
+                 */
+                possible_move_count <= 1
             },
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote, state) as u32;
@@ -606,6 +586,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask = danger_mask >> (10 - p) as u128;
                 }
 
+                /*
                 possible_move_mask.iter().fold(0i32,|acc,p| {
                     acc + Rule::control_count(teban.opposite(),state.get_part(),p as Square) as i32 -
                           Rule::control_count(teban,state.get_part(),p as Square) as i32
@@ -616,11 +597,15 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                         ) &&
                         (danger_mask << 1) & (1 << (m.dst() + 1)) != 0
                     )
+
+                 */
+                possible_move_count <= 1
             }
         }
     }
 
     fn is_threat(&self, teban: Teban, state:&State, m:LegalMove) -> bool {
+        /*
         const ZONE_LARGE:u128 = 0b000011111_000011111_000011011_000011111_000011111;
 
         let ps = state.get_part();
@@ -760,6 +745,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 }
             }
         }
+
+         */
+        false
     }
     fn send_info(&self, env:&mut Environment<L,S>,
                  depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
@@ -960,6 +948,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 Ok(EvaluationResult::Immediate(score,mvs,zh)) => {
                     let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,search_offset,env.move_orderer)));
                 },
+                Ok(EvaluationResult::NodeLimits) => {
+                    let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
+                },
                 Ok(EvaluationResult::Timeout) => {
                     let _ = sender.send(Ok(RootEvaluationResult::Timeout));
                 },
@@ -1118,6 +1109,15 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             self.send_message(env, format!("decided_depth = {}, {}",
                                                            decided_depth, result[decided_depth as usize].is_some()
                             ).as_str())?;
+                        },
+                        Ok(RootEvaluationResult::NodeLimits) => {
+                            busy_threads -= 1;
+
+                            pending_results.fetch_sub(1, Ordering::SeqCst);
+
+                            self.termination(env, busy_threads, &pending_results)?;
+
+                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::NodeLimits));
                         },
                         Ok(RootEvaluationResult::Timeout) => {
                             busy_threads -= 1;
@@ -1368,6 +1368,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                       evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         env.nodes.fetch_add(1,Ordering::Release);
+
+        if env.max_nodes.map(|n| {
+            env.nodes.load(Ordering::Acquire) >= n
+        }).unwrap_or(false) {
+            return Ok(EvaluationResult::NodeLimits);
+        }
 
         let (mk,sk) = gs.zh.keys();
 
@@ -1682,6 +1688,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                     break;
                                 },
+                                EvaluationResult::NodeLimits => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::NodeLimits);
+                                },
                                 EvaluationResult::Timeout => {
                                     env.history.remove(&(gs.teban,mk,sk));
 
@@ -1834,6 +1845,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                             }
 
                             break;
+                        },
+                        EvaluationResult::NodeLimits => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::NodeLimits);
                         },
                         EvaluationResult::Timeout => {
                             env.history.remove(&(gs.teban,mk,sk));
@@ -2107,6 +2123,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                             break;
                         },
+                        EvaluationResult::NodeLimits => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::NodeLimits);
+                        },
                         EvaluationResult::Timeout => {
                             env.history.remove(&(gs.teban,mk,sk));
 
@@ -2237,6 +2258,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                             }
 
                             break;
+                        },
+                        EvaluationResult::NodeLimits => {
+                            env.history.remove(&(gs.teban,mk,sk));
+
+                            return Ok(EvaluationResult::NodeLimits);
                         },
                         EvaluationResult::Timeout => {
                             env.history.remove(&(gs.teban,mk,sk));
