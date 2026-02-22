@@ -23,7 +23,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, Square, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasions, QuietsWithoutPawnPromotions, Rule, Square, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
@@ -239,6 +239,16 @@ pub struct Root<L,S,M> where L: Logger + Send + 'static,
 }
 pub const TIMELIMIT_MARGIN:u64 = 50;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MoveOrder {
+    Quiet,
+    PawnPromotions,
+    Captures,
+    ThreatPromotions,
+    ThreatCaptures,
+    Check
+}
+
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
                                      M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -252,7 +262,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                zh: &ZobristHash<u64>,
                history:&mut HashSet<(Teban,u64,u64)>,
-               mut alpha:Score,beta:Score,depth:usize,evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
+               mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,expand:bool,
+               evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -268,16 +279,106 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let in_check = Rule::in_check(teban,state);
 
         if in_check {
-            Rule::generate_moves::<Evasions>(teban,state,mc,&mut picker)?;
+            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+        } else if expand {
+            Rule::generate_moves_by_banmen::<NonEvasions>(teban,state,&mut picker)?;
         } else {
             Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
         }
+
+        let mut self_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
+        let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
+
+        {
+            let p = Rule::ou_square(teban,state) as u32;
+
+            let (_,y) = p.square_to_point();
+
+            if y == 0 {
+                self_surrounding_mask &= OU_SURROUNDING_TOP_MASK;
+            } else if y == 8 {
+                self_surrounding_mask &= OU_SURROUNDING_BOTTOM_MASK;
+            }
+
+            if p >= 10 {
+                self_surrounding_mask = self_surrounding_mask << (p - 10) as u128;
+            } else {
+                self_surrounding_mask = self_surrounding_mask >> (10 - p) as u128;
+            }
+
+            self_surrounding_mask = self_surrounding_mask << 1;
+        }
+
+        {
+            let p = Rule::ou_square(teban.opposite(),state) as u32;
+
+            let (_,y) = p.square_to_point();
+
+            if y == 0 {
+                opponent_surrounding_mask &= OU_SURROUNDING_TOP_MASK;
+            } else if y == 8 {
+                opponent_surrounding_mask &= OU_SURROUNDING_BOTTOM_MASK;
+            }
+
+            if p >= 10 {
+                opponent_surrounding_mask = opponent_surrounding_mask << (p - 10) as u128;
+            } else {
+                opponent_surrounding_mask = opponent_surrounding_mask >> (10 - p) as u128;
+            }
+
+            opponent_surrounding_mask = opponent_surrounding_mask << 1;
+        }
+
+        let mut mvs = (&mut picker).map(|m| {
+            let is_pawn_move = match m {
+                LegalMove::To(m) if teban == Teban::Sente=> {
+                    state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
+                },
+                LegalMove::To(m) if teban == Teban::Gote=> {
+                    state.get_part().sente_opponent_board & (1 << (m.src() + 1)) != 0
+                },
+                _ => false
+            };
+
+            let is_nari = match m {
+                LegalMove::To(m) => m.is_nari(),
+                _ => false
+            };
+
+            if Rule::is_oute_move(state,teban,m) {
+                (MoveOrder::Check, m)
+            } else if m.obtained().is_some() && (
+                opponent_surrounding_mask & (1 << (m.dst() +1)) != 0 ||
+                self_surrounding_mask & (1 << (m.dst() -1)) != 0
+            ) {
+                (MoveOrder::ThreatCaptures,m)
+            } else if is_pawn_move && is_nari && (
+                opponent_surrounding_mask & (1 << (m.dst() +1)) != 0 ||
+                self_surrounding_mask & (1 << (m.dst() -1)) != 0
+            ) {
+                (MoveOrder::ThreatPromotions, m)
+            } else if m.obtained().is_some() {
+                (MoveOrder::Captures, m)
+            } else if is_pawn_move && is_nari {
+                (MoveOrder::PawnPromotions, m)
+            } else {
+                (MoveOrder::Quiet,m)
+            }
+        }).collect::<Vec<(MoveOrder,LegalMove)>>();
+
+        mvs.sort_by(|a,b| b.0.cmp(&a.0));
 
         if in_check && picker.len() == 0 {
             return Ok(Score::NEGINFINITE);
         }
 
-        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+        let mvs = mvs.into_iter().filter(|(o,m)| {
+            if let &MoveOrder::Quiet = o {
+                false
+            } else {
+                true
+            }
+        }).collect::<Vec<(MoveOrder,LegalMove)>>();
 
         if mvs.len() == 0 {
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
@@ -299,7 +400,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         
         let mut bestscore = Score::NEGINFINITE;
 
-        for m in mvs {
+        for (mo,m) in mvs {
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
@@ -318,6 +419,17 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
+            let mut expand = match mo {
+                MoveOrder::Check | MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => true,
+                _ => false
+            };
+
+            if extend_depth == 0 {
+                expand = false;
+            } else {
+                extend_depth -= 1;
+            }
+
             let score = -self.qsearch(teban.opposite(),
                                       &next,
                                       &nmc,
@@ -328,6 +440,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                       -beta,
                                       -alpha,
                                       depth+1,
+                                      extend_depth,
+                                      expand,
                                       evalutor,
                                       rng)?;
 
@@ -442,6 +556,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
                 }
 
+                let possible_move_count = possible_move_count - Rule::sente_danger_count(
+                    state.get_part(),danger_mask,p as i32 - 10,
+                    BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE), p as i32 - 20
+                );
+
                 if p >= 10 {
                     danger_mask = danger_mask << (p - 10) as u128;
                 } else {
@@ -476,6 +595,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
                 }
 
+                let possible_move_count = possible_move_count - Rule::gote_danger_count(
+                    state.get_part(),danger_mask,p as i32 - 10,
+                    BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE), p as i32 - 19
+                );
+
                 if p >= 10 {
                     danger_mask = danger_mask << (p - 10) as u128;
                 } else {
@@ -508,8 +632,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 let (_,oy) = ou_square.square_to_point();
 
                 let mask = ps.sente_gin_board |
-                                    ps.sente_kin_board | ps.sente_nari_board |
-                                    ps.sente_kaku_board | ps.sente_hisha_board;
+                                   ps.sente_kin_board | ps.sente_nari_board |
+                                   ps.sente_kaku_board | ps.sente_hisha_board;
 
                 match m {
                     LegalMove::To(m) => {
@@ -531,12 +655,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        ((m.obtained().is_some() || m.is_nari()) &&
-                          Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0 &&
-                          zone_mask & (1 << m.dst()) != 0) ||
-                        (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
-                            BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
-                            BitBoard::from(1 << m.dst() + 1) & mask != 0 &&
+                        (m.obtained().is_some() &&
+                         Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0 &&
+                         (zone_mask << 1) & (1 << (m.dst() + 1)) != 0) ||
+                        (BitBoard::from(1 << (m.src() + 1)) & BitBoard::from(zone_mask << 1) == 0 &&
+                            BitBoard::from(1 << (m.dst() + 1)) & BitBoard::from(zone_mask << 1) != 0 &&
+                            BitBoard::from(1 << (m.dst() + 1)) & mask != 0 &&
                             Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                         )
                     },
@@ -561,7 +685,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                                BitBoard::from(1 << (m.dst() + 1)) & BitBoard::from(zone_mask << 1) != 0 &&
                                 Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                             },
                             _ => false
@@ -575,8 +699,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 let (_,oy) = ou_square.square_to_point();
 
                 let mask = ps.gote_gin_board |
-                    ps.gote_kin_board | ps.gote_nari_board |
-                    ps.gote_kaku_board | ps.gote_hisha_board;
+                                   ps.gote_kin_board | ps.gote_nari_board |
+                                   ps.gote_kaku_board | ps.gote_hisha_board;
                 match m {
                     LegalMove::To(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -597,14 +721,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        ((m.obtained().is_some() || m.is_nari()) &&
+                        (m.obtained().is_some() &&
                           Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0 &&
-                          zone_mask & (1 << m.dst()) != 0) ||
-                          (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
-                              BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
-                              BitBoard::from(1 << m.dst() + 1) & mask != 0 &&
-                              Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
-                          )
+                          (zone_mask << 1) & (1 << (m.dst() + 1)) != 0) ||
+                        (BitBoard::from(1 << (m.src() + 1)) & BitBoard::from(zone_mask << 1) == 0 &&
+                            BitBoard::from(1 << (m.dst() + 1)) & BitBoard::from(zone_mask << 1) != 0 &&
+                            BitBoard::from(1 << (m.dst() + 1)) & mask != 0 &&
+                            Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
+                        )
                     },
                     LegalMove::Put(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -627,7 +751,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                                BitBoard::from(1 << (m.dst() + 1)) & BitBoard::from(zone_mask << 1) != 0 &&
                                 Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                             },
                             _ => false
@@ -1373,6 +1497,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                        gs.alpha,
                                        gs.beta,
                                  0,
+                                       1,
+                                       false,
                                        evalutor,
                                        gs.rng)?;
 
