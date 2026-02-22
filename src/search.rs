@@ -426,7 +426,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
     fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
         match teban {
             Teban::Sente => {
-                let p = Rule::ou_square(Teban::Sente,state) as u32;
+                let p = Rule::ou_square(Teban::Sente, state) as u32;
+
+                let possible_move_mask = Rule::gen_candidate_bits(teban,state.get_part().sente_self_board,p,KomaKind::SOu);
+
+                let possible_move_count = possible_move_mask.bitcount();
 
                 let mut danger_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
@@ -438,29 +442,29 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
                 }
 
-                let capture_mask = match m {
-                    LegalMove::To(m) => {
-                        1 << m.dst()
-                    },
-                    _ => 0
-                };
+                if p >= 10 {
+                    danger_mask = danger_mask << (p - 10) as u128;
+                } else {
+                    danger_mask = danger_mask >> (10 - p) as u128;
+                }
 
-                let capture_mask = BitBoard::from(capture_mask);
-
-                ((m.obtained() == Some(ObtainKind::Kin) || m.obtained() == Some(ObtainKind::Gin)) &&
-                    capture_mask & if p >= 10 {
-                        danger_mask << (p - 10) as u128
-                    } else {
-                        danger_mask >> (10 - p) as u128
-                    } != 0) || Rule::sente_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                Rule::sente_danger_count(state.get_part(),
-                   danger_mask,p as i32 - 10,
-                   BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_GOTE),
-                   p as i32 - 20) >= 2
-
+                possible_move_mask.iter().fold(0i32,|acc,p| {
+                    acc + Rule::control_count(teban.opposite(),state.get_part(),p as Square) as i32 -
+                          Rule::control_count(teban,state.get_part(),p as Square) as i32
+                }) >= 2 ||
+                    (possible_move_count <= 2 &&
+                        (m.obtained() == Some(ObtainKind::Kin) ||
+                         m.obtained() == Some(ObtainKind::Gin)
+                        ) &&
+                        (danger_mask << 1) & (1 << (m.dst() + 1)) != 0
+                    )
             },
             Teban::Gote => {
-                let p = Rule::ou_square(Teban::Gote,state) as u32;
+                let p = Rule::ou_square(Teban::Gote, state) as u32;
+
+                let possible_move_mask = Rule::gen_candidate_bits(teban,state.get_part().gote_self_board,p,KomaKind::GOu).reverse();
+
+                let possible_move_count = possible_move_mask.bitcount();
 
                 let mut danger_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
@@ -472,26 +476,22 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     danger_mask &= OU_SURROUNDING_BOTTOM_MASK;
                 }
 
-                let capture_mask = match m {
-                    LegalMove::To(m) => {
-                        1 << m.dst()
-                    },
-                    _ => 0
-                };
+                if p >= 10 {
+                    danger_mask = danger_mask << (p - 10) as u128;
+                } else {
+                    danger_mask = danger_mask >> (10 - p) as u128;
+                }
 
-                let capture_mask = BitBoard::from(capture_mask);
-
-                ((m.obtained() == Some(ObtainKind::Kin) || m.obtained() == Some(ObtainKind::Gin)) &&
-                    capture_mask & if p >= 10 {
-                        danger_mask << (p - 10) as u128
-                    } else {
-                        danger_mask >> (10 - p) as u128
-                    } != 0
-                ) || Rule::gote_ou_surrounding_threats_count(state.get_part()) >= 2 ||
-                Rule::gote_danger_count(state.get_part(),
-                      danger_mask,p as i32 - 10,
-                      BitBoard::from(POSSIBLE_OU_CAPTURES_MASK_OF_SENTE),
-                      p as i32 - 19) >= 2
+                possible_move_mask.iter().fold(0i32,|acc,p| {
+                    acc + Rule::control_count(teban.opposite(),state.get_part(),p as Square) as i32 -
+                          Rule::control_count(teban,state.get_part(),p as Square) as i32
+                }) >= 2 ||
+                    (possible_move_count <= 2 &&
+                        (m.obtained() == Some(ObtainKind::Kin) ||
+                            m.obtained() == Some(ObtainKind::Gin)
+                        ) &&
+                        (danger_mask << 1) & (1 << (m.dst() + 1)) != 0
+                    )
             }
         }
     }
@@ -531,10 +531,13 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        ((m.obtained().is_some() || m.is_nari()) && Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0) ||
+                        ((m.obtained().is_some() || m.is_nari()) &&
+                          Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0 &&
+                          zone_mask & (1 << m.dst()) != 0) ||
                         (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
                             BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
-                            BitBoard::from(1 << m.dst() + 1) & mask != 0
+                            BitBoard::from(1 << m.dst() + 1) & mask != 0 &&
+                            Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                         )
                     },
                     LegalMove::Put(m) => {
@@ -558,7 +561,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                                Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                             },
                             _ => false
                         }
@@ -593,11 +597,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                             zone_mask << 20 - m.dst()
                         };
 
-                        ((m.obtained().is_some() || m.is_nari()) && Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0) ||
-                        (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
-                            BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
-                            BitBoard::from(1 << m.dst() + 1) & mask != 0
-                        )
+                        ((m.obtained().is_some() || m.is_nari()) &&
+                          Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0 &&
+                          zone_mask & (1 << m.dst()) != 0) ||
+                          (BitBoard::from(1 << m.src() + 1) & BitBoard::from(zone_mask << 1) == 0 &&
+                              BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                              BitBoard::from(1 << m.dst() + 1) & mask != 0 &&
+                              Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
+                          )
                     },
                     LegalMove::Put(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -620,7 +627,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
                         match m.kind() {
                             MochigomaKind::Gin | MochigomaKind::Kin | MochigomaKind::Kaku | MochigomaKind::Hisha => {
-                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0
+                                BitBoard::from(1 << m.dst() + 1) & BitBoard::from(zone_mask << 1) != 0 &&
+                                Rule::control_count(teban.opposite(),ps,m.dst() as Square) == 0
                             },
                             _ => false
                         }
