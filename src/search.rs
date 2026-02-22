@@ -331,10 +331,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut mvs = (&mut picker).map(|m| {
             let is_pawn_move = match m {
-                LegalMove::To(m) if teban == Teban::Sente=> {
+                LegalMove::To(m) if teban == Teban::Sente => {
                     state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
                 },
-                LegalMove::To(m) if teban == Teban::Gote=> {
+                LegalMove::To(m) if teban == Teban::Gote => {
                     state.get_part().sente_opponent_board & (1 << (m.src() + 1)) != 0
                 },
                 _ => false
@@ -348,13 +348,13 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             if Rule::is_oute_move(state,teban,m) {
                 (MoveOrder::Check, m)
             } else if m.obtained().is_some() && (
-                opponent_surrounding_mask & (1 << (m.dst() +1)) != 0 ||
-                self_surrounding_mask & (1 << (m.dst() -1)) != 0
+                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0 ||
+                self_surrounding_mask & (1 << (m.dst() - 1)) != 0
             ) {
                 (MoveOrder::ThreatCaptures,m)
             } else if is_pawn_move && is_nari && (
-                opponent_surrounding_mask & (1 << (m.dst() +1)) != 0 ||
-                self_surrounding_mask & (1 << (m.dst() -1)) != 0
+                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0 ||
+                self_surrounding_mask & (1 << (m.dst() - 1)) != 0
             ) {
                 (MoveOrder::ThreatPromotions, m)
             } else if m.obtained().is_some() {
@@ -420,13 +420,13 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
             let mut expand = match mo {
-                MoveOrder::Check | MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => true,
+                MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => true,
                 _ => false
             };
 
             if extend_depth == 0 {
                 expand = false;
-            } else {
+            } else if expand {
                 extend_depth -= 1;
             }
 
