@@ -24,6 +24,7 @@ use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasions, QuietsWithoutPawnPromotions, Rule, Square, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
+use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
@@ -268,7 +269,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                zh: &ZobristHash<u64>,
                history:&mut HashSet<(Teban,u64,u64)>,
-               mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,expand:bool,
+               mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,
                evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
@@ -286,11 +287,208 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         if in_check {
             Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
-        } else if expand {
-            Rule::generate_moves_by_banmen::<NonEvasions>(teban,state,&mut picker)?;
         } else {
             Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
         }
+
+        if in_check && picker.len() == 0 {
+            return Ok(Score::NEGINFINITE);
+        }
+
+        if picker.len() == 0 {
+            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
+        }
+
+        let (mk,sk) = zh.keys();
+
+        history.insert((teban,mk,sk));
+
+        let stand_pat = Score::Value(evalutor.evalute(teban,state,mc)?);
+
+        if stand_pat >= beta {
+            return Ok(stand_pat);
+        }
+
+        if stand_pat > alpha {
+            alpha = stand_pat;
+        }
+        
+        let mut bestscore = Score::NEGINFINITE;
+
+        /*
+        let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
+
+        {
+            let p = Rule::ou_square(teban.opposite(),state) as u32;
+
+            let (_,y) = p.square_to_point();
+
+            if y == 0 {
+                opponent_surrounding_mask &= OU_SURROUNDING_TOP_MASK;
+            } else if y == 8 {
+                opponent_surrounding_mask &= OU_SURROUNDING_BOTTOM_MASK;
+            }
+
+            if p >= 10 {
+                opponent_surrounding_mask = opponent_surrounding_mask << (p - 10) as u128;
+            } else {
+                opponent_surrounding_mask = opponent_surrounding_mask >> (10 - p) as u128;
+            }
+
+            opponent_surrounding_mask = opponent_surrounding_mask << 1;
+        }
+        */
+        for m in picker {
+            /*
+            match m {
+                LegalMove::To(mv) => {
+                    if !mv.is_nari() && !Rule::is_oute_move(state,teban,m) {
+                        if let Some(o) = mv.obtained() {
+                            if calc_see(teban,state,m) < -PIECE_SCORE_MAP[o as usize] / 2 {
+                                continue;
+                            }
+                        }
+                    }
+                },
+                _ => ()
+            }
+
+             */
+
+            if let Some(ObtainKind::Ou) = match m {
+                LegalMove::To(m) => m.obtained(),
+                _ => None
+            } {
+                history.remove(&(teban,mk,sk));
+
+                return Ok(Score::INFINITE);
+            }
+
+            let o = match m {
+                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                _ => None
+            };
+
+            /*
+            let is_pawn_move = match m {
+                LegalMove::To(m) if teban == Teban::Sente => {
+                    state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
+                },
+                LegalMove::To(m) if teban == Teban::Gote => {
+                    state.get_part().sente_opponent_board & (1 << (m.src() + 1)) != 0
+                },
+                _ => false
+            };
+
+            let is_nari = match m {
+                LegalMove::To(m) => m.is_nari(),
+                _ => false
+            };
+            */
+            let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
+            let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+
+            /*
+            let mut expand = !Rule::in_check(teban.opposite(),&next) && (
+                    m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
+                ) || (
+                    is_pawn_move && is_nari && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
+                );
+
+            let extend_depth = if extend_depth == 0 || !expand {
+                expand = false;
+                0
+            } else {
+                extend_depth - 1
+            };
+
+            let score = if expand {
+                -self.qsearch_threatmate(teban.opposite(),
+                              &next,
+                              &nmc,
+                              env,
+                              event_dispatcher,
+                              &zh,
+                              history,
+                              -beta,
+                              -alpha,
+                              depth+1,
+                              extend_depth,
+                              evalutor,
+                              rng)?
+            } else {
+                -self.qsearch(teban.opposite(),
+                              &next,
+                              &nmc,
+                              env,
+                              event_dispatcher,
+                              &zh,
+                              history,
+                              -beta,
+                              -alpha,
+                              depth+1,
+                              extend_depth,
+                              evalutor,
+                              rng)?
+            };
+            */
+
+            let score = -self.qsearch(teban.opposite(),
+                                              &next,
+                                              &nmc,
+                                              env,
+                                              event_dispatcher,
+                                              &zh,
+                                              history,
+                                              -beta,
+                                              -alpha,
+                                              depth+1,
+                                              extend_depth,
+                                              evalutor,
+                                              rng)?;
+
+            if score >= beta {
+                return Ok(score);
+            }
+
+            if score > bestscore {
+                bestscore = score;
+            }
+
+            if score > alpha {
+                alpha = score;
+            }
+
+            if self.timelimit_reached(env)? {
+                break;
+            }
+        }
+
+        history.remove(&(teban,mk,sk));
+
+        Ok(bestscore)
+    }
+    fn qsearch_threatmate<'b>(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
+                   env:&mut Environment<L,S>,
+                   event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
+                   zh: &ZobristHash<u64>,
+                   history:&mut HashSet<(Teban,u64,u64)>,
+                   mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,
+                   evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
+        let (mk,sk) = zh.keys();
+
+        event_dispatcher.dispatch_events(&self,&env.event_queue)?;
+
+        if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
+            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            return Ok(score);
+        }
+
+        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
+
+        Rule::generate_moves_by_banmen::<NonEvasions>(teban,state,&mut picker)?;
 
         let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
@@ -351,10 +549,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         mvs.sort_by(|a,b| b.0.cmp(&a.0));
 
-        if in_check && picker.len() == 0 {
-            return Ok(Score::NEGINFINITE);
-        }
-
         if mvs.len() == 0 {
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
         }
@@ -372,7 +566,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if stand_pat > alpha {
             alpha = stand_pat;
         }
-        
+
         let mut bestscore = Score::NEGINFINITE;
 
         for (mo,m) in mvs {
@@ -395,7 +589,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
             let mut expand = match mo {
-                MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => true,
+                MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => {
+                    !Rule::in_check(teban.opposite(),&next)
+                },
                 _ => false
             };
 
@@ -406,20 +602,35 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 extend_depth - 1
             };
 
-            let score = -self.qsearch(teban.opposite(),
-                                      &next,
-                                      &nmc,
-                                      env,
-                                      event_dispatcher,
-                                      &zh,
-                                      history,
-                                      -beta,
-                                      -alpha,
-                                      depth+1,
-                                      extend_depth,
-                                      expand,
-                                      evalutor,
-                                      rng)?;
+            let score = if expand {
+                -self.qsearch_threatmate(teban.opposite(),
+                              &next,
+                              &nmc,
+                              env,
+                              event_dispatcher,
+                              &zh,
+                              history,
+                              -beta,
+                              -alpha,
+                              depth+1,
+                              extend_depth,
+                              evalutor,
+                              rng)?
+            } else {
+                -self.qsearch(teban.opposite(),
+                              &next,
+                              &nmc,
+                              env,
+                              event_dispatcher,
+                              &zh,
+                              history,
+                              -beta,
+                              -alpha,
+                              depth+1,
+                              extend_depth,
+                              evalutor,
+                              rng)?
+            };
 
             if score >= beta {
                 return Ok(score);
@@ -556,7 +767,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     )
 
                  */
-                possible_move_count <= 1
+                //possible_move_count <= 1
             },
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote, state) as u32;
@@ -599,9 +810,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     )
 
                  */
-                possible_move_count <= 1
+                //possible_move_count <= 1
             }
         }
+        false
     }
 
     fn is_threat(&self, teban: Teban, state:&State, m:LegalMove) -> bool {
@@ -1504,7 +1716,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                        gs.beta,
                                  0,
                                        1,
-                                       false,
                                        evalutor,
                                        gs.rng)?;
 
