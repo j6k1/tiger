@@ -13,7 +13,7 @@ use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::bitboard::BitBoard;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
-use usiagent::consts::PIECE_SCORE_MAP;
+use usiagent::consts::FU_SCORE;
 use usiagent::error::EventHandlerError;
 use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher, UsiGoTimeLimit};
 use usiagent::hash::KyokumenHash;
@@ -1710,6 +1710,51 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
          */
+
+        if gs.depth >= 1 && gs.depth <= 3 &&
+            !Rule::in_check(gs.teban,&gs.state) && gs.m.map(|m| {
+            m.obtained().is_none() && !m.is_nari()
+        }).unwrap_or(true) {
+            let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
+
+            let boundary = Score::Value(static_eval + FU_SCORE * (gs.depth as i32 + 1));
+
+            // Futility Pruning
+            /* if gs.depth <= 2 && boundary <= gs.alpha {
+                let mut mvs = VecDeque::new();
+
+                prev_move.map(|m| mvs.push_front(m));
+
+                return Ok(EvaluationResult::Immediate(Score::MAYBENEGINFINITE, mvs, gs.zh.clone()));
+            // Razoring
+            } else */if gs.depth >= 2 && boundary <= gs.alpha {
+                let s = self.qsearch(gs.teban,
+                                     &gs.state,
+                                     &gs.mc,
+                                     env,
+                                     event_dispatcher,
+                                     &gs.zh,
+                                     &mut HashSet::new(),
+                                     gs.alpha,
+                                     gs.beta,
+                                     0,
+                                     1,
+                                     evalutor,
+                                     gs.rng)?;
+
+                if s <= gs.alpha {
+                    let mut mvs = VecDeque::new();
+
+                    prev_move.map(|m| mvs.push_front(m));
+
+                    if env.stop.load(Ordering::Acquire) {
+                        return Ok(EvaluationResult::Stop);
+                    } else {
+                        return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone()));
+                    }
+                }
+            }
+        }
 
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
