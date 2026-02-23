@@ -352,9 +352,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 },
                 _ => ()
             }
-
-             */
-
+            */
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
@@ -467,7 +465,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.remove(&(teban,mk,sk));
 
-        Ok(bestscore)
+        if bestscore == Score::NEGINFINITE {
+            Ok(stand_pat)
+        } else {
+            Ok(bestscore)
+        }
     }
     fn qsearch_threatmate<'b>(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
                    env:&mut Environment<L,S>,
@@ -567,7 +569,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             alpha = stand_pat;
         }
 
-        let mut bestscore = Score::NEGINFINITE;
+        let mut bestscore = Score::MAYBENEGINFINITE;
 
         for (mo,m) in mvs {
             if let Some(ObtainKind::Ou) = match m {
@@ -1854,7 +1856,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                         best_moves = mvs;
 
-                                        if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                        if scoreval >= beta {
                                             if scoreval == Score::INFINITE {
                                                 env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                             } else {
@@ -1893,7 +1895,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                         }
                                     }
 
-                                    if alpha < s && s != Score::MAYBENEGINFINITE {
+                                    if alpha < s {
                                         alpha = s;
                                     }
 
@@ -1948,15 +1950,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     continue;
                 }
 
-                /*
                 let is_nari = match m {
                     LegalMove::To(mv) => mv.is_nari(),
                     _ => false
                 };
 
+                /*
                 if let Some(o) = m.obtained() {
                     if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
-                        see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                        see < -PIECE_SCORE_MAP[o as usize] / 2 {
                         pruned_count += 1;
                         continue;
                     }
@@ -2013,7 +2015,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                 best_moves = mvs;
 
-                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                if scoreval >= beta {
                                     if Score::INFINITE == scoreval {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                     } else {
@@ -2051,7 +2053,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 }
                             }
 
-                            if alpha < s && s != Score::MAYBENEGINFINITE {
+                            if alpha < s {
                                 alpha = s;
                             }
 
@@ -2085,13 +2087,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             scoreval = Score::MAYBENEGINFINITE;
         }
 
-        if scoreval != Score::MAYBENEGINFINITE {
-            if scoreval <= start_alpha {
-                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
-            } else {
-                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::Exact, best_moves.front().map(|m| m.clone()));
-            }
+        if scoreval <= start_alpha {
+            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
+        } else if scoreval != Score::MAYBEINFINITE && scoreval != Score::MAYBENEGINFINITE {
+            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::Exact, best_moves.front().map(|m| m.clone()));
         }
+
         env.history.remove(&(gs.teban,mk,sk));
 
         prev_move.map(|m| best_moves.push_front(m));
@@ -2291,7 +2292,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                     recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                                 }
 
-                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                if scoreval >= beta {
                                     if Score::INFINITE == scoreval {
                                         env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                     } else {
@@ -2328,7 +2329,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 }
                             }
 
-                            if alpha < s && s != Score::MAYBENEGINFINITE {
+                            if alpha < s {
                                 alpha = s;
                             }
 
@@ -2370,16 +2371,16 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     continue;
                 }
 
-                /*
                 let is_nari = match m {
                     LegalMove::To(mv) => mv.is_nari(),
                     _ => false
                 };
 
+                /*
                 if let Some(o) = m.obtained() {
                     if enable_pruning_by_see && !is_nari &&
                         !Rule::is_oute_move(gs.state,gs.teban,m) &&
-                        see < -PIECE_SCORE_MAP[o as usize] / 4 {
+                        see < -PIECE_SCORE_MAP[o as usize] / 2 {
                         pruned_count += 1;
                         continue;
                     }
@@ -2440,7 +2441,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                     recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
                                 }
 
-                                if scoreval >= beta || scoreval == Score::MAYBEINFINITE {
+                                if scoreval >= beta {
                                     if Score::INFINITE == scoreval {
                                         env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
                                     } else {
@@ -2464,7 +2465,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 }
                             }
 
-                            if alpha < s && s != Score::MAYBENEGINFINITE {
+                            if alpha < s {
                                 alpha = s;
                             }
 
@@ -2504,12 +2505,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             scoreval = Score::MAYBENEGINFINITE;
         }
 
-        if scoreval != Score::MAYBENEGINFINITE {
-            if gs.search_offset == 0 && scoreval <= start_alpha {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
-            } else if gs.search_offset == 0 {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
-            }
+        if gs.search_offset == 0 && scoreval <= start_alpha {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+        } else if gs.search_offset == 0 && scoreval != Score::MAYBEINFINITE && scoreval != Score::MAYBENEGINFINITE  {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
