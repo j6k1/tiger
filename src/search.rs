@@ -315,7 +315,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         
         let mut bestscore = Score::NEGINFINITE;
 
-        /*
         let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
         {
@@ -337,7 +336,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             opponent_surrounding_mask = opponent_surrounding_mask << 1;
         }
-        */
+
         for m in picker {
             /*
             match m {
@@ -367,7 +366,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 _ => None
             };
 
-            /*
             let is_pawn_move = match m {
                 LegalMove::To(m) if teban == Teban::Sente => {
                     state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
@@ -382,23 +380,26 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 LegalMove::To(m) => m.is_nari(),
                 _ => false
             };
-            */
+
             let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            /*
             let mut expand = !Rule::in_check(teban.opposite(),&next) && (
                     m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
                 ) || (
                     is_pawn_move && is_nari && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
                 );
 
-            let extend_depth = if extend_depth == 0 || !expand {
+            let extend_depth = if extend_depth > 0 {
+                if expand {
+                    extend_depth - 1
+                } else {
+                    extend_depth
+                }
+            } else {
                 expand = false;
                 0
-            } else {
-                extend_depth - 1
             };
 
             let score = if expand {
@@ -430,7 +431,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               evalutor,
                               rng)?
             };
-            */
+            /*
 
             let score = -self.qsearch(teban.opposite(),
                                               &next,
@@ -445,7 +446,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                               extend_depth,
                                               evalutor,
                                               rng)?;
-
+            */
             if score >= beta {
                 return Ok(score);
             }
@@ -597,11 +598,15 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 _ => false
             };
 
-            let extend_depth = if extend_depth == 0 || !expand {
+            let extend_depth = if extend_depth > 0 {
+                if expand {
+                    extend_depth - 1
+                } else {
+                    extend_depth
+                }
+            } else {
                 expand = false;
                 0
-            } else {
-                extend_depth - 1
             };
 
             let score = if expand {
