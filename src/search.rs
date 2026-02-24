@@ -385,21 +385,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let mut expand = !Rule::in_check(teban.opposite(),&next) && (
+            let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) && (
                     m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
-                ) || (
-                    is_pawn_move && is_nari && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
                 );
 
-            let extend_depth = if extend_depth > 0 {
-                if expand {
-                    extend_depth - 1
-                } else {
-                    extend_depth
-                }
+            let extend_depth = if expand {
+                extend_depth - 1
             } else {
-                expand = false;
-                0
+                extend_depth
             };
 
             let score = if expand {
@@ -570,7 +563,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             alpha = stand_pat;
         }
 
-        let mut bestscore = Score::MAYBENEGINFINITE;
+        let mut bestscore = Score::NEGINFINITE;
 
         for (mo,m) in mvs {
             if let Some(ObtainKind::Ou) = match m {
@@ -591,22 +584,17 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let mut expand = match mo {
-                MoveOrder::ThreatCaptures | MoveOrder::ThreatPromotions => {
-                    !Rule::in_check(teban.opposite(),&next)
+            let expand = match mo {
+                MoveOrder::ThreatCaptures => {
+                    extend_depth > 0 && !Rule::in_check(teban.opposite(),&next)
                 },
                 _ => false
             };
 
-            let extend_depth = if extend_depth > 0 {
-                if expand {
-                    extend_depth - 1
-                } else {
-                    extend_depth
-                }
+            let extend_depth = if expand {
+                extend_depth - 1
             } else {
-                expand = false;
-                0
+                extend_depth
             };
 
             let score = if expand {
@@ -1727,7 +1715,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 return Ok(EvaluationResult::Immediate(Score::MAYBENEGINFINITE, mvs, gs.zh.clone()));
             // Razoring
-            } else */if gs.depth >= 2 && boundary <= gs.alpha {
+            } else if gs.depth >= 2 && boundary <= gs.alpha {
                 let s = self.qsearch(gs.teban,
                                      &gs.state,
                                      &gs.mc,
@@ -1754,6 +1742,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
             }
+
+             */
         }
 
         if gs.depth == 0 {
