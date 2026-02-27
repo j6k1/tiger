@@ -13,7 +13,7 @@ use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::bitboard::BitBoard;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
-use usiagent::consts::FU_SCORE;
+use usiagent::consts::{FU_SCORE, PIECE_SCORE_MAP};
 use usiagent::error::EventHandlerError;
 use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher, UsiGoTimeLimit};
 use usiagent::hash::KyokumenHash;
@@ -339,17 +339,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         for m in picker {
             /*
-            match m {
-                LegalMove::To(mv) => {
-                    if !mv.is_nari() && !Rule::is_oute_move(state,teban,m) {
-                        if let Some(o) = mv.obtained() {
-                            if calc_see(teban,state,m) < -PIECE_SCORE_MAP[o as usize] / 2 {
-                                continue;
-                            }
-                        }
+            if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
+                if let Some(o) = m.obtained() {
+                    if calc_see(teban,state,m) < -PIECE_SCORE_MAP[o as usize] / 2 {
+                        continue;
                     }
-                },
-                _ => ()
+                }
             }
             */
             if let Some(ObtainKind::Ou) = match m {
@@ -762,7 +757,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     )
 
                  */
-                //possible_move_count <= 1
             },
             Teban::Gote => {
                 let p = Rule::ou_square(Teban::Gote, state) as u32;
@@ -805,7 +799,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     )
 
                  */
-                //possible_move_count <= 1
             }
         }
         false
@@ -824,8 +817,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 let (_,oy) = ou_square.square_to_point();
 
                 let mask = ps.sente_gin_board |
-                                   ps.sente_kin_board | ps.sente_nari_board |
-                                   ps.sente_kaku_board | ps.sente_hisha_board;
+                           ps.sente_kin_board | ps.sente_nari_board |
+                           ps.sente_kaku_board | ps.sente_hisha_board;
 
                 match m {
                     LegalMove::To(m) => {
@@ -891,8 +884,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 let (_,oy) = ou_square.square_to_point();
 
                 let mask = ps.gote_gin_board |
-                                   ps.gote_kin_board | ps.gote_nari_board |
-                                   ps.gote_kaku_board | ps.gote_hisha_board;
+                           ps.gote_kin_board | ps.gote_nari_board |
+                           ps.gote_kaku_board | ps.gote_hisha_board;
                 match m {
                     LegalMove::To(m) => {
                         let mut zone_mask = ZONE_LARGE;
@@ -1101,6 +1094,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                            mvs: Arc<Vec<LegalMove>>,
                            search_offset:usize,
                            pv:VecDeque<LegalMove>,
+                           //prev_score:Score,
                            evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer<UnusedQuietSee>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
@@ -1123,31 +1117,83 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         self.thread_pool.spawn(move || {
             let mut rng = rand::thread_rng();
 
-            let mut gs = GameState {
-                teban: teban,
-                state: &state,
-                alpha: Score::NEGINFINITE,
-                beta: Score::INFINITE,
-                search_offset: search_offset,
-                best_score: best_score,
-                m: None,
-                prev_kind: KomaKind::Blank,
-                pv:&pv,
-                mc: &mc,
-                zh: zh,
-                depth: depth,
-                current_depth: current_depth,
-                current_max_ply: current_max_ply,
-                base_depth: base_depth,
-                extend_depth: extend_depth,
-                extend_check: 1,
-                extend_threatmate: 1,
-                rng:&mut rng
+            let r = /*if let Score::Value(prev_score) = prev_score {
+                let delta = Self::compute_aspiration_window_delta(depth);
+
+                let mut alpha = Score::Value(prev_score - delta);
+                let mut beta = Score::Value(prev_score + delta);
+
+                let mut gs = GameState {
+                    teban: teban,
+                    state: &state,
+                    alpha: alpha,
+                    beta: beta,
+                    search_offset: search_offset,
+                    best_score: best_score,
+                    m: None,
+                    prev_kind: KomaKind::Blank,
+                    pv:&pv,
+                    mc: &mc,
+                    zh: zh,
+                    depth: depth,
+                    current_depth: current_depth,
+                    current_max_ply: current_max_ply,
+                    base_depth: base_depth,
+                    extend_depth: extend_depth,
+                    extend_check: 1,
+                    extend_threatmate: 1,
+                    rng:&mut rng
+                };
+
+                let strategy = Inter::new();
+
+                let mut r = strategy.search(&mut env, &mut gs, &evalutor, &mvs);
+
+                r = match r {
+                    Ok(EvaluationResult::Immediate(score,rmvs,zh)) => {
+                        if score <= alpha {
+                            gs.alpha = Score::NEGINFINITE;
+                            strategy.search(&mut env, &mut gs, &evalutor, &mvs)
+                        } else if score >= beta {
+                            gs.beta = Score::INFINITE;
+                            strategy.search(&mut env, &mut gs, &evalutor, &mvs)
+                        } else {
+                            Ok(EvaluationResult::Immediate(score,rmvs,zh))
+                        }
+                    },
+                    r => {
+                        r
+                    }
+                };
+
+                r
+            } else */{
+                let mut gs = GameState {
+                    teban: teban,
+                    state: &state,
+                    alpha: Score::NEGINFINITE,
+                    beta: Score::INFINITE,
+                    search_offset: search_offset,
+                    best_score: best_score,
+                    m: None,
+                    prev_kind: KomaKind::Blank,
+                    pv:&pv,
+                    mc: &mc,
+                    zh: zh,
+                    depth: depth,
+                    current_depth: current_depth,
+                    current_max_ply: current_max_ply,
+                    base_depth: base_depth,
+                    extend_depth: extend_depth,
+                    extend_check: 1,
+                    extend_threatmate: 1,
+                    rng:&mut rng
+                };
+
+                let strategy = Inter::new();
+
+                strategy.search(&mut env, &mut gs, &evalutor, &mvs)
             };
-
-            let strategy = Inter::new();
-
-            let r = strategy.search(&mut env, &mut gs, &evalutor, &mvs);
 
             pending_results.fetch_add(1, atomic::Ordering::SeqCst);
 
@@ -1195,6 +1241,15 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
             None => Ok(())
         }
     }
+
+    pub fn compute_aspiration_window_delta(depth:u32) -> i32 {
+        let a = 12.0f64;
+        let b = 25.0f64;
+
+        let delta = a * (depth as f64).sqrt() + b;
+
+        (delta * 1.4) as i32
+    }
 }
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
@@ -1218,7 +1273,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut search_done_threads = vec![0;max_depth+1];
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
-        let mut extend_depth = 1;
+        let mut extend_depth = 0;
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
@@ -1227,6 +1282,8 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
         let mut leafnodes_seacch_space:u128 = mvs.len() as u128;
         let gamma = env.gamma;
+        let mut prev_score = Score::NEGINFINITE;
+
         let mut evasions_count;
 
         if Rule::in_check(gs.teban,&gs.state) {
@@ -1271,6 +1328,11 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                             match result[depth as usize] {
                                 Some(EvaluationResult::Immediate(bs, _, _)) if (depth > decided_depth && s >= bs)
                                     || search_offset == 0 => {
+
+                                    if search_offset == 0 {
+                                        prev_score = s;
+                                    }
+
                                     result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
                                 },
                                 None => {
@@ -1408,6 +1470,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                       env,gs,mvs,
                                       search_offset,
                                       pv,
+                                      //prev_score,
                                       evalutor,
                                       move_orderer_quque
                                           .pop_front()
@@ -1699,16 +1762,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
          */
 
+        /*
         if gs.depth >= 1 && gs.depth <= 3 &&
-            !Rule::in_check(gs.teban,&gs.state) && gs.m.map(|m| {
-            m.obtained().is_none() && !m.is_nari()
-        }).unwrap_or(true) {
+            !Rule::in_check(gs.teban,&gs.state) &&
+            !Rule::in_check(gs.teban.opposite(),&gs.state) &&
+            gs.m.map(|m| {
+                m.obtained().is_none() && !m.is_nari()
+            }).unwrap_or(true) {
             let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
 
             let boundary = Score::Value(static_eval + FU_SCORE * (gs.depth as i32 + 1));
 
             // Futility Pruning
-            /* if gs.depth <= 2 && boundary <= gs.alpha {
+            if gs.depth <= 2 && boundary <= gs.alpha {
                 let mut mvs = VecDeque::new();
 
                 prev_move.map(|m| mvs.push_front(m));
@@ -1742,10 +1808,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
             }
-
-             */
         }
-
+        */
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
                                        &gs.state,
