@@ -299,6 +299,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
         }
 
+        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+
+        if mvs.len() == 0 {
+            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
+        }
+
         let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
@@ -337,7 +343,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             opponent_surrounding_mask = opponent_surrounding_mask << 1;
         }
 
-        for m in picker {
+        for m in mvs {
             /*
             if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
                 if let Some(o) = m.obtained() {
@@ -658,34 +664,52 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         Ok(reached)
     }
 
+    fn is_important_move(&self, env:&mut Environment<L,S>,
+                depth:u32,
+                current_depth:u32,
+                teban: Teban,
+                state: &State,
+                m:LegalMove,
+                tt_move:Option<&LegalMove>,
+                pv:Option<&LegalMove>,
+                prev_move:Option<&LegalMove>,
+                prev_kind:KomaKind) -> Result<bool,ApplicationError> {
+        Ok(m.is_nari() ||
+            m.obtained().is_some() ||
+            tt_move.map(|tm| tm == &m).unwrap_or(false) ||
+            pv.map(|pm| pm == &m).unwrap_or(false) ||
+            env.move_orderer.is_killer(current_depth,m)? ||
+            prev_move.map(|&pm| env.move_orderer.is_counter_move(m,teban,pm,prev_kind)).unwrap_or(Ok(false))? ||
+            env.move_orderer.look_up_history(teban,state,m)? >= depth as i64 * depth as i64 / 2 ||
+            self.in_danger(teban.opposite(),state, m) ||
+            Rule::is_oute_move(state,teban,m)
+        )
+    }
     fn calc_lmr(&self, env:&mut Environment<L,S>,
                        depth:u32,
+                       current_depth:u32,
                        index:usize,
                        teban: Teban,
                        state: &State,
                        m:LegalMove,
+                       tt_move:Option<&LegalMove>,
                        pv:Option<&LegalMove>,
-                       zh:&ZobristHash<u64>) -> u32 {
-        /*
-        let is_nari = match m {
-            LegalMove::To(m) => m.is_nari(),
-            _ => false
-        };
-
-        if depth <= 3 || is_nari ||
-            m.obtained().is_some() ||
-            pv.map(|pm| pm == &m).unwrap_or(false) ||
-            self.in_danger(teban.opposite(),state, m) ||
-            Rule::is_oute_move(state,teban,m) {
-            0
+                       prev_move:Option<&LegalMove>,
+                       prev_kind:KomaKind,
+                       see:i32,
+                       zh:&ZobristHash<u64>) -> Result<u32,ApplicationError> {
+        if depth <= 3 ||
+            Rule::in_check(teban,state) ||
+            see >= 0 ||
+            self.is_important_move(env,depth,current_depth,
+                                   teban,state,m,tt_move,pv,prev_move,prev_kind)? {
+            Ok(0)
         } else if index < 4 + 1 {
-            0
+            Ok(0)
         } else {
-            let mut r = (
-                (
-                    (depth as f32).ln() * (index as f32 + 1.).ln() / 2.25
-                ).floor() as u32
-            ).clamp(0,2);
+            let mut r = ((
+                (depth as f32).ln() * (index as f32 + 1.).ln() / 2.25
+            ).floor() as u32).clamp(0,2);
 
             let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
 
@@ -707,11 +731,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 }
             }
 
-            r
+            Ok(r)
         }
-
-         */
-        0
     }
 
     fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
@@ -1903,7 +1924,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     };
 
                     for (j,m) in mvs.into_iter().enumerate() {
-                        let mut r = self.calc_lmr(env,gs.depth,j,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+                        let mut r = self.calc_lmr(env,gs.depth,
+                                                       gs.current_depth,
+                                                       j,
+                                                       gs.teban,
+                                                       gs.state,
+                                                       m,
+                                                       tt_move.as_ref(),
+                                                       pv_move.as_ref(),
+                                                       prev_move.as_ref(),
+                                                       gs.prev_kind,
+                                                       calc_see(gs.teban,gs.state,m),
+                                                       &gs.zh)?;
 
                         let pv = pv_move.map(|pv| {
                             if pv == m {
@@ -2070,7 +2102,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                  */
 
-                let mut r  = self.calc_lmr(env,gs.depth,j+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+                let mut r  = self.calc_lmr(env,
+                                                gs.depth,
+                                                gs.current_depth,
+                                          j+gs.search_offset,
+                                                gs.teban,
+                                                gs.state,
+                                                m,
+                                                tt_move.as_ref(),
+                                                pv_move.as_ref(),
+                                                prev_move.as_ref(),
+                                                gs.prev_kind,
+                                                see,
+                                                &gs.zh)?;
 
                 for k in 0..2 {
                     let depth = if k == 0 {
@@ -2335,7 +2379,19 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             };
 
             for (i,m) in mvs.into_iter().enumerate() {
-                let mut r = recur.calc_lmr(env,gs.depth,i,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+                let mut r = recur.calc_lmr(env,
+                                                gs.depth,
+                                                gs.current_depth,
+                                                i,
+                                                gs.teban,
+                                                gs.state,
+                                                m,
+                                                tt_move.as_ref(),
+                                                pv_move.as_ref(),
+                                                prev_move.as_ref(),
+                                                gs.prev_kind,
+                                                calc_see(gs.teban,gs.state,m),
+                                                &gs.zh)?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
@@ -2492,7 +2548,19 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                  */
 
-                let mut r = recur.calc_lmr(env,gs.depth,i+gs.search_offset,gs.teban,gs.state,m,pv_move.as_ref(),&gs.zh);
+                let mut r = recur.calc_lmr(env,
+                                               gs.depth,
+                                               gs.current_depth,
+                                         i+gs.search_offset,
+                                               gs.teban,
+                                               gs.state,
+                                               m,
+                                               tt_move.as_ref(),
+                                               pv_move.as_ref(),
+                                               prev_move.as_ref(),
+                                               gs.prev_kind,
+                                               see,
+                                               &gs.zh)?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
@@ -2554,6 +2622,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                                     match m {
                                         LegalMove::To(mv) if mv.obtained().is_none() => {
+                                            if !mv.is_nari() {
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
+                                            }
                                             env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth)?;
                                         },
                                         LegalMove::Put(_) => {
