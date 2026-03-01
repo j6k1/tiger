@@ -672,22 +672,27 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 teban: Teban,
                 state: &State,
                 m:LegalMove,
+                zh:&ZobristHash<u64>,
                 tt_move:Option<&LegalMove>,
                 pv:Option<&LegalMove>,
                 prev_move:Option<&LegalMove>,
                 prev_kind:KomaKind,
                 prev_eval: Option<i32>,
-                static_eval: i32) -> Result<bool,ApplicationError> {
+                static_eval: i32)
+        -> Result<bool,ApplicationError> {
+        let is_exact = env.transposition_table.get(zh).map(|tte| tte.deref().clone()).map(|tte| {
+            tte.bound == Bound::Exact
+        }).unwrap_or(false);
+
         Ok(m.is_nari() ||
             m.obtained().is_some() ||
-            tt_move.map(|tm| tm == &m).unwrap_or(false) ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
-            prev_eval.map(|ps| static_eval > ps).unwrap_or(false) ||
             env.move_orderer.is_killer(current_depth,m)? ||
             prev_move.map(|&pm| env.move_orderer.is_counter_move(m,teban,pm,prev_kind)).unwrap_or(Ok(false))? ||
-            env.move_orderer.look_up_history(teban,state,m)? >= depth as i64 * depth as i64 / 2 ||
-            self.in_danger(teban.opposite(),state, m) ||
-            Rule::is_oute_move(state,teban,m)
+            env.move_orderer.look_up_history(teban,state,m)? >= depth as i64 * depth as i64 * 10 ||
+            (is_exact && prev_eval.map(|ps| static_eval > ps).unwrap_or(false))// ||
+            //self.in_danger(teban.opposite(),state, m) ||
+            //Rule::is_oute_move(state,teban,m)
         )
     }
     fn calc_lmr(&self, env:&mut Environment<L,S>,
@@ -705,19 +710,19 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        zh:&ZobristHash<u64>,
                        prev_eval: Option<i32>,
                        static_eval: i32) -> Result<u32,ApplicationError> {
-        if depth <= 3 ||
+        if depth < 3 ||
             Rule::in_check(teban,state) ||
-            see >= 0 ||
+            //see >= 0 ||
             env.transposition_table.get(zh).map(|tte| tte.deref().clone()).and_then(|tte| {
-                tte.best_move.map(|m| m.obtained().is_none())
+                tte.best_move.map(|bm| bm.obtained().is_none() && bm == m)
             }).unwrap_or(false) ||
             self.is_important_move(env,depth,current_depth,
-                                   teban,state,m,tt_move,pv,prev_move,prev_kind,prev_eval,static_eval)? {
+                                   teban,state,m,zh,tt_move,pv,prev_move,prev_kind,prev_eval,static_eval)? {
             Ok(0)
-        } else if index < 4 + 1 {
+        } else if index <= 1 {
             Ok(0)
         } else {
-            let r = (((depth as f32).ln() * (index as f32 + 1.).ln() / 2.25).floor() as u32).clamp(0,2);
+            let r = (((depth as f32).ln() * (index as f32 + 1.).ln() / 2.25).floor() as u32).min(depth / 2);
 
             /*
             let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
