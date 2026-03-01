@@ -223,6 +223,8 @@ pub struct GameState<'a> {
     pub pv:&'a VecDeque<LegalMove>,
     pub mc:&'a Arc<MochigomaCollections>,
     pub zh:ZobristHash<u64>,
+    pub prev_self_ss:Option<i32>,
+    pub prev_opponent_ss:Option<i32>,
     pub depth:u32,
     pub current_depth:u32,
     pub current_max_ply:usize,
@@ -673,11 +675,14 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 tt_move:Option<&LegalMove>,
                 pv:Option<&LegalMove>,
                 prev_move:Option<&LegalMove>,
-                prev_kind:KomaKind) -> Result<bool,ApplicationError> {
+                prev_kind:KomaKind,
+                prev_eval: Option<i32>,
+                static_eval: i32) -> Result<bool,ApplicationError> {
         Ok(m.is_nari() ||
             m.obtained().is_some() ||
             tt_move.map(|tm| tm == &m).unwrap_or(false) ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
+            prev_eval.map(|ps| static_eval > ps).unwrap_or(false) ||
             env.move_orderer.is_killer(current_depth,m)? ||
             prev_move.map(|&pm| env.move_orderer.is_counter_move(m,teban,pm,prev_kind)).unwrap_or(Ok(false))? ||
             env.move_orderer.look_up_history(teban,state,m)? >= depth as i64 * depth as i64 / 2 ||
@@ -697,20 +702,22 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        prev_move:Option<&LegalMove>,
                        prev_kind:KomaKind,
                        see:i32,
-                       zh:&ZobristHash<u64>) -> Result<u32,ApplicationError> {
+                       zh:&ZobristHash<u64>,
+                       prev_eval: Option<i32>,
+                       static_eval: i32) -> Result<u32,ApplicationError> {
         if depth <= 3 ||
             Rule::in_check(teban,state) ||
             see >= 0 ||
+            env.transposition_table.get(zh).map(|tte| tte.deref().clone()).is_some() ||
             self.is_important_move(env,depth,current_depth,
-                                   teban,state,m,tt_move,pv,prev_move,prev_kind)? {
+                                   teban,state,m,tt_move,pv,prev_move,prev_kind,prev_eval,static_eval)? {
             Ok(0)
         } else if index < 4 + 1 {
             Ok(0)
         } else {
-            let mut r = ((
-                (depth as f32).ln() * (index as f32 + 1.).ln() / 2.25
-            ).floor() as u32).clamp(0,2);
+            let r = (((depth as f32).ln() * (index as f32 + 1.).ln() / 2.25).floor() as u32).clamp(0,2);
 
+            /*
             let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
 
             if let Some(TTPartialEntry {
@@ -730,7 +737,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                     }
                 }
             }
-
+            */
             Ok(r)
         }
     }
@@ -1201,6 +1208,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                     pv:&pv,
                     mc: &mc,
                     zh: zh,
+                    prev_self_ss: None,
+                    prev_opponent_ss: None,
                     depth: depth,
                     current_depth: current_depth,
                     current_max_ply: current_max_ply,
@@ -1407,7 +1416,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                             self.termination(env, busy_threads, &pending_results)?;
 
-                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::NodeLimits));
+                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::NodeLimits));
                         },
                         Ok(RootEvaluationResult::Timeout) => {
                             busy_threads -= 1;
@@ -1416,7 +1425,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                             self.termination(env, busy_threads, &pending_results)?;
 
-                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Timeout));
+                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
                         },
                         Ok(RootEvaluationResult::Stop) => {
                             busy_threads -= 1;
@@ -1425,7 +1434,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
                             self.termination(env, busy_threads, &pending_results)?;
 
-                            return Ok(result[decided_depth as usize].take().unwrap_or(EvaluationResult::Stop));
+                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Stop));
                         },
                         Ok(RootEvaluationResult::Repetition) => {
                             busy_threads -= 1;
@@ -1538,6 +1547,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
                                      depth:u32,
+                                     static_eval: i32,
                                      evasions_count: Option<usize>,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
@@ -1596,6 +1606,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     pv:pv,
                     mc: &mc,
                     zh: zh.clone(),
+                    prev_self_ss: gs.prev_opponent_ss,
+                    prev_opponent_ss: Some(static_eval),
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
                     current_max_ply: gs.current_max_ply,
@@ -1616,6 +1628,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                    alpha:Score,
                                    beta:Score,
                                    depth:u32,
+                                   static_eval: i32,
                                    event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                    evalutor: &Arc<Evalutor<M>>)
         -> Result<EvaluationResult, ApplicationError> {
@@ -1636,6 +1649,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             pv:&VecDeque::new(),
             mc: &mc,
             zh: zh.clone(),
+            prev_self_ss: gs.prev_opponent_ss,
+            prev_opponent_ss: Some(static_eval),
             depth: depth - 1,
             current_depth: gs.current_depth + 1,
             current_max_ply: gs.current_max_ply,
@@ -1671,6 +1686,14 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         if env.stop.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Stop);
         }
+
+        if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Timeout);
+        }
+
+        let prev_eval = gs.prev_self_ss;
+
+        let static_eval = evalutor.evalute(gs.teban,&gs.state,&gs.mc)?;
 
         if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
@@ -1935,7 +1958,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                        prev_move.as_ref(),
                                                        gs.prev_kind,
                                                        calc_see(gs.teban,gs.state,m),
-                                                       &gs.zh)?;
+                                                       &gs.zh,
+                                                       prev_eval,
+                                                       static_eval)?;
 
                         let pv = pv_move.map(|pv| {
                             if pv == m {
@@ -1964,7 +1989,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
                             }
 
-                            match self.search_child_node(env, gs, m, pv, alpha, depth, evasions_count, event_dispatcher, evalutor)? {
+                            match self.search_child_node(env, gs, m, pv, alpha, depth, static_eval, evasions_count, event_dispatcher, evalutor)? {
                                 EvaluationResult::Immediate(s, mvs, _) => {
                                     let s = -s;
 
@@ -2114,7 +2139,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                 prev_move.as_ref(),
                                                 gs.prev_kind,
                                                 see,
-                                                &gs.zh)?;
+                                                &gs.zh,
+                                                prev_eval,
+                                                static_eval)?;
 
                 for k in 0..2 {
                     let depth = if k == 0 {
@@ -2135,7 +2162,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                     }
 
-                    match self.search_child_node(env,gs,m,&pv_non,alpha,depth,evasions_count,event_dispatcher,evalutor)? {
+                    match self.search_child_node(env,gs,m,&pv_non,alpha,depth,static_eval,evasions_count,event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
@@ -2279,12 +2306,13 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     pv:&VecDeque<LegalMove>,
                                     alpha:Score,
                                     depth:u32,
+                                    static_eval: i32,
                                     evasions_count: Option<usize>,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -2305,6 +2333,14 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
         if env.stop.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Stop);
         }
+
+        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
+            return Ok(EvaluationResult::Timeout);
+        }
+
+        let prev_eval = gs.prev_self_ss;
+
+        let static_eval = evalutor.evalute(gs.teban,&gs.state,&gs.mc)?;
 
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
@@ -2391,7 +2427,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                                 prev_move.as_ref(),
                                                 gs.prev_kind,
                                                 calc_see(gs.teban,gs.state,m),
-                                                &gs.zh)?;
+                                                &gs.zh,
+                                                prev_eval,
+                                                static_eval)?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
@@ -2419,7 +2457,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         }
                     }).unwrap_or(&pv_non);
 
-                    match recur.search_child_node(env, gs, m, pv, alpha, depth, evasions_count, &mut event_dispatcher, evalutor)? {
+                    match recur.search_child_node(env, gs, m, pv, alpha, depth, static_eval, evasions_count, &mut event_dispatcher, evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
@@ -2560,7 +2598,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                                prev_move.as_ref(),
                                                gs.prev_kind,
                                                see,
-                                               &gs.zh)?;
+                                               &gs.zh,
+                                               prev_eval,
+                                               static_eval)?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
@@ -2580,7 +2620,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
                     }
 
-                    match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,evasions_count,&mut event_dispatcher,evalutor)? {
+                    match recur.search_child_node(env,gs,m,&pv_non,alpha,depth,static_eval,evasions_count,&mut event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _) => {
                             let s = -s;
 
