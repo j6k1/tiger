@@ -708,7 +708,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if depth <= 3 ||
             Rule::in_check(teban,state) ||
             see >= 0 ||
-            env.transposition_table.get(zh).map(|tte| tte.deref().clone()).is_some() ||
+            env.transposition_table.get(zh).map(|tte| tte.deref().clone()).and_then(|tte| {
+                tte.best_move.map(|m| m.obtained().is_none())
+            }).unwrap_or(false) ||
             self.is_important_move(env,depth,current_depth,
                                    teban,state,m,tt_move,pv,prev_move,prev_kind,prev_eval,static_eval)? {
             Ok(0)
