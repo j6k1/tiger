@@ -3,7 +3,7 @@ use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
 use nncombinator::layer::{ForwardAll, PreTrain};
@@ -100,6 +100,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     zh:Option<ZobristHash<u64>>,
     hasher:Arc<KyokumenHash<u64>>,
     transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
+    search_id:Arc<AtomicUsize>,
     base_depth:u32,
     max_nodes:Option<u64>,
     max_threads:u32,
@@ -127,6 +128,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             zh:None,
             hasher:Arc::new(KyokumenHash::new()),
             transposition_table:Arc::new(TT::new()),
+            search_id:Arc::new(AtomicUsize::new(0)),
             base_depth:BASE_DEPTH,
             max_nodes:None,
             max_threads:MAX_THREADS,
@@ -209,6 +211,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     m:None,
                     prev_kind: KomaKind::Blank,
                     pv:&VecDeque::new(),
+                    move_history:&mut Vec::new(),
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
                     prev_self_ss: None,
@@ -471,6 +474,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
+                Arc::clone(&self.search_id),
                 teban,
                 limit,
                 self.turn_limit,
@@ -516,6 +520,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
+                Arc::clone(&self.search_id),
                 teban,
                 limit,
                 self.turn_limit,
