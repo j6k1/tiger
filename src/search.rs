@@ -51,7 +51,7 @@ fn generate_lmr_table() -> [[u8; MAX_MOVES]; DEPTH_LIMIT as usize] {
         for mv in 1..MAX_MOVES {
             let base = (2809. / 128.) * (mv as f32).ln();
             let scaled = base * (depth as f32 / DEPTH_LIMIT as f32);
-            let r = (scaled / 10.).floor() as i32;
+            let r = (scaled / 12.).floor() as i32;
             let r = r.clamp(0,4) as u8;
 
             table[depth as usize][mv] = r;
@@ -734,7 +734,15 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         } else {
             let r = LMR_TABLE[depth as usize][index.min(63)];
 
-            Ok(r as u32)
+            let h = env.move_orderer.look_up_history(teban,state,m)?;
+
+            if h > depth as i64 * 6 {
+                Ok(r.saturating_sub(1) as u32)
+            } else if h < -(depth as i64) * 6 {
+                Ok(r.saturating_add(1) as u32)
+            } else {
+                Ok(r as u32)
+            }
         }
     }
 
