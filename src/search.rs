@@ -1,7 +1,8 @@
+use std::cell::LazyCell;
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::ops::{Add, Deref, Neg, Sub};
-use std::sync::{Arc, atomic, mpsc, Mutex};
+use std::sync::{Arc, atomic, mpsc, Mutex, LazyLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -40,6 +41,27 @@ pub const NODES_PER_LEAF_NODE:u16 = 5;
 pub const GAMMA:u8 = 100;
 pub const QUIET_SEE_FACTOR:i64 = 128;
 
+const DEPTH_LIMIT: u32 = 64;
+const MAX_MOVES: usize = 64;
+
+fn generate_lmr_table() -> [[u8; MAX_MOVES]; DEPTH_LIMIT as usize] {
+    let mut table = [[0; MAX_MOVES]; DEPTH_LIMIT as usize];
+
+    for depth in 1..DEPTH_LIMIT {
+        for mv in 1..MAX_MOVES {
+            let base = (2809. / 128.) * (mv as f32).ln();
+            let scaled = base * (depth as f32 / DEPTH_LIMIT as f32);
+            let r = (scaled / 10.).floor() as i32;
+            let r = r.clamp(0,4) as u8;
+
+            table[depth as usize][mv] = r;
+        }
+    }
+
+    table
+}
+
+static LMR_TABLE: LazyLock<[[u8; MAX_MOVES]; DEPTH_LIMIT as usize]> = LazyLock::new(|| generate_lmr_table());
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
     NEGINFINITE,
@@ -677,27 +699,13 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 teban: Teban,
                 state: &State,
                 m:LegalMove,
-                zh:&ZobristHash<u64>,
-                tt_move:Option<&LegalMove>,
-                pv:Option<&LegalMove>,
-                prev_move:Option<&LegalMove>,
-                prev_kind:KomaKind,
-                prev_eval: Option<i32>,
-                static_eval: i32)
+                pv:Option<&LegalMove>)
         -> Result<bool,ApplicationError> {
-        let is_exact = env.transposition_table.get(zh).map(|tte| tte.deref().clone()).map(|tte| {
-            tte.bound == Bound::Exact
-        }).unwrap_or(false);
-
-        Ok(m.is_nari() ||
-            m.obtained().is_some() ||
+        Ok(m.obtained().is_some() ||
+            m.is_nari() ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
             env.move_orderer.is_killer(current_depth,m)? ||
-            prev_move.map(|&pm| env.move_orderer.is_counter_move(m,teban,pm,prev_kind)).unwrap_or(Ok(false))? ||
-            env.move_orderer.look_up_history(teban,state,m)? >= depth as i64 * depth as i64 * 2// ||
-            //(is_exact && prev_eval.map(|ps| static_eval > ps).unwrap_or(false))// ||
-            //self.in_danger(teban.opposite(),state, m) ||
-            //Rule::is_oute_move(state,teban,m)
+            Rule::is_oute_move(state,teban,m)
         )
     }
     fn calc_lmr(&self, env:&mut Environment<L,S>,
@@ -715,47 +723,19 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        zh:&ZobristHash<u64>,
                        prev_eval: Option<i32>,
                        static_eval: i32) -> Result<u32,ApplicationError> {
-        /*
         if depth < 3 ||
             Rule::in_check(teban,state) ||
-            see >= 0 ||
-            //env.transposition_table.get(zh).map(|tte| tte.deref().clone()).and_then(|tte| {
-            //    tte.best_move.map(|bm| bm.obtained().is_none() && bm == m)
-            //}).unwrap_or(false) ||
+            tt_move.map(|&tm| tm == m).unwrap_or(false) ||
             self.is_important_move(env,depth,current_depth,
-                                   teban,state,m,zh,tt_move,pv,prev_move,prev_kind,prev_eval,static_eval)? {
+                                   teban,state,m,pv)? {
             Ok(0)
         } else if index <= 1 {
             Ok(0)
         } else {
-            let r = (((depth as f32).ln() * (index as f32 + 1.).ln() / 2.25).floor() as u32).min(depth / 2);
+            let r = LMR_TABLE[depth as usize][index.min(63)];
 
-            /*
-            let tte = env.transposition_table.get(zh).map(|tte| tte.deref().clone());
-
-            if let Some(TTPartialEntry {
-                            depth: d,
-                            score: _,
-                            beta: _,
-                            alpha: _,
-                            bound,
-                            best_move
-                        }) = tte {
-
-                if d as u32 >= depth && best_move.map(|bm| bm == m).unwrap_or(false) {
-                    if bound == Bound::Exact {
-                        r = 0;
-                    } else if bound == Bound::LowerBound {
-                        r = (r as i32 - 1).max(0) as u32;
-                    }
-                }
-            }
-            */
-            Ok(r)
+            Ok(r as u32)
         }
-
-         */
-        Ok(0)
     }
 
     fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
@@ -1668,7 +1648,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         let zh = gs.zh.teban_fliped();
 
         gs.move_history.push(None);
-        
+
         let mut gs = GameState {
             teban: gs.teban.opposite(),
             state: state,
