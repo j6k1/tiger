@@ -1,11 +1,14 @@
 use std::fmt::Debug;
 use libc::size_t;
-use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::cuda::ToCuda;
-use nncombinator::device::DeviceGpu;
 use nncombinator::error::TypeConvertError;
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::allocator::CudaAllocator;
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::ToCuda;
+#[cfg(feature = "cuda")]
+use nncombinator::device::DeviceGpu;
 use rand_distr::num_traits::FromPrimitive;
 
 /// InputFeatures Implementaion
@@ -17,6 +20,7 @@ pub struct HalfKP<const N:usize> {
 impl<const N:usize> BatchDataType for HalfKP<N> {
     type Type = HalfKPList<N>;
 }
+#[cfg(feature = "cuda")]
 impl<U,A,const N:usize> ToCuda<U,A> for HalfKP<N>
     where U: UnitValue<U>,
           A: CudaAllocator {

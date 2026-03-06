@@ -30,6 +30,7 @@ rcublas = { version = "0.6.0", optional = true }
 rcublas-sys = { version = "0.5.0", optional = true }
 [dependencies.nncombinator]
 path = "../nncombinator"
+default-features = false
 [dependencies.packedsfen]
 path = "../packedsfen"
 [dependencies.usiagent]

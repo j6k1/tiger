@@ -4,7 +4,6 @@ use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
 use nncombinator::arr::{SerializedVec};
-use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::device::{DeviceCpu};
@@ -12,6 +11,8 @@ use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 #[cfg(feature = "cuda")]
 use nncombinator::device::{DeviceAllocator, DeviceGpu};
 #[cfg(feature = "cuda")]
