@@ -7,13 +7,18 @@ use nncombinator::arr::{SerializedVec};
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory};
-use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::device::{DeviceAllocator, DeviceCpu, DeviceGpu};
+use nncombinator::device::{DeviceCpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
 use crate::features::{HalfKP, HalfKPListView, HalfKPView};
+#[cfg(feature = "cuda")]
+use nncombinator::device::{DeviceAllocator, DeviceGpu};
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec, CudaVecView, Kernel, WriteMemory, MemoryMoveTo, CudaPtr, CudaTensor1dPtrView, AsCudaPtr, AsCudaMutPtr, CudaMutPtr, ReadMemory};
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::allocator::CudaAllocator;
+#[cfg(feature = "cuda")]
 use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorBatchArgs, TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
@@ -225,6 +230,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
         Ok(acc)
     }
 }
+#[cfg(feature = "cuda")]
 impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,A,NI,NO>,CudaTensor1dPtr<f32,A,NO>,NI,NO> for DeviceGpu<f32,A>
     where A: CudaAllocator + 'static,
           CudaPtr<usize,A>: WriteMemory<usize>,
@@ -527,6 +533,7 @@ impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
         }).collect::<Vec<Arr<U,{N*2}>>>().into())
     }
 }
+#[cfg(feature = "cuda")]
 impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for DeviceGpu<f32,A>
     where A: CudaAllocator {
     fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,EvaluateError> {

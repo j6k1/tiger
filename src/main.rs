@@ -3,11 +3,6 @@
 #![feature(portable_simd)]
 
 extern crate libc;
-extern crate cuda_runtime_sys;
-extern crate rcublas_sys;
-extern crate rcublas;
-extern crate rcudnn;
-extern crate rcudnn_sys;
 extern crate rand;
 extern crate rand_distr;
 extern crate rand_xorshift;
@@ -16,6 +11,16 @@ extern crate getopts;
 extern crate toml;
 extern crate rayon;
 extern crate crossbeam_channel;
+#[cfg(feature = "cuda")]
+extern crate cuda_runtime_sys;
+#[cfg(feature = "cuda")]
+extern crate rcublas_sys;
+#[cfg(feature = "cuda")]
+extern crate rcublas;
+#[cfg(feature = "cuda")]
+extern crate rcudnn;
+#[cfg(feature = "cuda")]
+extern crate rcudnn_sys;
 
 #[macro_use]
 extern crate serde_derive;
@@ -31,24 +36,30 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use getopts::Options;
+#[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{DeviceAlloc, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
 use usiagent::logger::FileLogger;
 use usiagent::{OnErrorHandler, UsiAgent};
 use usiagent::output::USIStdErrorWriter;
 use crate::error::ApplicationError;
-use crate::learning::Learnener;
-use crate::nn::{EvalutorCreator, TrainerCreator};
+use crate::nn::{EvalutorCreator};
 use crate::player::Tiger;
+#[cfg(feature = "cuda")]
+use crate::nn::{TrainerCreator};
+#[cfg(feature = "cuda")]
+use crate::learning::Learnener;
 
 pub mod device;
 pub mod features;
 pub mod nn;
 pub mod layer;
+#[cfg(feature = "cuda")]
 pub mod learning;
 pub mod transposition_table;
 pub mod player;
 pub mod search;
 pub mod error;
+#[cfg(feature = "cuda")]
 pub mod kernel;
 pub mod evalutor;
 
@@ -133,95 +144,103 @@ fn run() -> Result<(),ApplicationError> {
     };
 
     if let Some(kifudir) = matches.opt_str("kifudir") {
-        let testdir = matches.opt_str("testdir").unwrap_or(kifudir.clone());
+        #[cfg(feature = "cuda")]
+        {
+            let testdir = matches.opt_str("testdir").unwrap_or(kifudir.clone());
 
-        let logger = Arc::new(Mutex::new(FileLogger::new(String::from("logs/log.txt"))?));
-        let on_error_handler = Arc::new(Mutex::new(OnErrorHandler::new(logger)));
+            let logger = Arc::new(Mutex::new(FileLogger::new(String::from("logs/log.txt"))?));
+            let on_error_handler = Arc::new(Mutex::new(OnErrorHandler::new(logger)));
 
-        let config = ConfigLoader::new("settings.toml")?.load()?;
+            let config = ConfigLoader::new("settings.toml")?.load()?;
 
-        let maxepoch = matches.opt_str("maxepoch").unwrap_or(String::from("1")).parse::<usize>()?;
+            let maxepoch = matches.opt_str("maxepoch").unwrap_or(String::from("1")).parse::<usize>()?;
 
-        let mut evalutor = TrainerCreator::create(String::from("data"),
-                                                  String::from("nn.bin"),
-                                                  &config,
-                                                  MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
+            let mut evalutor = TrainerCreator::create(String::from("data"),
+                                                      String::from("nn.bin"),
+                                                      &config,
+                                                      MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
 
-        let r = if matches.opt_present("yaneuraou") || matches.opt_present("yaneuraou,hcpe") {
-            if let Err(e) = Learnener::new().learning_from_yaneuraou_bin(kifudir,
-                                                         &mut evalutor,
-                                                         on_error_handler.clone(),
-                                                         config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                                         config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                         config.lambda.unwrap_or(0.1),
-                                                         config.verbose.unwrap_or(false),
-                                                         config.save_batch_count.unwrap_or(20),
-                                                         maxepoch,
-                                                         config.batches_per_epoch) {
-                Err(e)
-            } else {
-                let _ = evalutor;
-
-                let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
-
-                if matches.opt_present("yaneuraou") {
-                    evalutor.eval_test(testdir,"bin",40,
-                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
-                                               |evalutor, packed| {
-                                                   evalutor.test_by_packed_sfens(packed)
-                                               })
+            let r = if matches.opt_present("yaneuraou") || matches.opt_present("yaneuraou,hcpe") {
+                if let Err(e) = Learnener::new().learning_from_yaneuraou_bin(kifudir,
+                                                                             &mut evalutor,
+                                                                             on_error_handler.clone(),
+                                                                             config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                                                             config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
+                                                                             config.lambda.unwrap_or(0.1),
+                                                                             config.verbose.unwrap_or(false),
+                                                                             config.save_batch_count.unwrap_or(20),
+                                                                             maxepoch,
+                                                                             config.batches_per_epoch) {
+                    Err(e)
                 } else {
-                    evalutor.eval_test(testdir,"hcpe",38,
-                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
-                                               |evalutor, packed| {
-                                                   evalutor.test_by_packed_hcpe(packed)
-                                               })
+                    let _ = evalutor;
+
+                    let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
+
+                    if matches.opt_present("yaneuraou") {
+                        evalutor.eval_test(testdir,"bin",40,
+                                           config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                           config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           |evalutor, packed| {
+                                               evalutor.test_by_packed_sfens(packed)
+                                           })
+                    } else {
+                        evalutor.eval_test(testdir,"hcpe",38,
+                                           config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                           config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           |evalutor, packed| {
+                                               evalutor.test_by_packed_hcpe(packed)
+                                           })
+                    }
                 }
-            }
-        } else if matches.opt_present("hcpe") || matches.opt_present("hcpe,yaneuraou") {
-            if let Err(e) = Learnener::new().learning_from_hcpe(kifudir,
-                                                &mut evalutor,
-                                                on_error_handler.clone(),
-                                                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                                config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
-                                                config.lambda.unwrap_or(0.1),
-                                                config.verbose.unwrap_or(false),
-                                                config.save_batch_count.unwrap_or(20),
-                                                maxepoch,
-                                                config.batches_per_epoch) {
-                Err(e)
-            } else {
-                let _ = evalutor;
-
-                let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
-
-                if matches.opt_present("hcpe,yaneuraou") {
-                    evalutor.eval_test(testdir,"bin",40,
-                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
-                                               |evalutor, packed| {
-                                                   evalutor.test_by_packed_sfens(packed)
-                                               })
+            } else if matches.opt_present("hcpe") || matches.opt_present("hcpe,yaneuraou") {
+                if let Err(e) = Learnener::new().learning_from_hcpe(kifudir,
+                                                                    &mut evalutor,
+                                                                    on_error_handler.clone(),
+                                                                    config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                                                    config.learn_batch_size.unwrap_or(LEAN_BATCH_SIZE),
+                                                                    config.lambda.unwrap_or(0.1),
+                                                                    config.verbose.unwrap_or(false),
+                                                                    config.save_batch_count.unwrap_or(20),
+                                                                    maxepoch,
+                                                                    config.batches_per_epoch) {
+                    Err(e)
                 } else {
-                    evalutor.eval_test(testdir,"hcpe",38,
-                                               config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
-                                               config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
-                                               |evalutor, packed| {
-                                                   evalutor.test_by_packed_hcpe(packed)
-                                               })
-                }
-            }
-        } else {
-            Err(ApplicationError::InvalidSettingError(String::from("learning mode is not specified.")))
-        };
+                    let _ = evalutor;
 
-        if let Err(ref e) = r {
-            let _ = on_error_handler.lock().map(|h| h.call(e));
+                    let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&config)?);
+
+                    if matches.opt_present("hcpe,yaneuraou") {
+                        evalutor.eval_test(testdir,"bin",40,
+                                           config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                           config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           |evalutor, packed| {
+                                               evalutor.test_by_packed_sfens(packed)
+                                           })
+                    } else {
+                        evalutor.eval_test(testdir,"hcpe",38,
+                                           config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
+                                           config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           |evalutor, packed| {
+                                               evalutor.test_by_packed_hcpe(packed)
+                                           })
+                    }
+                }
+            } else {
+                Err(ApplicationError::InvalidSettingError(String::from("learning mode is not specified.")))
+            };
+
+            if let Err(ref e) = r {
+                let _ = on_error_handler.lock().map(|h| h.call(e));
+            }
+
+            r
         }
 
-        r
+        #[cfg(not(feature = "cuda"))]
+        {
+            unimplemented!()
+        }
     } else if let Some(testdir) = matches.opt_str("eval") {
         let config = ConfigLoader::new("settings.toml")?.load()?;
 

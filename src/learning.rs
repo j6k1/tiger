@@ -15,11 +15,11 @@ use usiagent::logger::*;
 use usiagent::input::*;
 
 use nncombinator::arr::{Arr, SerializedVec};
-use nncombinator::cuda::allocator::CudaAllocator;
-use nncombinator::device::DeviceGpu;
 use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll, Step};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder};
+use nncombinator::cuda::allocator::CudaAllocator;
+use nncombinator::device::DeviceGpu;
 
 use crate::error::ApplicationError;
 use crate::features::HalfKP;

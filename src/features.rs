@@ -182,6 +182,7 @@ impl<const N: usize> BatchSize for HalfKPList<N> {
         self.items.len()
     }
 }
+#[cfg(feature = "cuda")]
 impl<U,A,const N:usize> ToCuda<U,A> for HalfKPList<N>
     where U: UnitValue<U>,
           A: CudaAllocator {

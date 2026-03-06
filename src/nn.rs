@@ -11,9 +11,7 @@ use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
-use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
-use nncombinator::cuda::allocator::{CudaAllocator};
-use nncombinator::device::{Device, DeviceCpu, DeviceGpu};
+use nncombinator::device::{Device, DeviceCpu};
 use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ForwardAll, PreTrain, Step, TryAddLayer};
 use nncombinator::layer::input::InputLayer;
 use nncombinator::layer::output::LinearOutputLayer;
@@ -34,6 +32,12 @@ use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoa
 use usiagent::event::{GameEndState};
 use usiagent::rule::{Rule, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
+#[cfg(feature = "cuda")]
+use nncombinator::device::{DeviceGpu};
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
+#[cfg(feature = "cuda")]
+use nncombinator::cuda::allocator::{CudaAllocator};
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
 use crate::features::HalfKP;
@@ -420,6 +424,7 @@ impl<M> Evalutor<M>
 }
 pub type LF = CrossEntropy<f32>;
 
+#[cfg(feature = "cuda")]
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A:CudaAllocator {
@@ -430,6 +435,7 @@ pub struct Trainer<M,A>
 }
 pub struct TrainerCreator {
 }
+#[cfg(feature = "cuda")]
 impl TrainerCreator {
     pub fn create<A: CudaAllocator + MemoryType + 'static>(save_dir:String, nn_path:String, config:&Config, allocator:A)
         -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
@@ -524,6 +530,7 @@ impl TrainerCreator {
         })
     }
 }
+#[cfg(feature = "cuda")]
 impl<M,A> Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {

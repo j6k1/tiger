@@ -4,12 +4,14 @@ use std::collections::VecDeque;
 use std::num::{ParseFloatError, ParseIntError};
 use std::sync::mpsc::{RecvError, RecvTimeoutError};
 use std::sync::{MutexGuard, PoisonError};
-use nncombinator::error::{ModelLoadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
+use nncombinator::error::{ModelLoadError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use packedsfen::error::ReadError;
 use rayon::ThreadPoolBuildError;
 use shogi_dataloader::error::DataLoadError;
 use usiagent::error::{EventDispatchError, InfoSendError, InvalidInputError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
+#[cfg(feature = "cuda")]
+use nncombinator::error::{CudaError};
 
 #[derive(Debug)]
 pub enum ApplicationError {
@@ -33,6 +35,7 @@ pub enum ApplicationError {
     LayerInstantiationError(LayerInstantiationError),
     PersistenceError(PersistenceError),
     DataLoadError(DataLoadError),
+    #[cfg(feature = "cuda")]
     CudaError(CudaError),
     RecvError(RecvError),
     CrossbeamChannelRecvError(crossbeam_channel::RecvError),
@@ -69,6 +72,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::LayerInstantiationError(ref e) => write!(f,"{}",e),
             ApplicationError::PersistenceError(ref e) => write!(f,"{}",e),
             ApplicationError::DataLoadError(ref e) => write!(f,"{}",e),
+            #[cfg(feature = "cuda")]
             ApplicationError::CudaError(ref e) => write!(f, "An error occurred in the process of cuda. ({})",e),
             ApplicationError::RecvError(ref e) => write!(f, "{}",e),
             ApplicationError::CrossbeamChannelRecvError(ref e) => write!(f,"{}",e),
@@ -107,6 +111,7 @@ impl error::Error for ApplicationError {
             ApplicationError::LayerInstantiationError(_) => "An unexpected error occurred during layer instantiation.",
             ApplicationError::PersistenceError(_) => "An error occurred when saving model information.",
             ApplicationError::DataLoadError(_) => "An error occurred during the loading process of training data.",
+            #[cfg(feature = "cuda")]
             ApplicationError::CudaError(_) => "An error occurred in the process of cuda.",
             ApplicationError::RecvError(_) => "An error occurred while receiving the message.",
             ApplicationError::CrossbeamChannelRecvError(_) => "An error occurred while receiving a message using crossbeam-channel.",
@@ -145,6 +150,7 @@ impl error::Error for ApplicationError {
             ApplicationError::LayerInstantiationError(ref e) => Some(e),
             ApplicationError::PersistenceError(ref e) => Some(e),
             ApplicationError::DataLoadError(ref e) => Some(e),
+            #[cfg(feature = "cuda")]
             ApplicationError::CudaError(_) => None,
             ApplicationError::RecvError(ref e) => Some(e),
             ApplicationError::CrossbeamChannelRecvError(ref e) => Some(e),
@@ -232,6 +238,7 @@ impl From<PersistenceError> for ApplicationError {
         ApplicationError::PersistenceError(err)
     }
 }
+#[cfg(feature = "cuda")]
 impl From<CudaError> for ApplicationError {
     fn from(err: CudaError) -> ApplicationError {
         ApplicationError::CudaError(err)
