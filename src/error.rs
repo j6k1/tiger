@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::num::{ParseFloatError, ParseIntError};
 use std::sync::mpsc::{RecvError, RecvTimeoutError};
 use std::sync::{MutexGuard, PoisonError};
-use nncombinator::error::{ConfigReadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
+use nncombinator::error::{ModelLoadError, CudaError, DeviceError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use packedsfen::error::ReadError;
 use rayon::ThreadPoolBuildError;
 use shogi_dataloader::error::DataLoadError;
@@ -25,7 +25,7 @@ pub enum ApplicationError {
     InvalidStateError(String),
     LearningError(String),
     SerdeError(toml::ser::Error),
-    ConfigReadError(ConfigReadError),
+    ModelLoadError(ModelLoadError),
     InvalidSettingError(String),
     TrainingError(TrainingError),
     EvaluateError(EvaluateError),
@@ -44,7 +44,7 @@ pub enum ApplicationError {
     BorrowMutError(BorrowMutError),
     ThreadPoolBuildError(ThreadPoolBuildError),
     LimitSizeError(LimitSizeError),
-    InvalidInputError(InvalidInputError),
+    InvalidInputError(InvalidInputError)
 }
 impl fmt::Display for ApplicationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -62,7 +62,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::LearningError(ref s) => write!(f,"{}",s),
             ApplicationError::SerdeError(ref e) => write!(f,"{}",e),
             ApplicationError::InvalidSettingError(ref s) => write!(f,"{}",s),
-            ApplicationError::ConfigReadError(ref e) => write!(f,"{}",e),
+            ApplicationError::ModelLoadError(ref e) => write!(f,"{}",e),
             ApplicationError::TrainingError(ref e) => write!(f,"{}",e),
             ApplicationError::EvaluateError(ref e) => write!(f,"{}",e),
             ApplicationError::DeviceError(ref e) => write!(f,"{}",e),
@@ -99,7 +99,7 @@ impl error::Error for ApplicationError {
             ApplicationError::InvalidStateError(_) => "Invalid state.",
             ApplicationError::LearningError(_) => "An error occurred while learning the neural network.",
             ApplicationError::SerdeError(_) => "An error occurred during serialization or deserialization.",
-            ApplicationError::ConfigReadError(_) => "An error occurred while loading the neural network model.",
+            ApplicationError::ModelLoadError(_) => "An error occurred while loading the neural network model.",
             ApplicationError::InvalidSettingError(_) => "Invalid setting.",
             ApplicationError::TrainingError(_) => "An error occurred while training the model.",
             ApplicationError::EvaluateError(_) => "An error occurred when running the neural network.",
@@ -137,7 +137,7 @@ impl error::Error for ApplicationError {
             ApplicationError::InvalidStateError(_) => None,
             ApplicationError::LearningError(_) => None,
             ApplicationError::SerdeError(ref e) => Some(e),
-            ApplicationError::ConfigReadError(ref e) => Some(e),
+            ApplicationError::ModelLoadError(ref e) => Some(e),
             ApplicationError::InvalidSettingError(_) => None,
             ApplicationError::TrainingError(ref e) => Some(e),
             ApplicationError::EvaluateError(ref e) => Some(e),
@@ -202,9 +202,9 @@ impl From<toml::ser::Error> for ApplicationError {
         ApplicationError::SerdeError(err)
     }
 }
-impl From<ConfigReadError> for ApplicationError {
-    fn from(err: ConfigReadError) -> ApplicationError {
-        ApplicationError::ConfigReadError(err)
+impl From<ModelLoadError> for ApplicationError {
+    fn from(err: ModelLoadError) -> ApplicationError {
+        ApplicationError::ModelLoadError(err)
     }
 }
 impl From<TrainingError> for ApplicationError {

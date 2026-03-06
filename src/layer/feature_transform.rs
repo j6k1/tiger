@@ -7,7 +7,7 @@ use nncombinator::{Cons, Stack};
 use nncombinator::cuda::{CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, ReadMemory, WriteMemory};
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::device::{Device, DeviceAllocator, DeviceBatchAveraging, DeviceCpu, DeviceGpu};
-use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ConfigReadError, PersistenceError};
+use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
 use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
@@ -99,7 +99,7 @@ impl<T,U,P,I,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear> for Featu
           U: UnitValue<U>,
           I: Debug + Send + Sync,
           OP: Optimizer<U,DeviceCpu<U>> + 'static {
-    fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
+    fn load(&mut self, persistence: &mut T) -> Result<(),ModelLoadError> {
         self.parent.load(persistence)?;
 
         for b in self.bias.iter_mut() {
@@ -143,7 +143,7 @@ impl<T,U,P,I,A,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear>
           A: CudaAllocator,
           OP: Optimizer<U,DeviceGpu<U,A>> + 'static,
           CudaPtr<U,A>: ReadMemory<U> + WriteMemory<U> {
-    fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> {
+    fn load(&mut self, persistence: &mut T) -> Result<(),ModelLoadError> {
         self.parent.load(persistence)?;
 
         let mut bias = Arr::<U,NO>::new();

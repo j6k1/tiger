@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device};
-use nncombinator::error::{ConfigReadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
+use nncombinator::error::{ModelLoadError, EvaluateError, LayerInstantiationError, PersistenceError, TrainingError};
 use nncombinator::layer::{Backward, BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, ContinueForward, Forward, ForwardAll, ForwardDiff, Loss, OnStep, PartialForward, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
 use nncombinator::ope::UnitValue;
@@ -46,8 +46,8 @@ impl<U,P,D,I,PI,const N:usize> Persistence<U,TextFilePersistence<U>,Specialized>
           D: Device<U>,
           I: Debug + Send + Sync,
           PI: Debug,
-          ConfigReadError: From<<U as FromStr>::Err> {
-    fn load(&mut self, persistence: &mut TextFilePersistence<U>) -> Result<(),ConfigReadError> {
+          ModelLoadError: From<<U as FromStr>::Err> {
+    fn load(&mut self, persistence: &mut TextFilePersistence<U>) -> Result<(),ModelLoadError> {
         self.parent.load(persistence)
     }
 
@@ -63,7 +63,7 @@ impl<T,U,P,D,I,PI,const N:usize> Persistence<U,T,Linear> for AccumulatorLayer<U,
           D: Device<U>,
           I: Debug + Send + Sync,
           PI: Debug {
-    fn load(&mut self, persistence: &mut T) -> Result<(),ConfigReadError> { self.parent.load(persistence) }
+    fn load(&mut self, persistence: &mut T) -> Result<(),ModelLoadError> { self.parent.load(persistence) }
     fn save(&mut self, persistence: &mut T) -> Result<(),PersistenceError> { self.parent.save(persistence) }
 }
 
