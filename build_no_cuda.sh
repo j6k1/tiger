@@ -1,1 +1,1 @@
-RUSTFLAGS="-C target-cpu=native" cargo build --release build.sh
+RUSTFLAGS="-C target-cpu=native" cargo build --release --no-default-features
