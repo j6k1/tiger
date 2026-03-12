@@ -1832,26 +1832,20 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
          */
 
-        /*
         if gs.depth >= 1 && gs.depth <= 3 &&
-            !Rule::in_check(gs.teban,&gs.state) &&
-            !Rule::in_check(gs.teban.opposite(),&gs.state) &&
-            gs.m.map(|m| {
-                m.obtained().is_none() && !m.is_nari()
-            }).unwrap_or(true) {
+            !Rule::in_check(gs.teban,&gs.state) {
             let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
 
-            let boundary = Score::Value(static_eval + FU_SCORE * (gs.depth as i32 + 1));
-
             // Futility Pruning
-            if gs.depth <= 2 && boundary <= gs.alpha {
+            if gs.depth <= 2 && Score::Value(static_eval + FU_SCORE * (2 * gs.depth as i32 + 3)) <= gs.alpha {
                 let mut mvs = VecDeque::new();
 
                 prev_move.map(|m| mvs.push_front(m));
 
-                return Ok(EvaluationResult::Immediate(Score::MAYBENEGINFINITE, mvs, gs.zh.clone()));
+                return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone()));
             // Razoring
-            } else if gs.depth >= 2 && boundary <= gs.alpha {
+            } else if gs.depth >= 2 && gs.depth <= 3 &&
+                Score::Value(static_eval + FU_SCORE * (3 * gs.depth as i32 + 5)) <= gs.alpha {
                 let s = self.qsearch(gs.teban,
                                      &gs.state,
                                      &gs.mc,
@@ -1879,7 +1873,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             }
         }
-        */
+
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
                                        &gs.state,
