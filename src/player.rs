@@ -21,8 +21,8 @@ use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, T
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Score, Search, TURN_LIMIT, TIMELIMIT_MARGIN};
-use crate::transposition_table::{TT, ZobristHash};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN};
+use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {
     fn from_option(option:SysEventOption) -> Option<Self> where Self: Sized;

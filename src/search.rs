@@ -30,92 +30,11 @@ use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactScoreBound};
+use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactScoreBound, Score};
 
-pub const TURN_LIMIT:u32 = 10000;
-pub const BASE_DEPTH:u32 = 14;
-pub const MAX_DEPTH:u32 = 14;
-pub const MAX_THREADS:u32 = 8;
-pub const QUIET_SEE_FACTOR:i64 = 128;
-
-const DEPTH_LIMIT: u32 = 64;
-const MAX_MOVES: usize = 64;
-
-fn generate_lmr_table() -> [[u8; MAX_MOVES]; DEPTH_LIMIT as usize] {
-    let mut table = [[0; MAX_MOVES]; DEPTH_LIMIT as usize];
-
-    for depth in 1..DEPTH_LIMIT {
-        for mv in 1..MAX_MOVES {
-            let base = (2809. / 128.) * (mv as f32).ln();
-            let scaled = base * (depth as f32 / DEPTH_LIMIT as f32);
-            let r = (scaled / 10.).floor() as i32;
-            let r = r.clamp(0,4) as u8;
-
-            table[depth as usize][mv] = r;
-        }
-    }
-
-    table
-}
-
-static LMR_TABLE: LazyLock<[[u8; MAX_MOVES]; DEPTH_LIMIT as usize]> = LazyLock::new(|| generate_lmr_table());
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum Score {
-    NEGINFINITE,
-    MAYBENEGINFINITE,
-    Value(i32),
-    MAYBEINFINITE,
-    INFINITE,
-}
-impl Neg for Score {
-    type Output = Score;
-
-    fn neg(self) -> Score {
-        match self {
-            Score::Value(v) => Score::Value(-v),
-            Score::INFINITE => Score::NEGINFINITE,
-            Score::NEGINFINITE => Score::INFINITE,
-            Score::MAYBEINFINITE => Score::MAYBENEGINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBEINFINITE,
-        }
-    }
-}
-impl Add<i32> for Score {
-    type Output = Self;
-
-    fn add(self, other:i32) -> Self::Output {
-        match self {
-            Score::Value(v) => Score::Value(v + other),
-            Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE,
-            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
-        }
-    }
-}
-impl Sub<i32> for Score {
-    type Output = Self;
-
-    fn sub(self, other:i32) -> Self::Output {
-        match self {
-            Score::Value(v) => Score::Value(v - other),
-            Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE,
-            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
-        }
-    }
-}
-impl Default for Score {
-    fn default() -> Self {
-        Score::NEGINFINITE
-    }
-}
-impl ExactScoreBound for Score {
-    fn exact_score_bound(&self) -> bool {
-        *self == Score::INFINITE
-    }
-}
+pub const TURN_LIMIT:u32 = 1000;
+pub const BASE_DEPTH:u32 = 20;
+pub const MAX_THREADS:u32 = 2;
 pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub event_queue:Arc<Mutex<UserEventQueue>>,
     pub info_sender:S,

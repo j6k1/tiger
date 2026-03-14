@@ -46,6 +46,64 @@ impl ToBucketIndex for u8 {
         self as usize
     }
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Score {
+    NEGINFINITE,
+    MAYBENEGINFINITE,
+    Value(i32),
+    MAYBEINFINITE,
+    INFINITE,
+}
+impl Neg for Score {
+    type Output = Score;
+
+    fn neg(self) -> Score {
+        match self {
+            Score::Value(v) => Score::Value(-v),
+            Score::INFINITE => Score::NEGINFINITE,
+            Score::NEGINFINITE => Score::INFINITE,
+            Score::MAYBEINFINITE => Score::MAYBENEGINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBEINFINITE,
+        }
+    }
+}
+impl Add<i32> for Score {
+    type Output = Self;
+
+    fn add(self, other:i32) -> Self::Output {
+        match self {
+            Score::Value(v) => Score::Value(v + other),
+            Score::INFINITE => Score::INFINITE,
+            Score::NEGINFINITE => Score::NEGINFINITE,
+            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
+        }
+    }
+}
+impl Sub<i32> for Score {
+    type Output = Self;
+
+    fn sub(self, other:i32) -> Self::Output {
+        match self {
+            Score::Value(v) => Score::Value(v - other),
+            Score::INFINITE => Score::INFINITE,
+            Score::NEGINFINITE => Score::NEGINFINITE,
+            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
+            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
+        }
+    }
+}
+impl Default for Score {
+    fn default() -> Self {
+        Score::NEGINFINITE
+    }
+}
+impl ExactScoreBound for Score {
+    fn exact_score_bound(&self) -> bool {
+        *self == Score::INFINITE
+    }
+}
 #[derive(Debug,Clone)]
 pub struct ZobristHash<T>
     where T: Add + Sub + BitXor<Output = T> + Copy + InitialHash,
