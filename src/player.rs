@@ -21,7 +21,7 @@ use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, T
 use crate::error::ApplicationError;
 use crate::features::HalfKP;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, NODES_PER_LEAF_NODE, Root, Score, Search, TURN_LIMIT, GAMMA, TIMELIMIT_MARGIN};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Score, Search, TURN_LIMIT, TIMELIMIT_MARGIN};
 use crate::transposition_table::{TT, ZobristHash};
 
 pub trait FromOption {
@@ -104,8 +104,6 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     base_depth:u32,
     max_nodes:Option<u64>,
     max_threads:u32,
-    nodes_per_leaf_node:u16,
-    gamma:u8,
     turn_limit:Option<u32>,
     timelimit_margin:u64,
     model_name:String
@@ -132,8 +130,6 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             base_depth:BASE_DEPTH,
             max_nodes:None,
             max_threads:MAX_THREADS,
-            nodes_per_leaf_node:NODES_PER_LEAF_NODE,
-            gamma:GAMMA,
             turn_limit:None,
             timelimit_margin:TIMELIMIT_MARGIN,
             model_name: String::from("nn.bin")
@@ -210,6 +206,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     best_score: Score::NEGINFINITE,
                     m:None,
                     prev_kind: KomaKind::Blank,
+                    thread_index:0,
                     pv:&VecDeque::new(),
                     move_history:&mut Vec::new(),
                     mc: &Arc::new(mc.clone()),
@@ -263,16 +260,16 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
 
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_)) => {
+                    Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_,_)) => {
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_)) if mvs.len() == 0 => {
+                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) if mvs.len() == 0 => {
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_)) if mvs.len() >= 2 => {
+                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) if mvs.len() >= 2 => {
                         BestMove::Move(mvs[0].to_move(),Some(mvs[1].to_move()))
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_)) => {
+                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) => {
                         BestMove::Move(mvs[0].to_move(),None)
                     }
                 };
@@ -301,8 +298,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         kinds.insert(String::from("MaxNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
-        kinds.insert(String::from("NodesPerLeafNodes"),SysEventOptionKind::Num);
-        kinds.insert(String::from("gamma"),SysEventOptionKind::Num);
         kinds.insert(String::from("ModelFile"),SysEventOptionKind::Str);
 
         Ok(kinds)
@@ -339,8 +334,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
         options.insert(String::from("TIMELIMIT_MARGIN"),UsiOptType::Spin(0,60000,Some(TIMELIMIT_MARGIN as i64)));
-        options.insert(String::from("NodesPerLeafNodes"), UsiOptType::Spin(1,593,Some(NODES_PER_LEAF_NODE as i64)));
-        options.insert(String::from("gamma"), UsiOptType::Spin(1,500,Some(GAMMA as i64)));
         options.insert(String::from("ModelFile"),UsiOptType::Combo(Some(String::from("nn.bin")),paths));
 
         Ok(options)
@@ -380,12 +373,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
             },
             "TIMELIMIT_MARGIN" => {
                 self.timelimit_margin = u64::from_option(value).unwrap_or(TIMELIMIT_MARGIN);
-            },
-            "NodesPerLeafNodes" => {
-                self.nodes_per_leaf_node = u16::from_option(value).unwrap_or(NODES_PER_LEAF_NODE);
-            },
-            "gamma" => {
-                self.gamma = u8::from_option(value).unwrap_or(GAMMA);
             },
             "ModelFile" => {
                 self.model_name = String::from_option(value).unwrap_or(String::from("nn.bin"));
@@ -486,8 +473,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.base_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
-                self.nodes_per_leaf_node,
-                self.gamma,
                 HashSet::new(),
                 &transposition_table
             );
@@ -529,8 +514,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.base_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
-                self.nodes_per_leaf_node,
-                self.gamma,
                 HashSet::new(),
                 &transposition_table
             );

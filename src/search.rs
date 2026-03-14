@@ -36,8 +36,6 @@ pub const TURN_LIMIT:u32 = 10000;
 pub const BASE_DEPTH:u32 = 14;
 pub const MAX_DEPTH:u32 = 14;
 pub const MAX_THREADS:u32 = 8;
-pub const NODES_PER_LEAF_NODE:u16 = 5;
-pub const GAMMA:u8 = 100;
 pub const QUIET_SEE_FACTOR:i64 = 128;
 
 const DEPTH_LIMIT: u32 = 64;
@@ -132,8 +130,6 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub base_depth:u32,
     pub max_nodes:Option<u64>,
     pub max_threads:u32,
-    pub nodes_per_leaf_node:u16,
-    pub gamma:u8,
     pub abort:Arc<AtomicBool>,
     pub stop:Arc<AtomicBool>,
     pub quited:Arc<AtomicBool>,
@@ -158,8 +154,6 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:self.base_depth,
             max_nodes:self.max_nodes.clone(),
             max_threads:self.max_threads,
-            nodes_per_leaf_node:self.nodes_per_leaf_node,
-            gamma:self.gamma,
             abort:Arc::clone(&self.abort),
             stop:Arc::clone(&self.stop),
             quited:Arc::clone(&self.quited),
@@ -172,7 +166,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
 }
 #[derive(Debug,Clone)]
 pub enum EvaluationResult {
-    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>),
+    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>,u32),
     NodeLimits,
     Timeout,
     Stop,
@@ -180,11 +174,12 @@ pub enum EvaluationResult {
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
-    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, usize, MoveOrderer<UnusedQuietSee>),
+    Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, u32, usize),
     NodeLimits,
     Timeout,
     Stop,
-    Repetition
+    Repetition,
+    Quit
 }
 impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
     pub fn new(event_queue:Arc<Mutex<UserEventQueue>>,
@@ -200,8 +195,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                base_depth:u32,
                max_nodes:Option<u64>,
                max_threads:u32,
-               nodes_per_leaf_node:u16,
-               gamma:u8,
                history:HashSet<(Teban,u64,u64)>,
                transposition_table: &Arc<TT<u64,Score,{1 << 20},4>>
     ) -> Environment<L,S> {
@@ -223,8 +216,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             base_depth:base_depth,
             max_nodes:max_nodes,
             max_threads:max_threads,
-            nodes_per_leaf_node:nodes_per_leaf_node,
-            gamma:gamma,
             abort:abort,
             stop:stop,
             quited:quited,
@@ -246,6 +237,7 @@ pub struct GameState<'a> {
     pub m:Option<LegalMove>,
     pub prev_kind:KomaKind,
     pub move_history:&'a mut Vec<Option<(u8,u8)>>,
+    pub thread_index:usize,
     pub pv:&'a VecDeque<LegalMove>,
     pub mc:&'a Arc<MochigomaCollections>,
     pub zh:ZobristHash<u64>,
@@ -734,7 +726,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         } else {
             let r = ((depth as f32).ln() * (*index as f32).ln() / 2.4).floor() as i32;
             let r = r.clamp(0, depth as i32 - 1) as u32;
-            //let r = LMR_TABLE[depth as usize][(*index).min(63)];
 
             let h = env.move_orderer.look_up_history(teban,state,m)?;
 
@@ -1013,10 +1004,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         }
 
         commands.push(UsiInfoSubCommand::Depth(depth));
-
-        if depth < seldepth {
-            commands.push(UsiInfoSubCommand::SelDepth(seldepth));
-        }
+        commands.push(UsiInfoSubCommand::SelDepth(seldepth));
 
         if pv.len() > 0 {
             commands.push(UsiInfoSubCommand::CurrMove(pv[0].to_move()));
@@ -1128,35 +1116,36 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
     }
 
     fn start_thread<'a,'b>(&self,
-                           pending_results:Arc<AtomicUsize>,
+                           thread_index:usize,
+                           shared_depth:&Arc<AtomicUsize>,
                            env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                            mvs: Arc<Vec<LegalMove>>,
-                           search_offset:usize,
-                           pv:VecDeque<LegalMove>,
-                           //prev_score:Score,
-                           evalutor: &Arc<Evalutor<M>>,move_orderer: MoveOrderer<UnusedQuietSee>) {
+                           evalutor:&Arc<Evalutor<M>>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
         let state = Arc::clone(&gs.state);
         let mut env = env.clone();
-        let mut move_orderer = move_orderer;
-        move_orderer.on_start_search(gs.depth);
-        env.move_orderer = move_orderer;
 
         let evalutor = Arc::clone(&evalutor);
         let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
-        let depth = gs.depth;
         let current_depth = 0;
-        let current_max_ply = gs.current_max_ply;
         let base_depth = gs.base_depth;
         let extend_depth = gs.extend_depth;
-        let best_score = gs.best_score;
+        let mut current_max_ply = gs.current_max_ply;
 
-        self.thread_pool.spawn(move || {
-            let mut rng = rand::thread_rng();
+        let mut best_score = Score::NEGINFINITE;
 
-            let r = /*if let Score::Value(prev_score) = prev_score {
+        let shared_depth = Arc::clone(shared_depth);
+
+        if thread_index == 0 {
+            self.thread_pool.spawn(move || {
+                let mut pv = VecDeque::new();
+                let mut rng = rand::thread_rng();
+                let search_offset = 0;
+
+                for depth in 1..=base_depth {
+                    let r = /*if let Score::Value(prev_score) = prev_score {
                 let delta = Self::compute_aspiration_window_delta(depth);
 
                 let mut alpha = Score::Value(prev_score - delta);
@@ -1207,73 +1196,173 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
                 r
             } else */{
-                let mut gs = GameState {
-                    teban: teban,
-                    state: &state,
-                    alpha: Score::NEGINFINITE,
-                    beta: Score::INFINITE,
-                    search_offset: search_offset,
-                    best_score: best_score,
-                    m: None,
-                    prev_kind: KomaKind::Blank,
-                    move_history: &mut Vec::new(),
-                    pv:&pv,
-                    mc: &mc,
-                    zh: zh,
-                    prev_self_ss: None,
-                    prev_opponent_ss: None,
-                    depth: depth,
-                    current_depth: current_depth,
-                    current_max_ply: current_max_ply,
-                    base_depth: base_depth,
-                    extend_depth: extend_depth,
-                    extend_check: 1,
-                    extend_threatmate: 1,
-                    rng:&mut rng
-                };
+                        let mut gs = GameState {
+                            teban: teban,
+                            state: &state,
+                            alpha: Score::NEGINFINITE,
+                            beta: Score::INFINITE,
+                            search_offset: search_offset,
+                            best_score: best_score,
+                            m: None,
+                            prev_kind: KomaKind::Blank,
+                            move_history: &mut Vec::new(),
+                            thread_index:thread_index,
+                            pv:&pv,
+                            mc: &mc,
+                            zh: zh.clone(),
+                            prev_self_ss: None,
+                            prev_opponent_ss: None,
+                            depth: depth,
+                            current_depth: current_depth,
+                            current_max_ply: current_max_ply,
+                            base_depth: base_depth,
+                            extend_depth: extend_depth,
+                            extend_check: 1,
+                            extend_threatmate: 1,
+                            rng:&mut rng
+                        };
 
-                let strategy = Inter::new();
+                        let strategy = Inter::new();
 
-                strategy.search(&mut env, &mut gs, &evalutor, &mvs)
-            };
+                        strategy.search(&mut env, &mut gs, &evalutor, &mvs)
+                    };
 
-            pending_results.fetch_add(1, atomic::Ordering::SeqCst);
+                    match r {
+                        Ok(EvaluationResult::Immediate(score,mvs,zh, seldepth)) => {
+                            pv = mvs.clone();
 
-            match r {
-                Ok(EvaluationResult::Immediate(score,mvs,zh)) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,search_offset,env.move_orderer)));
-                },
-                Ok(EvaluationResult::NodeLimits) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
-                },
-                Ok(EvaluationResult::Timeout) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Timeout));
-                },
-                Ok(EvaluationResult::Repetition) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Repetition));
-                },
-                Ok(EvaluationResult::Stop) => {
-                    let _ = sender.send(Ok(RootEvaluationResult::Stop));
-                },
-                Err(e) => {
-                    let _ = sender.send(Err(e));
+                            if score > best_score {
+                                best_score = score;
+                            }
+
+                            let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,seldepth,thread_index)));
+                        },
+                        Ok(EvaluationResult::NodeLimits) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
+                            break;
+                        },
+                        Ok(EvaluationResult::Timeout) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Timeout));
+                            break;
+                        },
+                        Ok(EvaluationResult::Repetition) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Repetition));
+                            break;
+                        },
+                        Ok(EvaluationResult::Stop) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                            break;
+                        },
+                        Err(e) => {
+                            let _ = sender.send(Err(e));
+                            break;
+                        }
+                    }
+
+                    if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+                        break;
+                    }
+
+                    shared_depth.fetch_add(1, Ordering::Release);
                 }
-            }
-        });
+
+                let _ = sender.send(Ok(RootEvaluationResult::Quit));
+
+                env.abort.store(true,Ordering::Release);
+            });
+        } else {
+            let pv = VecDeque::new();
+
+            self.thread_pool.spawn(move || {
+                let mut rng = rand::thread_rng();
+
+                while !env.abort.load(Ordering::Acquire) {
+                    let len = mvs.len();
+
+                    let search_offset = if len == 0 {
+                        0
+                    } else {
+                        (thread_index * 7 + (rng.gen::<usize>() % len)) % len
+                    };
+
+                    let depth = shared_depth.load(Ordering::Acquire) as u32;
+
+                    let mut gs = GameState {
+                        teban: teban,
+                        state: &state,
+                        alpha: Score::NEGINFINITE,
+                        beta: Score::INFINITE,
+                        search_offset: search_offset,
+                        best_score: best_score,
+                        m: None,
+                        prev_kind: KomaKind::Blank,
+                        move_history: &mut Vec::new(),
+                        thread_index:thread_index,
+                        pv:&pv,
+                        mc: &mc,
+                        zh: zh.clone(),
+                        prev_self_ss: None,
+                        prev_opponent_ss: None,
+                        depth: depth,
+                        current_depth: current_depth,
+                        current_max_ply: current_max_ply,
+                        base_depth: base_depth,
+                        extend_depth: extend_depth,
+                        extend_check: 1,
+                        extend_threatmate: 1,
+                        rng:&mut rng
+                    };
+
+                    let strategy = Inter::new();
+
+                    let r = strategy.search(&mut env, &mut gs, &evalutor, &mvs);
+
+                    match r {
+                        Ok(EvaluationResult::Immediate(score,mvs,zh, seldepth)) => {
+                            if score > best_score {
+                                best_score = score;
+                            }
+
+                            let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,seldepth,thread_index)));
+                        },
+                        Ok(EvaluationResult::NodeLimits) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
+                        },
+                        Ok(EvaluationResult::Timeout) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Timeout));
+                        },
+                        Ok(EvaluationResult::Repetition) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Repetition));
+                        },
+                        Ok(EvaluationResult::Stop) => {
+                            let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                        },
+                        Err(e) => {
+                            let _ = sender.send(Err(e));
+                        }
+                    }
+                }
+
+                let _ = sender.send(Ok(RootEvaluationResult::Quit));
+            });
+        }
     }
 
-    fn termination(&self,env:&mut Environment<L,S>,mut busy_threads:u32, pending_results:&Arc<AtomicUsize>) -> Result<(),ApplicationError> {
+    fn termination(&self,env:&mut Environment<L,S>,mut busy_threads:u32) -> Result<(),ApplicationError> {
         env.abort.store(true,Ordering::Release);
 
         let mut last_error = None;
 
         while busy_threads > 0 {
-            if let Err(e) = self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                last_error = Some(e);
+            match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
+                Err(e) => {
+                    last_error = Some(e);
+                },
+                Ok(RootEvaluationResult::Quit) => {
+                    busy_threads -= 1;
+                },
+                _ => ()
             }
-
-            busy_threads -= 1;
-            pending_results.fetch_sub(1, Ordering::SeqCst);
         }
 
         env.info_sender.flush()?;
@@ -1303,36 +1392,18 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError> {
         env.search_id.fetch_add(1, Ordering::Release);
 
-        let base_depth = gs.depth.min(env.base_depth);
-        let mut current_depth = 1;
+        let base_depth = gs.base_depth;
         let max_depth = base_depth as usize + 2;
-        let mut already_started = vec![false;max_depth+1];
-        let mut workings = vec![0;max_depth+1];
-        let pending_results = Arc::new(AtomicUsize::new(0));
-
-        let mut move_orderer_quque = VecDeque::<MoveOrderer<UnusedQuietSee>>::new();
-        let mut busy_threads = 0;
-        let mut remaining_threads = 0;
-        let mut last_depth = false;
-        let mut search_done_threads = vec![0;max_depth+1];
         let mut result = vec![None;max_depth+1];
         let mut decided_depth = 0;
-        let mut extend_depth = 0;
+        let shared_depth = Arc::new(AtomicUsize::new(1));
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
 
         let mut mvs = Vec::new();
-        let nodes_per_leaf_node = env.nodes_per_leaf_node as u128;
-        let mut search_space:u128 = mvs.len() as u128 / env.max_threads as u128;
-        let mut leafnodes_seacch_space:u128 = mvs.len() as u128;
-        let gamma = env.gamma;
-        let mut prev_score = Score::NEGINFINITE;
-
-        let mut evasions_count;
 
         if Rule::in_check(gs.teban,&gs.state) {
             Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
-            evasions_count = Some(picker.len());
             mvs = picker.collect::<Vec<LegalMove>>();
         } else {
             {
@@ -1346,189 +1417,87 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                 let mut v = (&mut picker).collect::<Vec<LegalMove>>();
                 mvs.append(&mut v);
             }
-
-            evasions_count = None;
         };
 
         let mvs = Arc::new(mvs);
 
         env.abort.store(false,Ordering::Release);
 
-        loop {
-            if busy_threads > 0 && (busy_threads == env.max_threads || remaining_threads > 0 || pending_results.load(Ordering::SeqCst) > 0) {
-                while pending_results.load(Ordering::Acquire) > 0 {
-                    match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
-                        Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth,search_offset, move_orderer)) => {
-                            busy_threads -= 1;
-                            workings[depth as usize] -= 1;
-                            search_done_threads[depth as usize] += 1;
+        for i in 0..env.max_threads {
+            let mvs = Arc::clone(&mvs);
 
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
+            self.start_thread(i as usize,
+                              &shared_depth,
+                              env,gs,mvs,
+                              evalutor);
 
-                            if let Err(e) = env.info_sender.flush() {
-                                let _ = env.on_error_handler.lock().map(|h| h.call(&e));
-                            }
+        }
 
-                            match result[depth as usize] {
-                                Some(EvaluationResult::Immediate(bs, _, _)) if (depth > decided_depth && s >= bs)
-                                    || search_offset == 0 => {
+        let mut busy_threads = env.max_threads;
 
-                                    if search_offset == 0 {
-                                        prev_score = s;
-                                    }
-
-                                    result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
-                                },
-                                None => {
-                                    result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh));
-                                },
-                                _ => ()
-                            }
-
-                            // If you're examining the root node with search_offset=0,
-                            // you should have already exhausted all legal moves at this depth.
-                            // Therefore, once the result of exploring nodes up to max_depth is returned,
-                            // it can be considered finalized.
-                            if search_offset == 0 && depth == base_depth {
-                                decided_depth = depth;
-
-                                self.termination(env, busy_threads, &pending_results)?;
-
-                                return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
-                            // When search_offset=0,
-                            // all legal moves at the root node should have been examined at this search depth,
-                            // so it is considered searched.
-                            } else if search_offset == 0 {
-                                extend_depth = 2;
-
-                                if depth > decided_depth {
-                                    decided_depth = depth;
-                                }
-
-                                if depth >= current_depth {
-                                    while current_depth <= depth {
-                                        current_depth += 1;
-
-                                        leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
-
-                                        search_space = search_space + leafnodes_seacch_space;
-                                        search_space = search_space * gamma as u128 / 100;
-                                    }
-                                }
-                            }
-
-                            move_orderer_quque.push_back(move_orderer);
-
-                            self.send_message(env, format!("search_id = {}, decided_depth = {}, {}",
-                                                           env.search_id.load(Ordering::Acquire), decided_depth, result[decided_depth as usize].is_some()
-                            ).as_str())?;
-                        },
-                        Ok(RootEvaluationResult::NodeLimits) => {
-                            busy_threads -= 1;
-
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
-
-                            self.termination(env, busy_threads, &pending_results)?;
-
-                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::NodeLimits));
-                        },
-                        Ok(RootEvaluationResult::Timeout) => {
-                            busy_threads -= 1;
-
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
-
-                            self.termination(env, busy_threads, &pending_results)?;
-
-                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
-                        },
-                        Ok(RootEvaluationResult::Stop) => {
-                            busy_threads -= 1;
-
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
-
-                            self.termination(env, busy_threads, &pending_results)?;
-
-                            return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Stop));
-                        },
-                        Ok(RootEvaluationResult::Repetition) => {
-                            busy_threads -= 1;
-
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
-
-                            self.termination(env, busy_threads, &pending_results)?;
-
-                            return Err(ApplicationError::LogicError(String::from(
-                                "A Repetition was returned at the root node."
-                            )));
-                        },
-                        Err(e) => {
-                            busy_threads -= 1;
-
-                            pending_results.fetch_sub(1, Ordering::SeqCst);
-
-                            self.termination(env, busy_threads, &pending_results)?;
-
-                            return Err(e);
-                        }
+        while busy_threads > 0 {
+            match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
+                Ok(RootEvaluationResult::Immediate(s, mvs, zh, depth, seldepth, thread_index)) => {
+                    if let Err(e) = env.info_sender.flush() {
+                        let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                     }
-                }
-            } else if busy_threads == 0 && (remaining_threads > 0 || last_depth) {
-                return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
-            } else {
-                if env.nodes.load(Ordering::Acquire) as u128 >= search_space {
-                    current_depth += 1;
-                    leafnodes_seacch_space = leafnodes_seacch_space * nodes_per_leaf_node;
 
-                    search_space = search_space + leafnodes_seacch_space;
-                    search_space = search_space * gamma as u128 / 100;
-                }
+                    match result[depth as usize] {
+                        Some(EvaluationResult::Immediate(bs, _, _, _)) if thread_index == 0 => {
+                            result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                        },
+                        None => {
+                            result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                        },
+                        _ => ()
+                    }
 
-                gs.depth = current_depth;
-                gs.base_depth = current_depth;
-                gs.current_max_ply = current_depth as usize;
-                gs.extend_depth = extend_depth;
+                    if depth > decided_depth && thread_index == 0 {
+                        decided_depth = depth;
+                    }
 
-                if current_depth <= base_depth {
-                    let search_offset = if !already_started[current_depth as usize] {
-                        already_started[current_depth as usize] = true;
-                        0
-                    } else {
-                  gs.rng.gen::<usize>() % (mvs.len() / 4).max(1)
-                    };
+                    self.send_message(env, format!("search_id = {}, decided_depth = {}, {}",
+                                                   env.search_id.load(Ordering::Acquire), decided_depth, result[decided_depth as usize].is_some()
+                    ).as_str())?;
+                },
+                Ok(RootEvaluationResult::NodeLimits) => {
+                    self.termination(env, busy_threads)?;
 
-                    workings[current_depth as usize] += 1;
+                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::NodeLimits));
+                },
+                Ok(RootEvaluationResult::Timeout) => {
+                    self.termination(env, busy_threads)?;
 
-                    let mvs = Arc::clone(&mvs);
+                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
+                },
+                Ok(RootEvaluationResult::Stop) => {
+                    self.termination(env, busy_threads)?;
 
-                    let pending_results = Arc::clone(&pending_results);
+                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Stop));
+                },
+                Ok(RootEvaluationResult::Repetition) => {
+                    self.termination(env, busy_threads)?;
 
-                    let pv = if decided_depth == 0 || search_offset != 0 {
-                        VecDeque::new()
-                    } else if let Some(EvaluationResult::Immediate(_, ref mvs, _)) = result[decided_depth as usize].as_ref() {
-                        mvs.clone()
-                    } else {
-                        VecDeque::new()
-                    };
+                    return Err(ApplicationError::LogicError(String::from(
+                        "A Repetition was returned at the root node."
+                    )));
+                },
+                Ok(RootEvaluationResult::Quit) => {
+                    busy_threads -= 1;
+                },
+                Err(e) => {
+                    self.termination(env, busy_threads)?;
 
-                    self.start_thread(pending_results,
-                                      env,gs,mvs,
-                                      search_offset,
-                                      pv,
-                                      //prev_score,
-                                      evalutor,
-                                      move_orderer_quque
-                                          .pop_front()
-                                          .unwrap_or(MoveOrderer::new(max_depth)));
-
-                    busy_threads += 1;
-                }
-
-                if current_depth >= base_depth {
-                    remaining_threads = busy_threads;
-                    last_depth = true;
+                    return Err(e);
                 }
             }
         }
+
+        result[decided_depth.max(1) as usize].take().ok_or(
+            ApplicationError::LogicError(String::from(
+                "No search results"
+            ))
+        )
     }
 }
 pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
@@ -1621,6 +1590,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     best_score: gs.best_score,
                     m: Some(m),
                     prev_kind: prev_kind,
+                    thread_index:gs.thread_index,
                     pv:pv,
                     move_history: gs.move_history,
                     mc: &mc,
@@ -1671,6 +1641,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             best_score: gs.best_score,
             m: None,
             prev_kind: Blank,
+            thread_index:gs.thread_index,
             pv:&VecDeque::new(),
             move_history: gs.move_history,
             mc: &mc,
@@ -1758,7 +1729,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                     mvs.push_front(prev_move);
 
-                    return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone()));
+                    return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone(),gs.current_depth));
                 }
             }
         }
@@ -1773,7 +1744,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 mvs.push_front(m);
 
-                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone()));
+                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone(),gs.current_depth));
             }
         }
 
@@ -1842,7 +1813,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 prev_move.map(|m| mvs.push_front(m));
 
-                return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone()));
+                return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone(),gs.current_depth));
             // Razoring
             } else if gs.depth >= 2 && gs.depth <= 3 &&
                 Score::Value(static_eval + FU_SCORE * (3 * gs.depth as i32 + 5)) <= gs.alpha {
@@ -1868,7 +1839,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     if env.stop.load(Ordering::Acquire) {
                         return Ok(EvaluationResult::Stop);
                     } else {
-                        return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone()));
+                        return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone(),gs.current_depth));
                     }
                 }
             }
@@ -1896,7 +1867,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             if env.stop.load(Ordering::Acquire) {
                 return Ok(EvaluationResult::Stop);
             } else {
-                return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone()));
+                return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone(),gs.current_depth));
             }
         }
 
@@ -1957,6 +1928,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         let mut move_offset = 0;
 
         let mut quiet_index = 0;
+
+        let mut max_seldepth = gs.current_depth;
 
         for i in 0..count {
             if i == 0 && Rule::in_check(gs.teban,&gs.state) {
@@ -2027,7 +2000,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         prev_move.map(|m| mvs.push_front(m));
                         env.history.remove(&(gs.teban,mk,sk));
 
-                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone(),gs.current_depth));
                     }
 
                     let pv = if pv_move.map(|pm| pm == m).unwrap_or(false) {
@@ -2037,13 +2010,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     };
 
                     match self.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,event_dispatcher,evalutor)? {
-                        EvaluationResult::Immediate(s, mvs, _) => {
+                        EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
                             if r > 0 && s >= beta {
                                 r = 0;
                                 continue
                             }
+
+                            max_seldepth = max_seldepth.max(seldepth);
 
                             if s > scoreval {
                                 scoreval = s;
@@ -2084,7 +2059,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                                     prev_move.map(|m| best_moves.push_front(m));
 
-                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone(),max_seldepth));
                                 }
                             }
 
@@ -2144,7 +2119,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         prev_move.map(|m| best_moves.push_front(m));
 
-        Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()))
+        Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone(), max_seldepth))
     }
 }
 pub struct Inter<L,S,M> where L: Logger + Send + 'static,
@@ -2280,6 +2255,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         let mut quiet_index = 0;
 
+        let mut max_seldepth = 0;
+
         for i in 0..2 {
             for (j,(m,see)) in env.move_orderer.ordering(
                 mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, tt_move, pv_move, gs.prev_kind, gs.move_history
@@ -2335,7 +2312,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         mvs.push_front(m);
                         env.history.remove(&(gs.teban,mk,sk));
 
-                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone()));
+                        return Ok(EvaluationResult::Immediate(Score::INFINITE,mvs,gs.zh.clone(),gs.current_depth));
                     }
 
                     let pv = if pv_move.map(|pm| pm == m).unwrap_or(false) {
@@ -2345,7 +2322,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                     };
 
                     match recur.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,&mut event_dispatcher,evalutor)? {
-                        EvaluationResult::Immediate(s, mvs, _) => {
+                        EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
                             if r > 0 && s >= beta {
@@ -2353,14 +2330,15 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                 continue;
                             }
 
+                            max_seldepth = max_seldepth.max(seldepth);
+
                             if s > scoreval {
                                 scoreval = s;
 
                                 best_moves = mvs;
 
-                                if gs.search_offset == 0 {
-                                    assert_eq!(gs.search_offset,0);
-                                    recur.send_info(env, gs.base_depth, gs.current_depth, &best_moves, &scoreval)?;
+                                if gs.thread_index == 0 {
+                                    recur.send_info(env, gs.depth, max_seldepth, &best_moves, &scoreval)?;
                                 }
 
                                 if scoreval >= beta {
@@ -2386,7 +2364,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
                                     env.history.remove(&(gs.teban,mk,sk));
 
-                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()));
+                                    return Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone(),max_seldepth));
                                 }
                             }
 
@@ -2448,6 +2426,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         env.history.remove(&(gs.teban,mk,sk));
 
-        Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone()))
+        Ok(EvaluationResult::Immediate(scoreval, best_moves, gs.zh.clone(),max_seldepth))
     }
 }
