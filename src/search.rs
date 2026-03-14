@@ -1341,6 +1341,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             let _ = sender.send(Err(e));
                         }
                     }
+
+                    std::thread::yield_now();
                 }
 
                 let _ = sender.send(Ok(RootEvaluationResult::Quit));
