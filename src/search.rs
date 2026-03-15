@@ -1731,7 +1731,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
 
             // Futility Pruning
-            if gs.depth <= 2 && Score::Value(static_eval + FU_SCORE * (2 * gs.depth as i32 + 3)) <= gs.alpha {
+            if gs.depth <= 2 && Score::Value(static_eval + FU_SCORE as i16 * (2 * gs.depth as i16 + 3)) <= gs.alpha {
                 let mut mvs = VecDeque::new();
 
                 prev_move.map(|m| mvs.push_front(m));
@@ -1739,7 +1739,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone(),gs.current_depth));
             // Razoring
             } else if gs.depth >= 2 && gs.depth <= 3 &&
-                Score::Value(static_eval + FU_SCORE * (3 * gs.depth as i32 + 5)) <= gs.alpha {
+                Score::Value(static_eval + FU_SCORE as i16 * (3 * gs.depth as i16 + 5)) <= gs.alpha {
                 let s = self.qsearch(gs.teban,
                                      &gs.state,
                                      &gs.mc,

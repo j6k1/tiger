@@ -215,12 +215,12 @@ impl<M> Evalutor<M>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
              PreTrain<f32> + Send + Sync + 'static,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    pub fn evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
+    pub fn evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<i16,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
         let r = self.nn.forward_all(input)?;
 
-        Ok(((r[0] - 0.5) * 1200.) as i32)
+        Ok(((r[0] - 0.5) * 1200.) as i16)
     }
 
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {

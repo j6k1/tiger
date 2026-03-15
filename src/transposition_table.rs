@@ -11,7 +11,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Bound {
-    None,
+    None = 0,
     UpperBound,
     LowerBound,
     Exact,
@@ -52,7 +52,7 @@ impl ToBucketIndex for u8 {
 pub enum Score {
     NEGINFINITE,
     MAYBENEGINFINITE,
-    Value(i32),
+    Value(i16),
     MAYBEINFINITE,
     INFINITE,
 }
@@ -69,10 +69,10 @@ impl Neg for Score {
         }
     }
 }
-impl Add<i32> for Score {
+impl Add<i16> for Score {
     type Output = Self;
 
-    fn add(self, other:i32) -> Self::Output {
+    fn add(self, other:i16) -> Self::Output {
         match self {
             Score::Value(v) => Score::Value(v + other),
             Score::INFINITE => Score::INFINITE,
@@ -82,10 +82,10 @@ impl Add<i32> for Score {
         }
     }
 }
-impl Sub<i32> for Score {
+impl Sub<i16> for Score {
     type Output = Self;
 
-    fn sub(self, other:i32) -> Self::Output {
+    fn sub(self, other:i16) -> Self::Output {
         match self {
             Score::Value(v) => Score::Value(v - other),
             Score::INFINITE => Score::INFINITE,
@@ -209,12 +209,12 @@ impl TTEntry {
 
         payload >>= 16;
 
-        let score = match payload {
+        let score = match payload & 0x1ffff {
             0x10000 => Score::NEGINFINITE,
             0x10011 => Score::INFINITE,
             0x10010 => Score::MAYBEINFINITE,
             0x10001 => Score::MAYBENEGINFINITE,
-            v => Score::Value(v as i32)
+            v => Score::Value(v as u16 as i16)
         };
 
         payload >>= 17;
@@ -280,7 +280,7 @@ impl<const S:usize,const N:usize> TT<S,N> {
         self.generation.fetch_add(1, Ordering::Release);
     }
     pub fn pack(&self,teban:Teban,used:bool,depth:i8,generation:u16,score:Score,bound:Bound) -> u64 {
-        let teban = teban as u64;
+        let teban = if teban == Teban::Sente { 0 } else { 1 };
 
         let used:u64 = if used { 1 } else { 0 };
 
@@ -289,13 +289,15 @@ impl<const S:usize,const N:usize> TT<S,N> {
             Score::INFINITE => 0x10011,
             Score::MAYBEINFINITE => 0x10010,
             Score::MAYBENEGINFINITE => 0x10001,
-            Score::Value(v) => v as u64
+            Score::Value(v) => v as u16 as u64
         };
 
         let payload:u64 = teban |
             (used << 1) |
             ((depth as u8 as u64) << 2) |
-            ((generation as u64) << 10) | (score << 20) | ((bound as u8 as u64) << 37);
+            ((generation as u64) << 10) |
+            (score << 26) |
+            ((bound as u8 as u64) << 43);
 
         payload
     }
