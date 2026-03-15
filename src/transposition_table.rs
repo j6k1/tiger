@@ -412,6 +412,7 @@ impl<const S:usize,const N:usize> TT<S,N> {
                         if bucket.version.fetch_or(1, Ordering::SeqCst) & 1 == 0 {
                             bucket.payload.store(payload, Ordering::Release);
                             bucket.best_move.store(best_move, Ordering::Release);
+                            bucket.key.store(key, Ordering::Release);
                             bucket.version.fetch_add(1, Ordering::SeqCst);
                         }
 
