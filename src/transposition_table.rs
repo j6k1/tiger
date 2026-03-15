@@ -176,18 +176,10 @@ impl Default for TTPartialEntry {
 #[repr(C)]
 #[derive(Debug)]
 pub struct TTEntry {
-    /*
-    used:bool,
-    mhash:K,
-    shash:K,
-    teban:Teban,
-    entry:TTPartialEntry<T>
-     */
     key:AtomicU64,
     payload:AtomicU64,
     best_move:AtomicLegalMove,
-    version:AtomicU32,
-    reserved:AtomicU64
+    version:AtomicU32
 }
 impl TTEntry {
     pub fn unpack(&self) -> (Teban,bool,i8,u16,Score,Bound) {
@@ -236,8 +228,7 @@ impl Default for TTEntry {
             key:AtomicU64::new(0),
             payload:AtomicU64::new(0),
             best_move:AtomicLegalMove::default(),
-            version:AtomicU32::new(0),
-            reserved:AtomicU64::new(0)
+            version:AtomicU32::new(0)
         }
     }
 }

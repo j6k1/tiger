@@ -1636,23 +1636,25 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
         if let Some(prev_move) = gs.m.clone() {
-            let r = env.transposition_table.get(&gs.zh,gs.thread_index);
+            if gs.thread_index > 0 {
+                let r = env.transposition_table.get(&gs.zh,gs.thread_index);
 
-            if let Some(TTPartialEntry {
-                            depth: d,
-                            score: s,
-                            bound,
-                            best_move: _
-                        }) = r {
+                if let Some(TTPartialEntry {
+                                depth: d,
+                                score: s,
+                                bound,
+                                best_move: _
+                            }) = r {
 
-                if (bound == Bound::Exact && d as u32 >= gs.depth) ||
-                   (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= gs.beta) ||
-                   (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= gs.alpha) {
-                    let mut mvs = VecDeque::new();
+                    if (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                        (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= gs.beta) ||
+                        (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= gs.alpha) {
+                        let mut mvs = VecDeque::new();
 
-                    mvs.push_front(prev_move);
+                        mvs.push_front(prev_move);
 
-                    return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone(),gs.current_depth));
+                        return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone(),gs.current_depth));
+                    }
                 }
             }
         }
