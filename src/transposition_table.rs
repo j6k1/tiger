@@ -279,6 +279,7 @@ impl<const S:usize,const N:usize> TT<S,N> {
     pub fn generational_shift(&self) {
         self.generation.fetch_add(1, Ordering::Release);
     }
+
     pub fn pack(&self,teban:Teban,used:bool,depth:i8,generation:u16,score:Score,bound:Bound) -> u64 {
         let teban = if teban == Teban::Sente { 0 } else { 1 };
 
@@ -312,7 +313,6 @@ impl<const S:usize,const N:usize> TT<S,N> {
 
         let mut find_index = thread_index % N;
         let mut search_count = 0;
-        let mut found = false;
 
         match &self.buckets[index] {
             bucket => {
@@ -328,8 +328,6 @@ impl<const S:usize,const N:usize> TT<S,N> {
                             let (teban, used, depth, _, score, bound) = bucket.unpack();
 
                             if zh.teban == teban && used {
-                                found = true;
-
                                 let mv = bucket.best_move.load(Ordering::Acquire);
 
                                 if v == bucket.version.load(Ordering::Acquire) {
@@ -339,13 +337,42 @@ impl<const S:usize,const N:usize> TT<S,N> {
                                         bound: bound,
                                         best_move: mv,
                                     })
+                                } else {
+                                    return None;
                                 }
                             }
                         }
                     }
 
-                    if found {
-                        break;
+                    find_index += 1;;
+                    find_index = find_index % N;
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn maybe_best_move(&self, zh: &ZobristHash<u64>, thread_index: usize, lower_depth:u32) -> Option<LegalMove> {
+        let index = self.bucket_index(zh);
+        let key = self.pack_keys(zh.mhash, zh.shash);
+
+        let mut find_index = thread_index % N;
+        let mut search_count = 0;
+
+        match &self.buckets[index] {
+            bucket => {
+                while search_count < N {
+                    search_count += 1;
+
+                    let bucket = &bucket[find_index];
+
+                    if key == bucket.key.load(Ordering::Acquire) {
+                        let (teban, used, depth, _, _, _) = bucket.unpack();
+
+                        if zh.teban == teban && used && depth >= lower_depth as i8 {
+                            return bucket.best_move.load(Ordering::Acquire);
+                        }
                     }
 
                     find_index += 1;;

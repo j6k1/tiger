@@ -1825,20 +1825,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut quiet_moves = Vec::with_capacity(593);
 
-        let tt_move = if let Some(TTPartialEntry {
-                                  depth: d,
-                                  score: _,
-                                  bound: _,
-                                  best_move: m
-                              }) = env.transposition_table.get(&gs.zh,gs.thread_index) {
-            if d as u32 >= gs.depth.saturating_sub(2) {
-                m
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let tt_move = env.transposition_table.maybe_best_move(&gs.zh, gs.thread_index, gs.depth.saturating_sub(2));
 
         let pv_move = if gs.pv.len() > gs.current_depth as usize {
             Some(gs.pv[gs.current_depth as usize])
@@ -2139,20 +2126,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         env.history.insert((gs.teban,mk,sk));
 
-        let tt_move = if let Some(TTPartialEntry {
-                        depth: d,
-                        score: _,
-                        bound: _,
-                        best_move: m
-                    }) = env.transposition_table.get(&gs.zh,gs.thread_index) {
-            if d as u32 >= gs.depth.saturating_sub(2) {
-                m
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let tt_move = env.transposition_table.maybe_best_move(&gs.zh, gs.thread_index, gs.depth.saturating_sub(2));
 
         let pv_move = if gs.pv.len() > gs.current_depth as usize {
             Some(gs.pv[gs.current_depth as usize])
