@@ -99,7 +99,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     kyokumen:Option<Kyokumen>,
     zh:Option<ZobristHash<u64>>,
     hasher:Arc<KyokumenHash<u64>>,
-    transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
+    transposition_table:Arc<TT<{1<<20},4>>,
     search_id:Arc<AtomicUsize>,
     base_depth:u32,
     max_nodes:Option<u64>,

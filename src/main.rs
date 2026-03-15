@@ -1,7 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 #![feature(portable_simd)]
-
 extern crate libc;
 extern crate rand;
 extern crate rand_distr;

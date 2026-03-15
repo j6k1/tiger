@@ -1,10 +1,11 @@
 use std::mem;
 use std::num::Wrapping;
 use std::ops::{Add, BitXor, Deref, DerefMut, Index, IndexMut, Neg, Sub};
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 use rand::distributions::Standard;
 use rand::prelude::Distribution;
 use usiagent::hash::{InitialHash, KyokumenHash};
-use usiagent::rule::{LegalMove,AppliedMove};
+use usiagent::rule::{LegalMove, AppliedMove, AtomicLegalMove};
 use usiagent::shogi::{Banmen, Mochigoma, MochigomaCollections, MochigomaKind, Teban};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -156,209 +157,118 @@ impl<T> ZobristHash<T>
     }
 }
 #[derive(Debug,Clone)]
-pub struct TTPartialEntry<T> where T: Default + Neg<Output = T> {
+pub struct TTPartialEntry {
     pub depth:i8,
-    pub score:T,
-    pub beta:T,
-    pub alpha:T,
+    pub score:Score,
     pub bound:Bound,
     pub best_move:Option<LegalMove>
 }
-impl<T> Default for TTPartialEntry<T> where T: Default + Neg<Output = T> {
+impl Default for TTPartialEntry {
     fn default() -> Self {
         TTPartialEntry {
             depth:-1,
-            score:T::default(),
-            beta:-T::default(),
-            alpha:T::default(),
+            score:Score::default(),
             bound:Bound::None,
             best_move: None
         }
     }
 }
-#[derive(Debug,Clone)]
-pub struct TTEntry<T,K> where K: Eq, T: Default + Neg<Output = T> {
+#[repr(C)]
+#[derive(Debug)]
+pub struct TTEntry {
+    /*
     used:bool,
     mhash:K,
     shash:K,
     teban:Teban,
     entry:TTPartialEntry<T>
+     */
+    key:AtomicU64,
+    payload:AtomicU64,
+    best_move:AtomicLegalMove,
+    version:AtomicU32,
+    reserved:AtomicU64
 }
-impl<T,K> Default for TTEntry<T,K> where K: Eq + Default, T: Default + Neg<Output = T> {
+impl TTEntry {
+    pub fn unpack(&self) -> (Teban,bool,i8,u16,Score,Bound) {
+        let mut payload = self.payload.load(Ordering::Acquire);
+
+        let teban = if payload & 1 == 0 { Teban::Sente } else { Teban::Gote };
+
+        payload >>= 1;
+
+        let used = (payload & 1) == 1;
+
+        payload >>= 1;
+
+        let depth = (payload & 0xff) as u8 as i8;
+
+        payload >>= 8;
+
+        let generation = (payload & 0xffff) as u16;
+
+        payload >>= 16;
+
+        let score = match payload {
+            0x10000 => Score::NEGINFINITE,
+            0x10011 => Score::INFINITE,
+            0x10010 => Score::MAYBEINFINITE,
+            0x10001 => Score::MAYBENEGINFINITE,
+            v => Score::Value(v as i32)
+        };
+
+        payload >>= 17;
+
+        let bound = match payload {
+            0 => Bound::None,
+            1 => Bound::LowerBound,
+            2 => Bound::UpperBound,
+            3 => Bound::Exact,
+            _ => unreachable!()
+        };
+
+        (teban,used,depth,generation,score,bound)
+    }
+}
+impl Default for TTEntry {
     fn default() -> Self {
         TTEntry {
-            used:false,
-            mhash:K::default(),
-            shash:K::default(),
-            teban:Teban::Sente,
-            entry: TTPartialEntry::default()
+            key:AtomicU64::new(0),
+            payload:AtomicU64::new(0),
+            best_move:AtomicLegalMove::default(),
+            version:AtomicU32::new(0),
+            reserved:AtomicU64::new(0)
         }
-    }
-}
-pub struct ReadGuard<'a,T,K,const N:usize> where K: Eq, T: Default + Neg<Output = T> {
-    locked_bucket:RwLockReadGuard<'a, [TTEntry<T,K>;N]>,
-    index:usize
-}
-impl<'a,T,K,const N:usize> ReadGuard<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    fn new(locked_bucket:RwLockReadGuard<'a,[TTEntry<T,K>;N]>,index:usize) -> ReadGuard<'a,T,K,N> {
-        ReadGuard {
-            locked_bucket:locked_bucket,
-            index:index
-        }
-    }
-}
-impl<'a,T,K,const N:usize> Deref for ReadGuard<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    type Target = TTPartialEntry<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.locked_bucket.deref().index(self.index).entry
-    }
-}
-pub struct WriteGuard<'a,T,K,const N:usize> where K: Eq, T: Default + Neg<Output = T> {
-    locked_bucket:RwLockWriteGuard<'a, [TTEntry<T,K>;N]>,
-    index:usize
-}
-impl<'a,T,K,const N:usize> WriteGuard<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    fn new(locked_bucket:RwLockWriteGuard<'a,[TTEntry<T,K>;N]>,index:usize) -> WriteGuard<'a,T,K,N> {
-        WriteGuard {
-            locked_bucket:locked_bucket,
-            index:index
-        }
-    }
-
-    fn remove(&mut self) -> TTPartialEntry<T> {
-        let e = self.locked_bucket.deref_mut().index_mut(self.index);
-
-        e.used = false;
-
-        mem::replace(&mut e.entry,TTPartialEntry::default())
-    }
-
-    fn insert(&mut self,entry:TTEntry<T,K>) {
-        let e = self.locked_bucket.deref_mut().index_mut(self.index);
-
-        *e = entry
-    }
-}
-impl<'a,T,K,const N:usize> Deref for WriteGuard<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    type Target = TTPartialEntry<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.locked_bucket.deref().index(self.index).entry
-    }
-}
-
-impl<'a,T,K,const N:usize> DerefMut for WriteGuard<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.locked_bucket.deref_mut().index_mut(self.index).entry
-    }
-}
-pub struct OccupiedTTEntry<'a,T,K,const N:usize> where K: Eq, T: Default + Neg<Output = T> {
-    write_guard:WriteGuard<'a,T,K,N>
-}
-impl<'a,T,K,const N:usize> OccupiedTTEntry<'a,T,K,N> where K: Eq, T: Default + Neg<Output = T> {
-    fn new(write_guard:WriteGuard<'a,T,K,N>) -> OccupiedTTEntry<'a,T,K,N> {
-        OccupiedTTEntry {
-            write_guard:write_guard
-        }
-    }
-
-    pub fn get(&self) -> &TTPartialEntry<T> {
-        self.write_guard.deref()
-    }
-
-    pub fn get_mut(&mut self) -> &mut TTPartialEntry<T> {
-        self.write_guard.deref_mut()
-    }
-
-    pub fn remove(&mut self) -> TTPartialEntry<T> {
-        self.write_guard.remove()
-    }
-
-    pub fn insert(&mut self,entry:TTPartialEntry<T>) -> &mut TTPartialEntry<T> {
-        *self.write_guard.deref_mut() = entry;
-        self.write_guard.deref_mut()
-    }
-}
-pub struct VacantTTEntry<'a,T,K,const N:usize> where K: Eq + Copy, T: Default + Neg<Output = T> {
-    mhash:K,
-    shash:K,
-    teban:Teban,
-    write_guard:WriteGuard<'a,T,K,N>
-}
-impl<'a,T,K,const N:usize> VacantTTEntry<'a,T,K,N> where K: Eq + Copy, T: Default + Neg<Output = T> {
-    fn new(write_guard:WriteGuard<'a,T,K,N>,mhash:K,shash:K,teban:Teban) -> VacantTTEntry<'a,T,K,N> {
-        VacantTTEntry {
-            mhash:mhash,
-            shash:shash,
-            teban:teban,
-            write_guard:write_guard
-        }
-    }
-
-    pub fn insert(&mut self,entry:TTPartialEntry<T>) -> &mut TTPartialEntry<T> {
-        self.write_guard.insert(TTEntry {
-            used:true,
-            mhash:self.mhash,
-            shash:self.shash,
-            teban:self.teban,
-            entry:entry
-        });
-
-        self.write_guard.deref_mut()
-    }
-}
-pub enum Entry<'a,T,K,const N:usize> where K: Eq + Copy, T: Default + Neg<Output = T> {
-    OccupiedTTEntry(OccupiedTTEntry<'a,T,K,N>),
-    VacantTTEntry(VacantTTEntry<'a,T,K,N>)
-}
-impl<'a,T,K,const N:usize> Entry<'a,T,K,N> where K: Eq + Copy, T: Default + Neg<Output = T> {
-    pub fn or_insert(&mut self,entry:TTPartialEntry<T>) -> &mut TTPartialEntry<T> where K: Copy {
-        match self {
-            Entry::OccupiedTTEntry(ref mut e) => {
-                e.get_mut()
-            },
-            Entry::VacantTTEntry(ref mut e) => {
-                e.insert(entry)
-            }
-        }
-    }
-
-    pub fn or_default(&mut self) -> &mut TTPartialEntry<T> where K: Copy {
-        self.or_insert(TTPartialEntry::default())
     }
 }
 const fn support_fast_mod(v:usize) -> bool {
     v != 0 && v & (v - 1) == 0
 }
-pub struct TT<K,T,const S:usize,const N:usize>
-    where K: Eq + Default + Add + Sub + BitXor<Output = K> + Copy + InitialHash + ToBucketIndex,
-             Wrapping<K>: Add<Output = Wrapping<K>> + Sub<Output = Wrapping<K>> + BitXor<Output = Wrapping<K>> + Copy,
-             Standard: Distribution<K>,
-             [TTEntry<T,K>;N]: Default,
-             T: Default + Neg<Output = T> {
-    buckets:Vec<RwLock<[TTEntry<T,K>;N]>>
+pub struct TT<const S:usize,const N:usize> {
+    buckets:Vec<[TTEntry;N]>,
+    generation:AtomicU16,
 }
-impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
-    where K: Eq + Default + Add + Sub + BitXor<Output = K> + Copy + InitialHash + ToBucketIndex,
-             Wrapping<K>: Add<Output = Wrapping<K>> + Sub<Output = Wrapping<K>> + BitXor<Output = Wrapping<K>> + Copy,
-             Standard: Distribution<K>,
-             [TTEntry<T,K>;N]: Default,
-             T: Default + Neg<Output = T> + ExactScoreBound {
-    pub fn new() -> TT<K,T,S,N> {
+impl<const S:usize,const N:usize> TT<S,N> {
+    pub fn new() -> TT<S, N> {
         let mut buckets = Vec::with_capacity(S);
-        buckets.resize_with(S,RwLock::default);
+
+        buckets.resize_with(S, || {
+            (0..N).map(|_| TTEntry::default()).collect::<Vec<_>>().try_into().unwrap()
+        });
 
         TT {
-            buckets:buckets
+            buckets: buckets,
+            generation: AtomicU16::new(0),
         }
     }
 
     pub fn clear(&mut self) {
-        self.buckets.fill_with(RwLock::default);
+        self.buckets.fill_with(|| {
+            (0..N).map(|_| TTEntry::default()).collect::<Vec<_>>().try_into().unwrap()
+        });
     }
 
-    fn bucket_index(&self,zh:&ZobristHash<K>) -> usize {
+    fn bucket_index(&self, zh: &ZobristHash<u64>) -> usize {
         if support_fast_mod(S) {
             zh.mhash.to_bucket_index() & (S - 1)
         } else {
@@ -366,176 +276,153 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
         }
     }
 
-    pub fn get(&self,zh: &ZobristHash<K>) -> Option<ReadGuard<'_,T,K,N>> {
+    pub fn generational_shift(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+    pub fn pack(&self,teban:Teban,used:bool,depth:i8,generation:u16,score:Score,bound:Bound) -> u64 {
+        let teban = teban as u64;
+
+        let used:u64 = if used { 1 } else { 0 };
+
+        let score:u64 = match score {
+            Score::NEGINFINITE => 0x10000,
+            Score::INFINITE => 0x10011,
+            Score::MAYBEINFINITE => 0x10010,
+            Score::MAYBENEGINFINITE => 0x10001,
+            Score::Value(v) => v as u64
+        };
+
+        let payload:u64 = teban |
+            (used << 1) |
+            ((depth as u8 as u64) << 2) |
+            ((generation as u64) << 10) | (score << 20) | ((bound as u8 as u64) << 37);
+
+        payload
+    }
+
+    pub fn pack_keys(&self,mhash:u64,shash:u64) -> u64 {
+        mhash ^ shash.rotate_left(13)
+    }
+
+    pub fn get(&self, zh: &ZobristHash<u64>, thread_index: usize) -> Option<TTPartialEntry> {
         let index = self.bucket_index(zh);
+        let key = self.pack_keys(zh.mhash, zh.shash);
 
-        match self.buckets[index].read() {
+        let mut find_index = thread_index % N;
+        let mut search_count = 0;
+        let mut found = false;
+
+        match &self.buckets[index] {
             bucket => {
-                for i in 0..bucket.len() {
-                    if bucket[i].used && bucket[i].mhash == zh.mhash && bucket[i].shash == zh.shash && bucket[i].teban == zh.teban {
-                        let valid = bucket[i].entry.depth >= 0;
+                while search_count < N {
+                    search_count += 1;
 
-                        if valid {
-                            return Some(ReadGuard::new(bucket, i));
-                        } else {
-                            return None;
+                    let v = bucket[find_index].version.load(Ordering::Acquire);
+
+                    if v & 1 == 0 {
+                        let bucket = &bucket[find_index];
+
+                        if key == bucket.key.load(Ordering::Acquire) {
+                            let (teban, used, depth, _, score, bound) = bucket.unpack();
+
+                            if zh.teban == teban && used {
+                                found = true;
+
+                                let mv = bucket.best_move.load(Ordering::Acquire);
+
+                                if v == bucket.version.load(Ordering::Acquire) {
+                                    return Some(TTPartialEntry {
+                                        depth: depth,
+                                        score: score,
+                                        bound: bound,
+                                        best_move: mv,
+                                    })
+                                }
+                            }
                         }
                     }
-                }
 
-                None
+                    if found {
+                        break;
+                    }
+
+                    find_index += 1;;
+                    find_index = find_index % N;
+                }
             }
         }
+
+        None
     }
 
     pub fn update<'a>(&self,
-                      zh: &'a ZobristHash<K>,
+                      zh: &'a ZobristHash<u64>,
+                      thread_index: usize,
                       depth: i8,
-                      score: T,
-                      beta: T,
-                      alpha:T,
-                      bound:Bound,
+                      score: Score,
+                      bound: Bound,
                       best_move: Option<LegalMove>) {
-        let mut tte = self.entry(zh);
-        let tte = tte.or_default();
+        let payload = self.pack(zh.teban, true, depth, self.generation.load(Ordering::Acquire), score, bound);
+        let key = self.pack_keys(zh.mhash, zh.shash);
 
-        if score.exact_score_bound() || bound > tte.bound ||
-            (bound == tte.bound && depth >= tte.depth) {
-            tte.bound = bound;
-            tte.depth = depth;
-            tte.score = score;
-            tte.beta = beta;
-            tte.alpha = alpha;
-            tte.best_move = best_move;
-        }
-    }
-    #[allow(dead_code)]
-    fn get_mut(&self,zh: &ZobristHash<K>) -> Option<WriteGuard<'_,T,K,N>> {
         let index = self.bucket_index(zh);
 
-        match self.buckets[index].write() {
-            bucket => {
-                for i in 0..bucket.len() {
-                    if bucket[i].used && bucket[i].mhash == zh.mhash && bucket[i].shash == zh.shash && bucket[i].teban == zh.teban {
-                        let valid = bucket[i].entry.depth >= 0;
+        let mut find_index = thread_index % N;
+        let mut search_count = 0;
+        let mut priority = u32::MAX;
+        let mut primary_index = find_index;
 
-                        if valid {
-                            return Some(WriteGuard::new(bucket, i));
-                        } else {
-                            return None;
+        match &self.buckets[index] {
+            bucket => {
+                while search_count < N {
+                    search_count += 1;
+
+                    let bucket = &bucket[find_index];
+
+                    if key == bucket.key.load(Ordering::Acquire) {
+                        if bucket.version.fetch_or(1, Ordering::SeqCst) & 1 == 0 {
+                            bucket.payload.store(payload, Ordering::Release);
+                            bucket.best_move.store(best_move, Ordering::Release);
+                            bucket.version.fetch_add(1, Ordering::SeqCst);
+                        }
+
+                        return;
+                    }
+
+                    find_index += 1;
+                    find_index = find_index % N;
+
+                    let (_, used, depth, generation, _, _) = bucket.unpack();
+
+                    if !used {
+                        if bucket.version.fetch_or(1, Ordering::SeqCst) & 1 == 0 {
+                            bucket.payload.store(payload, Ordering::Release);
+                            bucket.best_move.store(best_move, Ordering::Release);
+                            bucket.key.store(key, Ordering::Release);
+                            bucket.version.fetch_add(1, Ordering::SeqCst);
+
+                            return;
                         }
                     }
-                }
 
-                None
-            }
-        }
-    }
+                    let pri = ((generation as u32) << 16) | depth.max(0) as u32;
 
-    #[allow(dead_code)]
-    fn insert(&self,zh: &ZobristHash<K>, entry:TTPartialEntry<T>) -> Option<TTPartialEntry<T>> {
-        let index = self.bucket_index(zh);
-
-        let tte = TTEntry {
-            used:true,
-            mhash:zh.mhash,
-            shash:zh.shash,
-            teban:zh.teban,
-            entry: entry
-        };
-
-        match self.buckets[index].write() {
-            mut bucket => {
-                for i in 0..bucket.len() {
-                    if bucket[i].used && bucket[i].mhash == zh.mhash && bucket[i].shash == zh.shash && bucket[i].teban == zh.teban {
-                        let tte = mem::replace(&mut bucket[i],tte);
-
-                        return Some(tte.entry);
-                    }
-                }
-
-                let mut index = 0;
-                let mut priority = i8::MAX;
-
-                for i in 0..bucket.len() {
-                    if !bucket[i].used {
-                        index = i;
-                        break;
-                    }
-
-                    let pri = bucket[i].entry.depth;
-
-                    if pri <= priority {
+                    if pri < priority {
                         priority = pri;
-                        index = i;
+                        primary_index = find_index;
                     }
                 }
 
-                let tte = mem::replace(&mut bucket[index],tte);
+                let bucket = &bucket[primary_index];
 
-                if tte.used {
-                    Some(tte.entry)
-                } else {
-                    None
+                if bucket.version.fetch_or(1, Ordering::SeqCst) & 1 == 0 {
+                    bucket.payload.store(payload, Ordering::Release);
+                    bucket.best_move.store(best_move, Ordering::Release);
+                    bucket.key.store(key, Ordering::Release);
+                    bucket.version.fetch_add(1, Ordering::SeqCst);
+
+                    return;
                 }
-            }
-        }
-    }
-    fn entry(&self,zh: &ZobristHash<K>) -> Entry<'_,T,K,N> {
-        let index = self.bucket_index(zh);
-
-        match self.buckets[index].write() {
-            bucket => {
-                for i in 0..bucket.len() {
-                    if bucket[i].used && bucket[i].mhash == zh.mhash && bucket[i].shash == zh.shash && bucket[i].teban == zh.teban {
-                        return Entry::OccupiedTTEntry(
-                            OccupiedTTEntry::new(WriteGuard::new(bucket, i))
-                        );
-                    }
-                }
-
-                let mut index = 0;
-                let mut priority = i8::MAX;
-
-                for i in 0..bucket.len() {
-                    if !bucket[i].used {
-                        index = i;
-                        break;
-                    }
-
-                    let pri = bucket[i].entry.depth;
-
-                    if pri <= priority {
-                        priority = pri;
-                        index = i;
-                    }
-                }
-
-                Entry::VacantTTEntry(
-                    VacantTTEntry::new(
-                        WriteGuard::new(bucket, index),
-                        zh.mhash,
-                        zh.shash,
-                        zh.teban
-                    )
-                )
-            }
-        }
-    }
-
-    pub fn contains_key(&self,zh:&ZobristHash<K>) -> bool where K: Eq {
-        let index = self.bucket_index(zh);
-
-        match self.buckets[index].read() {
-            bucket => {
-                for i in 0..bucket.len() {
-                    if bucket[i].used && bucket[i].mhash == zh.mhash && bucket[i].shash == zh.shash &&
-                        bucket[i].teban == zh.teban && bucket[i].entry.depth >= 0 {
-                        return true;
-                    }
-                }
-
-                return false;
             }
         }
     }
