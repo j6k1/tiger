@@ -392,7 +392,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 alpha = score;
             }
 
-            if self.timelimit_reached(env)? {
+            if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                self.timelimit_reached(env)? {
                 break;
             }
         }
@@ -515,6 +516,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 return Ok(Score::INFINITE);
             }
 
+            if mo == MoveOrder::Quiet {
+                continue;
+            }
+
             let o = match m {
                 LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
                 _ => None
@@ -579,14 +584,19 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 alpha = score;
             }
 
-            if self.timelimit_reached(env)? {
+            if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                self.timelimit_reached(env)? {
                 break;
             }
         }
 
         history.remove(&(teban,mk,sk));
 
-        Ok(bestscore)
+        if bestscore == Score::NEGINFINITE {
+            Ok(stand_pat)
+        } else {
+            Ok(bestscore)
+        }
     }
 
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
