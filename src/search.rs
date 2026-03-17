@@ -190,7 +190,7 @@ enum MoveOrder {
     Quiet,
     PawnPromotions,
     Captures,
-    ThreatPromotions,
+    ThreatMate,
     ThreatCaptures,
     Check
 }
@@ -243,8 +243,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if mvs.len() == 0 {
             return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
         }
-
-        let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
 
@@ -306,28 +304,12 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 _ => None
             };
 
-            let is_pawn_move = match m {
-                LegalMove::To(m) if teban == Teban::Sente => {
-                    state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
-                },
-                LegalMove::To(m) if teban == Teban::Gote => {
-                    state.get_part().sente_opponent_board & (1 << (m.src() + 1)) != 0
-                },
-                _ => false
-            };
-
-            let is_nari = match m {
-                LegalMove::To(m) => m.is_nari(),
-                _ => false
-            };
-
             let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) && (
-                    m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0)
-                );
+            let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) &&
+                    m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0);
 
             let extend_depth = if expand {
                 extend_depth - 1
@@ -364,22 +346,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               evalutor,
                               rng)?
             };
-            /*
 
-            let score = -self.qsearch(teban.opposite(),
-                                              &next,
-                                              &nmc,
-                                              env,
-                                              event_dispatcher,
-                                              &zh,
-                                              history,
-                                              -beta,
-                                              -alpha,
-                                              depth+1,
-                                              extend_depth,
-                                              evalutor,
-                                              rng)?;
-            */
             if score >= beta {
                 return Ok(score);
             }
@@ -452,29 +419,52 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         let mut mvs = (&mut picker).map(|m| {
             let is_pawn_move = match m {
                 LegalMove::To(m) if teban == Teban::Sente => {
-                    state.get_part().sente_self_board & (1 << (m.src() + 1)) != 0
+                    state.get_part().sente_fu_board & (1 << (m.src() + 1)) != 0
                 },
                 LegalMove::To(m) if teban == Teban::Gote => {
-                    state.get_part().sente_opponent_board & (1 << (m.src() + 1)) != 0
+                    state.get_part().gote_fu_board & (1 << (m.src() + 1)) != 0
                 },
                 _ => false
             };
 
-            let is_nari = match m {
-                LegalMove::To(m) => m.is_nari(),
+            let is_kin_move = match m {
+                LegalMove::Put(m) if m.kind() == MochigomaKind::Kin => true,
+                LegalMove::To(m) => {
+                    if teban == Teban::Sente {
+                        state.get_part().sente_kin_board & (1 << (m.src() + 1)) != 0
+                    } else {
+                        state.get_part().gote_kin_board & (1 << (m.src() + 1)) != 0
+                    }
+                },
                 _ => false
             };
+
+            let is_gin_move = match m {
+                LegalMove::Put(m) if m.kind() == MochigomaKind::Gin => true,
+                LegalMove::To(m) => {
+                    if teban == Teban::Sente {
+                        state.get_part().sente_gin_board & (1 << (m.src() + 1)) != 0
+                    } else {
+                        state.get_part().gote_gin_board & (1 << (m.src() + 1)) != 0
+                    }
+                },
+                _ => false
+            };
+
+            let is_nari = m.is_nari();
+
+            let dst_mask = 1 << (m.dst() + 1);
 
             if Rule::is_oute_move(state,teban,m) {
                 (MoveOrder::Check, m)
             } else if m.obtained().is_some() && (
-                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0
+                opponent_surrounding_mask & dst_mask != 0
             ) {
                 (MoveOrder::ThreatCaptures,m)
-            } else if is_pawn_move && is_nari && (
-                opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0
+            } else if ((is_nari && is_pawn_move) || is_kin_move || is_gin_move) && (
+                opponent_surrounding_mask & dst_mask != 0
             ) {
-                (MoveOrder::ThreatPromotions, m)
+                (MoveOrder::ThreatMate, m)
             } else if m.obtained().is_some() {
                 (MoveOrder::Captures, m)
             } else if is_pawn_move && is_nari {
@@ -487,10 +477,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         mvs.sort_by(|a,b| b.0.cmp(&a.0));
 
         if mvs.len() == 0 {
-            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
+            return Ok(Score::NEGINFINITE);
         }
-
-        let (mk,sk) = zh.keys();
 
         history.insert((teban,mk,sk));
 
@@ -516,7 +504,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 return Ok(Score::INFINITE);
             }
 
-            if mo == MoveOrder::Quiet {
+            if mo < MoveOrder::Captures {
                 continue;
             }
 
@@ -636,13 +624,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        state: &State,
                        m:LegalMove,
                        tt_move:Option<&LegalMove>,
-                       pv:Option<&LegalMove>,
-                       prev_move:Option<&LegalMove>,
-                       prev_kind:KomaKind,
-                       see:i32,
-                       zh:&ZobristHash<u64>,
-                       prev_eval: Option<i32>,
-                       static_eval: i32) -> Result<u32,ApplicationError> {
+                       pv:Option<&LegalMove>) -> Result<u32,ApplicationError> {
         if depth < 3 ||
             Rule::in_check(teban,state) ||
             tt_move.map(|&tm| tm == m).unwrap_or(false) ||
@@ -1907,13 +1889,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                   gs.state,
                                   m,
                                   tt_move.as_ref(),
-                                  pv_move.as_ref(),
-                                  prev_move.as_ref(),
-                                  gs.prev_kind,
-                                  see,
-                                  &gs.zh,
-                                  prev_eval,
-                                  static_eval)?;
+                                  pv_move.as_ref())?;
 
                 for k in 0..2 {
                     let depth = if k == 0 {
@@ -2220,13 +2196,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                    gs.state,
                                    m,
                                    tt_move.as_ref(),
-                                   pv_move.as_ref(),
-                                   prev_move.as_ref(),
-                                   gs.prev_kind,
-                                   see,
-                                   &gs.zh,
-                                   prev_eval,
-                                   static_eval)?;
+                                   pv_move.as_ref())?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
