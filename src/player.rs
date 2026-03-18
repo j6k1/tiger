@@ -102,6 +102,7 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
     search_id:Arc<AtomicUsize>,
     base_depth:u32,
+    qsearch_max_depth:Option<u32>,
     max_nodes:Option<u64>,
     max_threads:u32,
     turn_limit:Option<u32>,
@@ -128,6 +129,7 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
             transposition_table:Arc::new(TT::new()),
             search_id:Arc::new(AtomicUsize::new(0)),
             base_depth:BASE_DEPTH,
+            qsearch_max_depth:None,
             max_nodes:None,
             max_threads:MAX_THREADS,
             turn_limit:None,
@@ -295,6 +297,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         kinds.insert(String::from("USI_Ponder"),SysEventOptionKind::Bool);
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
+        kinds.insert(String::from("QSearchMexDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("MaxNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
@@ -330,6 +333,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
+        options.insert(String::from("QSearchMexDepth"),UsiOptType::Spin(1,100,Some(0)));
         options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
@@ -355,6 +359,15 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
         match &*name {
             "BaseDepth" => {
                 self.base_depth = u32::from_option(value).unwrap_or(BASE_DEPTH);
+            },
+            "QSearchMexDepth" => {
+                self.qsearch_max_depth = u32::from_option(value).and_then(|d| {
+                    if d == 0 {
+                        None
+                    } else {
+                        Some(d)
+                    }
+                });
             },
             "MaxNodes" => {
                 self.max_nodes = u64::from_option(value).and_then(|n| {
@@ -471,6 +484,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                     limit.and_then(move |l| l.to_instant(teban,think_start_time))
                 ),
                 self.base_depth,
+                self.qsearch_max_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
                 HashSet::new(),
@@ -512,6 +526,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfK
                 self.timelimit_margin,
                 (None,None),
                 self.base_depth,
+                self.qsearch_max_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
                 HashSet::new(),

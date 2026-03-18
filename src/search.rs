@@ -47,6 +47,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub timelimit_margin:u64,
     pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
+    pub qsearch_max_depth:Option<u32>,
     pub max_nodes:Option<u64>,
     pub max_threads:u32,
     pub abort:Arc<AtomicBool>,
@@ -71,6 +72,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:self.timelimit_margin.clone(),
             current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
+            qsearch_max_depth:self.qsearch_max_depth.clone(),
             max_nodes:self.max_nodes.clone(),
             max_threads:self.max_threads,
             abort:Arc::clone(&self.abort),
@@ -112,6 +114,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                timelimit_margin:u64,
                current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
+               qsearch_max_depth:Option<u32>,
                max_nodes:Option<u64>,
                max_threads:u32,
                history:HashSet<(Teban,u64,u64)>,
@@ -133,6 +136,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             timelimit_margin:timelimit_margin,
             current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
+            qsearch_max_depth:qsearch_max_depth,
             max_nodes:max_nodes,
             max_threads:max_threads,
             abort:abort,
@@ -215,6 +219,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            env.qsearch_max_depth.map(|d| depth >= d as usize).unwrap_or(false) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
@@ -385,6 +390,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            env.qsearch_max_depth.map(|d| depth >= d as usize).unwrap_or(false) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             let score = Score::Value(evalutor.evalute(teban, state, mc)?);
             return Ok(score);
@@ -625,6 +631,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                        m:LegalMove,
                        tt_move:Option<&LegalMove>,
                        pv:Option<&LegalMove>) -> Result<u32,ApplicationError> {
+        /*
         if depth < 3 ||
             Rule::in_check(teban,state) ||
             tt_move.map(|&tm| tm == m).unwrap_or(false) ||
@@ -650,6 +657,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 Ok(r as u32)
             }
         }
+
+         */
+        Ok(0)
     }
 
     fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
@@ -1187,7 +1197,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
             self.thread_pool.spawn(move || {
                 let mut rng = rand::thread_rng();
 
-                while !env.abort.load(Ordering::Acquire) {
+                let mut depth = shared_depth.load(Ordering::Acquire) as u32;
+
+                while depth <= base_depth {
                     let len = mvs.len();
 
                     let search_offset = if len == 0 {
@@ -1195,8 +1207,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                     } else {
                         (thread_index * 7 + (rng.gen::<usize>() % len)) % len
                     };
-
-                    let depth = shared_depth.load(Ordering::Acquire) as u32;
 
                     let mut gs = GameState {
                         teban: teban,
@@ -1254,6 +1264,12 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                     }
 
                     std::thread::yield_now();
+
+                    if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+                        break;
+                    }
+
+                    depth = (depth + 1).max(shared_depth.load(Ordering::Acquire) as u32);
                 }
 
                 let _ = sender.send(Ok(RootEvaluationResult::Quit));
@@ -1715,7 +1731,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         }
 
          */
-
+        /*
         if gs.depth >= 1 && gs.depth <= 3 &&
             !Rule::in_check(gs.teban,&gs.state) {
             let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
@@ -1739,7 +1755,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                      &mut HashSet::new(),
                                      gs.alpha,
                                      gs.beta,
-                                     0,
+                                     1,
                                      1,
                                      evalutor,
                                      gs.rng)?;
@@ -1758,6 +1774,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
+         */
+
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
                                        &gs.state,
@@ -1768,7 +1786,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                        &mut HashSet::new(),
                                        gs.alpha,
                                        gs.beta,
-                                 0,
+                                 1,
                                        1,
                                        evalutor,
                                        gs.rng)?;
