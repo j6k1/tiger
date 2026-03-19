@@ -1263,11 +1263,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         }
                     }
 
-                    std::thread::yield_now();
-
                     if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
                         break;
                     }
+
+                    std::thread::yield_now();
 
                     depth = (depth + 1).max(shared_depth.load(Ordering::Acquire) as u32);
                 }

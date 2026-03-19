@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use libc::size_t;
 use nncombinator::error::TypeConvertError;
 use nncombinator::layer::{BatchDataType, BatchSize};
@@ -10,6 +11,7 @@ use nncombinator::cuda::ToCuda;
 #[cfg(feature = "cuda")]
 use nncombinator::device::DeviceGpu;
 use rand_distr::num_traits::FromPrimitive;
+use crate::math::Sign;
 
 /// InputFeatures Implementaion
 #[derive(Debug)]
@@ -262,5 +264,146 @@ impl<'a,T,const N:usize> From<&HalfKPListView<'a,N>> for Box<[T]>
             acc.extend_from_slice(&i);
             acc
         }).into_boxed_slice()
+    }
+}
+/// Diff InputFeatures Implementaion
+#[derive(Debug)]
+pub struct HalfKPDiffUnit<'a,S,O,const N:usize> where S: Sign {
+    diff: Vec<(usize,S)>,
+    partial_output:&'a O,
+    sign:PhantomData<S>,
+    po:PhantomData<O>
+}
+impl<'a,S,O,const N:usize> HalfKPDiffUnit<'a,S,O,N> where S: Sign {
+    pub fn new(diff:Vec<(usize,S)>, partial_output: &'a O) -> Self {
+        HalfKPDiffUnit {
+            diff,
+            partial_output,
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
+    }
+}
+impl<'a,S,O,const N:usize> Clone for HalfKPDiffUnit<'a,S,O,N> where S: Sign {
+    fn clone(&self) -> Self {
+        HalfKPDiffUnit {
+            diff:self.diff.clone(),
+            partial_output:self.partial_output,
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
+    }
+}
+#[derive(Debug)]
+pub struct HalfKPDiff<'a,S,O,const N:usize> where S: Sign {
+    s:HalfKPDiffUnit<'a,S,O,N>,
+    o:HalfKPDiffUnit<'a,S,O,N>,
+    sign:PhantomData<S>,
+    po:PhantomData<O>
+}
+impl<'a,S,O,const N:usize> HalfKPDiff<'a,S,O,N> where S: Sign {
+    /// Create an instance of HalfKP
+    pub fn new(s:Vec<(usize,S)>,o:Vec<(usize,S)>,partial_output: &'a O) -> HalfKPDiff<'a,S,O,N> {
+        HalfKPDiff {
+            s:HalfKPDiffUnit::new(s,partial_output),
+            o:HalfKPDiffUnit::new(o,partial_output),
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
+    }
+
+    pub fn partial_output(&self) -> &O {
+        self.s.partial_output
+    }
+    /// Obtaining a immutable iterator
+    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O,N> {
+        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, po: PhantomData::<O> }
+    }
+}
+impl<'a,S,O,const N:usize> Clone for HalfKPDiff<'a,S,O,N> where S: Sign {
+    fn clone(&self) -> Self {
+        HalfKPDiff {
+            s:self.s.clone(),
+            o:self.o.clone(),
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
+    }
+}
+/// Implementation of an immutable iterator for HalfKPDiff
+#[derive(Debug,Eq,PartialEq)]
+pub struct HalfKPDiffIter<'a,S,O,const N:usize> where S: Sign {
+    s: &'a Vec<(usize,S)>,
+    o: &'a Vec<(usize,S)>,
+    index: usize,
+    po:PhantomData<O>
+}
+impl<'a,S,O,const N:usize> Iterator for HalfKPDiffIter<'a,S,O,N> where S: Sign {
+    type Item = &'a Vec<(usize,S)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == 0 {
+            self.index += 1;
+
+            Some(self.s)
+        } else if self.index == 1 {
+            self.index += 1;
+
+            Some(self.o)
+        } else {
+            None
+        }
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        self.index += n;
+
+        if self.index == 0 {
+            self.index += 1;
+
+            Some(self.s)
+        } else if self.index == 1 {
+            self.index += 1;
+
+            Some(self.o)
+        } else {
+            None
+        }
+    }
+}
+#[derive(Debug)]
+pub struct HalfKPDiffView<'a,S,O,const N:usize> where S: Sign {
+    s:&'a HalfKPDiffUnit<'a,S,O,N>,
+    o:&'a HalfKPDiffUnit<'a,S,O,N>,
+    sign:PhantomData<S>,
+    po:PhantomData<O>
+}
+impl<'a,S,O,const N:usize> HalfKPDiffView<'a,S,O,N> where S: Sign {
+    /// Create an instance of HalfKP
+    pub fn new(s:&'a HalfKPDiffUnit<'a,S,O,N>,o:&'a HalfKPDiffUnit<'a,S,O,N>,partial_output: &'a O) -> HalfKPDiffView<'a,S,O,N> {
+        HalfKPDiffView {
+            s,
+            o,
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
+    }
+
+    pub fn partial_output(&self) -> &O {
+        self.s.partial_output
+    }
+    /// Obtaining a immutable iterator
+    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O,N> {
+        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, po: PhantomData::<O> }
+    }
+}
+impl<'a,S,O,const N:usize> Clone for HalfKPDiffView<'a,S,O,N> where S: Sign {
+    fn clone(&self) -> Self {
+        HalfKPDiffView {
+            s:self.s,
+            o:self.o,
+            sign:PhantomData::<S>,
+            po:PhantomData::<O>
+        }
     }
 }

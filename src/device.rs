@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::ops::Mul;
 use std::simd::Simd;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
@@ -10,7 +11,7 @@ use nncombinator::device::{DeviceCpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
-use crate::features::{HalfKP, HalfKPListView, HalfKPView};
+use crate::features::{HalfKP, HalfKPDiffView, HalfKPListView, HalfKPView};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 #[cfg(feature = "cuda")]
@@ -21,6 +22,7 @@ use nncombinator::cuda::{CudaConstPtr, CudaTensor1dPtr, CudaTensor2dPtr, CudaVec
 use nncombinator::cuda::allocator::CudaAllocator;
 #[cfg(feature = "cuda")]
 use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorBatchArgs, TransformFeaturesForward, TransformFeaturesForwardArgs, TransformFeaturesForwardBatch, TransformFeaturesForwardBatchArgs, TransformFeaturesGradient, TransformFeaturesGradientArgs, TransformFeaturesGradientBatch, TransformFeaturesGradientBatchArgs, TransformFeaturesInputToBits, TransformFeaturesInputToBitsArgs};
+use crate::math::SignFloat;
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     where U: UnitValue<U>, [(); NO*2]: {
@@ -32,6 +34,12 @@ pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     fn batch_forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPListView<'a,NI>) -> Result<Self::BatchOutput,TrainingError>;
     fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a Self::BatchOutput) -> Result<T,TrainingError>;
     fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a Self::BatchOutput) -> Result<B,TrainingError>;
+}
+pub trait DeviceDiffFeatureTransform<'a,U,T,B,const NI: usize,const NO: usize>: DeviceFeatureTransform<U,T,B,NI,NO>
+    where U: UnitValue<U>,
+          [(); NO*2]: {
+    type DiffInput: Debug + 'a;
+    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: Self::DiffInput) -> Result<Self::Output, EvaluateError>;
 }
 #[cfg(target_feature = "avx512f")]
 pub const LANES_F32: usize = 16;
@@ -48,6 +56,23 @@ pub const LANES_F32: usize = 4;
     target_arch = "aarch64"
 )))]
 pub const LANES_F32: usize = 4;
+
+#[cfg(target_feature = "avx512f")]
+pub const LANES_F64: usize = 8;
+
+#[cfg(all(target_feature = "avx2", not(target_feature = "avx512f")))]
+pub const LANES_F64: usize = 4;
+
+#[cfg(all(target_arch = "aarch64", not(any(target_feature = "avx2", target_feature = "avx512f"))))]
+pub const LANES_F64: usize = 2;
+
+#[cfg(not(any(
+    target_feature = "avx2",
+    target_feature = "avx512f",
+    target_arch = "aarch64"
+)))]
+pub const LANES_F64: usize = 2;
+
 impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where [(); NO*2]: {
 
@@ -602,5 +627,63 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
         kernel.launch(&mut args)?;
 
         Ok(args.output)
+    }
+}
+impl<'a,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<'a,f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+    where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
+          Simd<f32,LANES_F32>: Mul<SignFloat<f32>,Output=Simd<f32,LANES_F32>>,
+          [(); NO*2]: {
+    type DiffInput = HalfKPDiffView<'a,SignFloat<f32>,Arr<f32,NO>,NI>;
+
+    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: Self::DiffInput) -> Result<Self::Output, EvaluateError> {
+        let mut result = [0.0;NO*2];
+
+        let mut oi = 0;
+
+        for (i,indexes) in input.iter().enumerate() {
+            while oi + LANES_F32 <= NO * (i + 1) {
+                let mut acc = Simd::<f32,LANES_F32>::splat(0.0);
+
+                for &(index,sign) in indexes.iter() {
+                    assert!(index < NI,"{} >= {}",index,NI);
+                    units.iter().nth(index).map(|w| {
+                        let w_row = &w[(oi - NO * i)..];
+                        let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]) * sign;
+
+                        acc += wv;
+                    });
+                }
+
+                let bias = bias.as_raw_slice();
+                let bias = &bias[(oi - NO * i)..];
+
+                acc += Simd::<f32,LANES_F32>::from_slice(&bias[..LANES_F32]);
+
+                acc.copy_to_slice(&mut result[(oi)..(oi + LANES_F32)]);
+
+                oi += LANES_F32;
+            }
+
+            if NO % LANES_F32 > 0 {
+                let offset = NO / LANES_F32 * LANES_F32 + (NO * i);
+
+                for oi in offset..(NO * (i + 1)){
+                    let mut acc = 0.;
+
+                    for &(index,sign) in indexes.iter() {
+                        assert!(index < NI,"{} >= {}",index,NI);
+                        units.iter().nth(index).map(|w| {
+                            acc += w[oi - NO * i] * sign;
+                        });
+                    }
+
+                    result[oi] += bias[oi - (NO * i)];
+                }
+            }
+
+            oi = NO;
+        }
+
+        Ok(Arr::from(result))
     }
 }

@@ -62,6 +62,7 @@ pub mod error;
 #[cfg(feature = "cuda")]
 pub mod kernel;
 pub mod evalutor;
+pub mod math;
 
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
 const LEAN_BATCH_SIZE:usize = 8192;
