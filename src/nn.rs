@@ -3,7 +3,7 @@ use std::path::{Path};
 use std::{fs};
 use std::marker::PhantomData;
 use std::ops::Mul;
-use std::simd::Simd;
+use std::simd::{f32x1, Simd};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
 use libc::size_t;
@@ -223,9 +223,9 @@ pub struct Evalutor<M>
     material_evalutor:crate::evalutor::material::Evalutor
 }
 impl<M> Evalutor<M>
-    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              PreTrain<f32> + Send + Sync + 'static +
-             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+             PartialForward<PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
              ContinueForward<ConinueOutput=Arr<f32,1>>,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
@@ -234,17 +234,36 @@ impl<M> Evalutor<M>
         let r = self.nn.partial_forward(input)?;
 
         Ok(r)
-        //Ok(((r[0] - 0.5) * 1200.) as i32)
     }
 
-    pub fn partial_evalute<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:&'a Arr<f32,{256*2}>) -> Result<f32,ApplicationError> {
-        let input = HalfKPDiff::new(
-            InputCreator::make_diff_input(t,state,mc,m)?,
-            InputCreator::make_diff_input(t.opposite(),state,mc,m)?,
-            partial_output
-        );
+    pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:&'a Arr<f32,{256*2}>)
+        -> Result<Arr<f32,{256*2}>,ApplicationError>
+           where M: PartialForward<DiffInput=HalfKPDiff<'a,SignFloat<f32>,Arr<f32,{256*2}>>> {
+        match m {
+            LegalMove::To(m) if m.src() == Rule::ou_square(t, state) as u32 => {
+                let input = HalfKP::new(InputCreator::make_input(t, state, mc), InputCreator::make_input(t.opposite(), state, mc));
 
-        todo!()
+                let r = self.nn.partial_forward(input)?;
+
+                Ok(r)
+            },
+            m => {
+                let input = HalfKPDiff::new(
+                    InputCreator::make_diff_input(t, state, mc, m)?,
+                    InputCreator::make_diff_input(t.opposite(), state, mc, m)?,
+                    partial_output
+                );
+
+                let r = self.nn.partial_forward_by_diff(input)?;
+
+                Ok(r)
+            }
+        }
+    }
+    pub fn evalute(&self, partial_output: &Arr<f32, { 256 * 2 }>) -> Result<i32,ApplicationError> {
+        let r = self.nn.continue_forward(partial_output)?;
+
+        Ok(((r[0] - 0.5) * 1200.) as i32)
     }
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {
         self.material_evalutor.evalute(teban,state,mc)
@@ -874,7 +893,7 @@ impl InputCreator {
                     if let Ok(k) = MochigomaKind::try_from(kind) {
                         let c = mc.get(k);
 
-                        if c > 1 {
+                        if c > 0 {
                             let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
 
                             inputs.push((s + SELF_INDEX_MAP[k as usize] + c - 1, SignFloat::plus()));
@@ -912,7 +931,7 @@ impl InputCreator {
 
                 let c = mc.get(kind);
 
-                inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignFloat::plus()));
+                inputs.push((s + SELF_INDEX_MAP[kind as usize] + c, SignFloat::plus()));
 
                 Ok(inputs)
             }
