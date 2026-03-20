@@ -268,13 +268,13 @@ impl<'a,T,const N:usize> From<&HalfKPListView<'a,N>> for Box<[T]>
 }
 /// Diff InputFeatures Implementaion
 #[derive(Debug)]
-pub struct HalfKPDiffUnit<'a,S,O,const N:usize> where S: Sign {
+pub struct HalfKPDiffUnit<'a,S,O> where S: Sign {
     diff: Vec<(usize,S)>,
     partial_output:&'a O,
     sign:PhantomData<S>,
     po:PhantomData<O>
 }
-impl<'a,S,O,const N:usize> HalfKPDiffUnit<'a,S,O,N> where S: Sign {
+impl<'a,S,O> HalfKPDiffUnit<'a,S,O> where S: Sign {
     pub fn new(diff:Vec<(usize,S)>, partial_output: &'a O) -> Self {
         HalfKPDiffUnit {
             diff,
@@ -284,7 +284,7 @@ impl<'a,S,O,const N:usize> HalfKPDiffUnit<'a,S,O,N> where S: Sign {
         }
     }
 }
-impl<'a,S,O,const N:usize> Clone for HalfKPDiffUnit<'a,S,O,N> where S: Sign {
+impl<'a,S,O> Clone for HalfKPDiffUnit<'a,S,O> where S: Sign {
     fn clone(&self) -> Self {
         HalfKPDiffUnit {
             diff:self.diff.clone(),
@@ -295,15 +295,15 @@ impl<'a,S,O,const N:usize> Clone for HalfKPDiffUnit<'a,S,O,N> where S: Sign {
     }
 }
 #[derive(Debug)]
-pub struct HalfKPDiff<'a,S,O,const N:usize> where S: Sign {
-    s:HalfKPDiffUnit<'a,S,O,N>,
-    o:HalfKPDiffUnit<'a,S,O,N>,
+pub struct HalfKPDiff<'a,S,O> where S: Sign {
+    s:HalfKPDiffUnit<'a,S,O>,
+    o:HalfKPDiffUnit<'a,S,O>,
     sign:PhantomData<S>,
     po:PhantomData<O>
 }
-impl<'a,S,O,const N:usize> HalfKPDiff<'a,S,O,N> where S: Sign {
+impl<'a,S,O> HalfKPDiff<'a,S,O> where S: Sign {
     /// Create an instance of HalfKP
-    pub fn new(s:Vec<(usize,S)>,o:Vec<(usize,S)>,partial_output: &'a O) -> HalfKPDiff<'a,S,O,N> {
+    pub fn new(s:Vec<(usize,S)>,o:Vec<(usize,S)>,partial_output: &'a O) -> HalfKPDiff<'a,S,O> {
         HalfKPDiff {
             s:HalfKPDiffUnit::new(s,partial_output),
             o:HalfKPDiffUnit::new(o,partial_output),
@@ -316,11 +316,11 @@ impl<'a,S,O,const N:usize> HalfKPDiff<'a,S,O,N> where S: Sign {
         self.s.partial_output
     }
     /// Obtaining a immutable iterator
-    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O,N> {
-        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, po: PhantomData::<O> }
+    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O> {
+        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, so: &self.s.partial_output, oo: &self.o.partial_output }
     }
 }
-impl<'a,S,O,const N:usize> Clone for HalfKPDiff<'a,S,O,N> where S: Sign {
+impl<'a,S,O> Clone for HalfKPDiff<'a,S,O> where S: Sign {
     fn clone(&self) -> Self {
         HalfKPDiff {
             s:self.s.clone(),
@@ -332,24 +332,25 @@ impl<'a,S,O,const N:usize> Clone for HalfKPDiff<'a,S,O,N> where S: Sign {
 }
 /// Implementation of an immutable iterator for HalfKPDiff
 #[derive(Debug,Eq,PartialEq)]
-pub struct HalfKPDiffIter<'a,S,O,const N:usize> where S: Sign {
+pub struct HalfKPDiffIter<'a,S,O> where S: Sign {
     s: &'a Vec<(usize,S)>,
     o: &'a Vec<(usize,S)>,
     index: usize,
-    po:PhantomData<O>
+    so: &'a O,
+    oo: &'a O,
 }
-impl<'a,S,O,const N:usize> Iterator for HalfKPDiffIter<'a,S,O,N> where S: Sign {
-    type Item = &'a Vec<(usize,S)>;
+impl<'a,S,O> Iterator for HalfKPDiffIter<'a,S,O> where S: Sign {
+    type Item = (&'a Vec<(usize,S)>, &'a O);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index == 0 {
             self.index += 1;
 
-            Some(self.s)
+            Some((self.s,self.so))
         } else if self.index == 1 {
             self.index += 1;
 
-            Some(self.o)
+            Some((self.o,self.oo))
         } else {
             None
         }
@@ -361,26 +362,26 @@ impl<'a,S,O,const N:usize> Iterator for HalfKPDiffIter<'a,S,O,N> where S: Sign {
         if self.index == 0 {
             self.index += 1;
 
-            Some(self.s)
+            Some((self.s,self.so))
         } else if self.index == 1 {
             self.index += 1;
 
-            Some(self.o)
+            Some((self.o,self.oo))
         } else {
             None
         }
     }
 }
 #[derive(Debug)]
-pub struct HalfKPDiffView<'a,S,O,const N:usize> where S: Sign {
-    s:&'a HalfKPDiffUnit<'a,S,O,N>,
-    o:&'a HalfKPDiffUnit<'a,S,O,N>,
+pub struct HalfKPDiffView<'a,S,O> where S: Sign {
+    s:&'a HalfKPDiffUnit<'a,S,O>,
+    o:&'a HalfKPDiffUnit<'a,S,O>,
     sign:PhantomData<S>,
     po:PhantomData<O>
 }
-impl<'a,S,O,const N:usize> HalfKPDiffView<'a,S,O,N> where S: Sign {
+impl<'a,S,O> HalfKPDiffView<'a,S,O> where S: Sign {
     /// Create an instance of HalfKP
-    pub fn new(s:&'a HalfKPDiffUnit<'a,S,O,N>,o:&'a HalfKPDiffUnit<'a,S,O,N>,partial_output: &'a O) -> HalfKPDiffView<'a,S,O,N> {
+    pub fn new(s:&'a HalfKPDiffUnit<'a,S,O>,o:&'a HalfKPDiffUnit<'a,S,O>,partial_output: &'a O) -> HalfKPDiffView<'a,S,O> {
         HalfKPDiffView {
             s,
             o,
@@ -393,11 +394,11 @@ impl<'a,S,O,const N:usize> HalfKPDiffView<'a,S,O,N> where S: Sign {
         self.s.partial_output
     }
     /// Obtaining a immutable iterator
-    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O,N> {
-        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, po: PhantomData::<O> }
+    pub fn iter<'b>(&'b self) -> HalfKPDiffIter<'b,S,O> {
+        HalfKPDiffIter { s: &self.s.diff, o: &self.o.diff, index: 0, so: &self.s.partial_output, oo: &self.o.partial_output }
     }
 }
-impl<'a,S,O,const N:usize> Clone for HalfKPDiffView<'a,S,O,N> where S: Sign {
+impl<'a,S,O> Clone for HalfKPDiffView<'a,S,O> where S: Sign {
     fn clone(&self) -> Self {
         HalfKPDiffView {
             s:self.s,

@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::ops::Mul;
+use std::ptr::read_unaligned;
 use std::simd::Simd;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
@@ -633,21 +634,23 @@ impl<'a,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<'a,f32,Arr2<
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           Simd<f32,LANES_F32>: Mul<SignFloat<f32>,Output=Simd<f32,LANES_F32>>,
           [(); NO*2]: {
-    type DiffInput = HalfKPDiff<'a,SignFloat<f32>,Arr<f32,NO>,NI>;
+    type DiffInput = HalfKPDiff<'a,SignFloat<f32>,Arr<f32,NO>>;
 
     fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &Self::DiffInput) -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
-        let mut oi = 0;
+        let (mut rs,mut ro) = result.split_at_mut(NO);
 
-        for (i,indexes) in input.iter().enumerate() {
-            while oi + LANES_F32 <= NO * (i + 1) {
-                let mut acc = Simd::<f32,LANES_F32>::splat(0.0);
+        for ((i,(indexes,po)),r) in input.iter().enumerate().zip([rs,ro]) {
+            let mut oi = 0;
+
+            while oi + LANES_F32 <= NO {
+                let mut acc = Simd::<f32,LANES_F32>::from_slice(&po.as_raw_slice()[oi..LANES_F32]);
 
                 for &(index,sign) in indexes.iter() {
                     assert!(index < NI,"{} >= {}",index,NI);
                     units.iter().nth(index).map(|w| {
-                        let w_row = &w[(oi - NO * i)..];
+                        let w_row = &w[oi..];
                         let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]) * sign;
 
                         acc += wv;
@@ -655,33 +658,31 @@ impl<'a,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<'a,f32,Arr2<
                 }
 
                 let bias = bias.as_raw_slice();
-                let bias = &bias[(oi - NO * i)..];
+                let bias = &bias[oi..];
 
                 acc += Simd::<f32,LANES_F32>::from_slice(&bias[..LANES_F32]);
 
-                acc.copy_to_slice(&mut result[(oi)..(oi + LANES_F32)]);
+                acc.copy_to_slice(&mut r[oi..(oi + LANES_F32)]);
 
                 oi += LANES_F32;
             }
 
             if NO % LANES_F32 > 0 {
-                let offset = NO / LANES_F32 * LANES_F32 + (NO * i);
+                let offset = NO / LANES_F32 * LANES_F32;
 
-                for oi in offset..(NO * (i + 1)){
+                for oi in offset..NO {
                     let mut acc = 0.;
 
                     for &(index,sign) in indexes.iter() {
                         assert!(index < NI,"{} >= {}",index,NI);
                         units.iter().nth(index).map(|w| {
-                            acc += w[oi - NO * i] * sign;
+                            acc += w[oi] * sign;
                         });
                     }
 
-                    result[oi] += bias[oi - (NO * i)];
+                    r[oi] += bias[oi];
                 }
             }
-
-            oi = NO;
         }
 
         Ok(Arr::from(result))

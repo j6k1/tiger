@@ -1,7 +1,10 @@
 use std::fmt::Debug;
 use std::path::{Path};
 use std::{fs};
+use std::ascii::escape_default;
 use std::marker::PhantomData;
+use std::ops::Mul;
+use std::simd::Simd;
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
 use libc::size_t;
@@ -12,7 +15,7 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ForwardAll, PreTrain, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, PartialForward, PreTrain, Step, TryAddLayer};
 use nncombinator::layer::input::{DiffInputLayer, InputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
@@ -30,8 +33,8 @@ use packedsfen::yaneuraou::reader::PackedSfenReader;
 use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
 use usiagent::event::{GameEndState};
-use usiagent::rule::{Rule, State};
-use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban};
+use usiagent::rule::{LegalMove, Rule, SquareToPoint, State};
+use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MOCHIGOMA_KINDS, MochigomaCollections, Teban, MochigomaKind};
 #[cfg(feature = "cuda")]
 use nncombinator::device::{DeviceGpu};
 #[cfg(feature = "cuda")]
@@ -39,11 +42,12 @@ use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemo
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
 use crate::{Config, EVAL_TEST_SAMPLES};
+use crate::device::LANES_F32;
 use crate::error::{ApplicationError};
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::layer::diff_feature_transform::DiffFeatureTransformLayerBuilder;
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
-use crate::math::SignFloat;
+use crate::math::{Sign, SignFloat};
 
 const BANMEN_SIZE:usize = 81;
 
@@ -83,6 +87,8 @@ const OPPONENT_MOCHIGOMA_HISHA_INDEX:usize = OPPONENT_MOCHIGOMA_KAKU_INDEX + 3;
 const MOCHIGOMA_END:usize = PIECE_END + OPPONENT_MOCHIGOMA_HISHA_INDEX + 3;
 
 pub const FEATURES_NUM:usize = MOCHIGOMA_END * BANMEN_SIZE;
+
+pub const FEATURES_OUTPUT:usize = 256;
 
 pub const ACTIVE_INDICES:usize = 39;
 
@@ -129,8 +135,11 @@ pub struct EvalutorCreator {
 }
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
-        -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
+        -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                PartialForward<DiffInput=HalfKPDiff<'_,SignFloat<f32>,Arr<f32,256>>,PartialOutput=Arr<f32,{256*2}>> +
+                                ContinueForward<ConinueOutput=Arr<f32,{256*2}>> +
+                                PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError>
+        where Simd<f32,{LANES_F32}>: Mul<SignFloat<f32>,Output=Simd<f32,{LANES_F32}>> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
@@ -161,10 +170,10 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<'_,SignFloat<f32>,Arr<f32,256>,256>, Arr<f32,256>, (), _> = DiffInputLayer::new(&device);
+        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<'_,SignFloat<f32>,Arr<f32,{256}>>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
-            DiffFeatureTransformLayerBuilder::<FEATURES_NUM, 256>::new().build(l, &device,
+            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,{256}>::new().build(l, &device,
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)
@@ -208,23 +217,35 @@ impl EvalutorCreator {
 }
 pub struct Evalutor<M>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-             PreTrain<f32> + Send + Sync + 'static,
+             PreTrain<f32> + Send + Sync + 'static +
+             PartialForward<PartialOutput=Arr<f32,{256*2}>> + ContinueForward<ConinueOutput=Arr<f32,{256*2}>>,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
 }
 impl<M> Evalutor<M>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-             PreTrain<f32> + Send + Sync + 'static,
+             PreTrain<f32> + Send + Sync + 'static +
+             PartialForward<PartialOutput=Arr<f32,{256*2}>> + ContinueForward<ConinueOutput=Arr<f32,{256*2}>>,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    pub fn evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<i32,ApplicationError> {
+    pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
-        let r = self.nn.forward_all(input)?;
+        let r = self.nn.partial_forward(input)?;
 
-        Ok(((r[0] - 0.5) * 1200.) as i32)
+        Ok(r)
+        //Ok(((r[0] - 0.5) * 1200.) as i32)
     }
 
+    pub fn partial_evalute<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:&'a Arr<f32,{256*2}>) -> Result<f32,ApplicationError> {
+        let input = HalfKPDiff::new(
+            InputCreator::make_diff_input(t,state,mc,m)?,
+            InputCreator::make_diff_input(t.opposite(),state,mc,m)?,
+            partial_output
+        );
+
+        todo!()
+    }
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {
         self.material_evalutor.evalute(teban,state,mc)
     }
@@ -742,6 +763,7 @@ impl<M,A> Trainer<M,A>
 pub struct InputCreator;
 
 impl InputCreator {
+    #[inline]
     pub fn make_input(t:Teban,state:&State,mc:&MochigomaCollections) -> Vec<size_t> {
         let mut inputs = Vec::new();
 
@@ -797,6 +819,104 @@ impl InputCreator {
             }
         }
         inputs
+    }
+    pub fn make_diff_input(t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
+        let mut inputs = Vec::new();
+
+        let ou_position = Rule::ou_square(t, state);
+
+        match m {
+            LegalMove::To(m) if m.src() == ou_position as u32 => {
+                Err(ApplicationError::UnsupportedOperationError(String::from(
+                    "Calculating the difference in moves when the active player's king moves is not currently supported."
+                )))
+            },
+            LegalMove::To(m) => {
+                let banmen = state.get_banmen().0;
+
+                let (sx,sy) = m.src().square_to_point();
+
+                let kind = banmen[sy as usize][sx as usize];
+
+                if kind != KomaKind::Blank {
+                    let index = InputCreator::input_index_of_banmen(t, kind, sx as u32, sy as u32).unwrap();
+
+                    inputs.push((index,SignFloat::minus()));
+                }
+
+                let (dx,dy) = m.dst().square_to_point();
+
+                let kind = banmen[dy as usize][dx as usize];
+
+                let kind = if m.is_nari() {
+                    kind.to_nari()
+                } else {
+                    kind
+                };
+
+                let index = InputCreator::input_index_of_banmen(t, kind, dx as u32, dy as u32).unwrap();
+
+                inputs.push((index,SignFloat::plus()));
+
+                if let Some(o) = m.obtained() {
+                    let ms = Mochigoma::new();
+                    let mg = Mochigoma::new();
+                    let (ms,mg) = match mc {
+                        &MochigomaCollections::Pair(ref ms,ref mg) => (ms,mg),
+                        &MochigomaCollections::Empty => (&ms,&mg),
+                    };
+
+                    let mc = match t {
+                        Teban::Sente => ms,
+                        Teban::Gote => mg,
+                    };
+
+                    if let Ok(k) = MochigomaKind::try_from(kind) {
+                        let c = mc.get(k);
+
+                        if c > 1 {
+                            let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
+
+                            inputs.push((s + SELF_INDEX_MAP[k as usize] + c - 1, SignFloat::plus()));
+                        }
+                    }
+                }
+
+                Ok(inputs)
+            },
+            LegalMove::Put(m) => {
+                let kind = m.kind();
+
+                if let Ok(k) = KomaKind::try_from((t,kind)) {
+                    let (dx,dy) = m.dst().square_to_point();
+
+                    let index = InputCreator::input_index_of_banmen(t, k, dx as u32, dy as u32).unwrap();
+
+                    inputs.push((index,SignFloat::plus()));
+                }
+
+                let ms = Mochigoma::new();
+                let mg = Mochigoma::new();
+
+                let (ms,mg) = match mc {
+                    &MochigomaCollections::Pair(ref ms,ref mg) => (ms,mg),
+                    &MochigomaCollections::Empty => (&ms,&mg),
+                };
+
+                let mc = match t {
+                    Teban::Sente => ms,
+                    Teban::Gote => mg,
+                };
+
+                let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
+
+                let c = mc.get(kind);
+
+                inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignFloat::plus()));
+
+                Ok(inputs)
+            }
+        }
     }
 
     #[inline]

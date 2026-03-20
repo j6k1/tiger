@@ -63,7 +63,6 @@ pub mod error;
 pub mod kernel;
 pub mod evalutor;
 pub mod math;
-
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
 const LEAN_BATCH_SIZE:usize = 8192;
 const EVAL_TEST_MAX_THREADS:usize = 16;
