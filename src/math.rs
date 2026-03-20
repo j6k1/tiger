@@ -1,8 +1,7 @@
 use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::{BitXor, Mul};
-use std::simd::{Simd, SimdElement};
+use std::simd::{Simd};
 use crate::device::LANES_F32;
 use crate::device::LANES_F64;
 

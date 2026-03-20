@@ -11,7 +11,7 @@ use nncombinator::device::{DeviceCpu};
 use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
-use crate::features::{HalfKP, HalfKPDiffView, HalfKPListView, HalfKPView};
+use crate::features::{HalfKP, HalfKPDiff, HalfKPListView, HalfKPView};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
 #[cfg(feature = "cuda")]
@@ -39,7 +39,7 @@ pub trait DeviceDiffFeatureTransform<'a,U,T,B,const NI: usize,const NO: usize>: 
     where U: UnitValue<U>,
           [(); NO*2]: {
     type DiffInput: Debug + 'a;
-    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: Self::DiffInput) -> Result<Self::Output, EvaluateError>;
+    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: &Self::DiffInput) -> Result<Self::Output, EvaluateError>;
 }
 #[cfg(target_feature = "avx512f")]
 pub const LANES_F32: usize = 16;
@@ -633,9 +633,9 @@ impl<'a,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<'a,f32,Arr2<
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           Simd<f32,LANES_F32>: Mul<SignFloat<f32>,Output=Simd<f32,LANES_F32>>,
           [(); NO*2]: {
-    type DiffInput = HalfKPDiffView<'a,SignFloat<f32>,Arr<f32,NO>,NI>;
+    type DiffInput = HalfKPDiff<'a,SignFloat<f32>,Arr<f32,NO>,NI>;
 
-    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: Self::DiffInput) -> Result<Self::Output, EvaluateError> {
+    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &Self::DiffInput) -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
         let mut oi = 0;

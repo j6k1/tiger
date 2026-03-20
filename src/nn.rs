@@ -13,7 +13,7 @@ use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
 use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ForwardAll, PreTrain, Step, TryAddLayer};
-use nncombinator::layer::input::InputLayer;
+use nncombinator::layer::input::{DiffInputLayer, InputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
@@ -40,8 +40,10 @@ use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemo
 use nncombinator::cuda::allocator::{CudaAllocator};
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
-use crate::features::HalfKP;
+use crate::features::{HalfKP, HalfKPDiff};
+use crate::layer::diff_feature_transform::DiffFeatureTransformLayerBuilder;
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
+use crate::math::SignFloat;
 
 const BANMEN_SIZE:usize = 81;
 
@@ -159,10 +161,10 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
+        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<'_,SignFloat<f32>,Arr<f32,256>,256>, Arr<f32,256>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
-            FeatureTransformLayerBuilder::<FEATURES_NUM, 256>::new().build(l, &device,
+            DiffFeatureTransformLayerBuilder::<FEATURES_NUM, 256>::new().build(l, &device,
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)

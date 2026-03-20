@@ -47,7 +47,8 @@ pub enum ApplicationError {
     BorrowMutError(BorrowMutError),
     ThreadPoolBuildError(ThreadPoolBuildError),
     LimitSizeError(LimitSizeError),
-    InvalidInputError(InvalidInputError)
+    InvalidInputError(InvalidInputError),
+    UnsupportedOperationError(String),
 }
 impl fmt::Display for ApplicationError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -85,6 +86,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::ThreadPoolBuildError(ref e) => write!(f,"{}",e),
             ApplicationError::LimitSizeError(ref e) => write!(f,"{}",e),
             ApplicationError::InvalidInputError(ref e) => write!(f,"{}",e),
+            ApplicationError::UnsupportedOperationError(ref s) => write!(f,"{}",s),
         }
     }
 }
@@ -125,6 +127,7 @@ impl error::Error for ApplicationError {
             ApplicationError::ThreadPoolBuildError(_) => "Failed to create thread pool.",
             ApplicationError::LimitSizeError(_) => "Size exceeds the upper limit.",
             ApplicationError::InvalidInputError(_) => "Invalid input.",
+            ApplicationError::UnsupportedOperationError(_) => "Unsupported operation.",
         }
     }
 
@@ -163,6 +166,7 @@ impl error::Error for ApplicationError {
             ApplicationError::ThreadPoolBuildError(ref e) => Some(e),
             ApplicationError::LimitSizeError(ref e) => Some(e),
             ApplicationError::InvalidInputError(ref e) => Some(e),
+            ApplicationError::UnsupportedOperationError(_) => None,
         }
     }
 }
