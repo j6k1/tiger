@@ -630,7 +630,6 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
 }
 impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
-          Simd<f32,LANES_F32>: Mul<SignFloat<f32>,Output=Simd<f32,LANES_F32>>,
           [(); NO*2]: {
     fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>)
         -> Result<Self::Output, EvaluateError> {

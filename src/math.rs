@@ -18,7 +18,7 @@ pub trait Bits {
 impl Bits for f32 {
     type Int = u32;
     fn to_bits(&self) -> Self::Int {
-        self.to_bits()
+        f32::to_bits(*self)
     }
     fn from_bits(bits: Self::Int) -> Self {
         f32::from_bits(bits)
@@ -28,7 +28,7 @@ impl Bits for f64 {
     type Int = u64;
 
     fn to_bits(&self) -> Self::Int {
-        self.to_bits()
+        f64::to_bits(*self)
     }
     fn from_bits(bits: Self::Int) -> Self {
         f64::from_bits(bits)
@@ -106,6 +106,20 @@ impl<T> Mul<T> for SignFloat<T>
         T::from_bits(rhs.to_bits() ^ self.mask)
     }
 }
+impl Mul<Simd<f32,LANES_F32>> for SignFloat<f32>
+    where  {
+    type Output = Simd<f32,LANES_F32>;
+    fn mul(self, rhs: Simd<f32,LANES_F32>) -> Self::Output {
+        Simd::from_bits(rhs.to_bits() ^ Simd::splat(self.mask))
+    }
+}
+impl Mul<Simd<f64,LANES_F64>> for SignFloat<f64>
+where  {
+    type Output = Simd<f64,LANES_F64>;
+    fn mul(self, rhs: Simd<f64,LANES_F64>) -> Self::Output {
+        Simd::from_bits(rhs.to_bits() ^ Simd::splat(self.mask))
+    }
+}
 impl Mul<SignFloat<f32>> for f32 {
     type Output = f32;
     fn mul(self, rhs: SignFloat<f32>) -> Self::Output {
@@ -114,6 +128,18 @@ impl Mul<SignFloat<f32>> for f32 {
 }
 impl Mul<SignFloat<f64>> for f64 {
     type Output = f64;
+    fn mul(self, rhs: SignFloat<f64>) -> Self::Output {
+        rhs * self
+    }
+}
+impl Mul<SignFloat<f32>> for Simd<f32,LANES_F32> {
+    type Output = Simd<f32,LANES_F32>;
+    fn mul(self, rhs: SignFloat<f32>) -> Self::Output {
+        rhs * self
+    }
+}
+impl Mul<SignFloat<f64>> for Simd<f64,LANES_F64> {
+    type Output = Simd<f64,LANES_F64>;
     fn mul(self, rhs: SignFloat<f64>) -> Self::Output {
         rhs * self
     }

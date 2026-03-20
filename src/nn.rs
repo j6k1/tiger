@@ -137,8 +137,7 @@ impl EvalutorCreator {
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                                 PartialForward<PartialOutput=Arr<f32,{256*2}>> +
                                 ContinueForward<ConinueOutput=Arr<f32,1>> +
-                                PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError>
-        where Simd<f32,{LANES_F32}>: Mul<SignFloat<f32>,Output=Simd<f32,{LANES_F32}>> {
+                                PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
