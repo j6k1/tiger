@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
-use nncombinator::layer::{ForwardAll, PreTrain};
+use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
 use rayon::ThreadPoolBuilder;
 use usiagent::command::{BestMove, CheckMate, UsiInfoSubCommand, UsiOptType};
 use usiagent::error::{PlayerError, UsiProtocolError};
@@ -92,7 +92,9 @@ impl FromOption for String {
     }
 }
 pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                             PreTrain<f32> + Send + Sync + 'static,
+                             PreTrain<f32> + Send + Sync + 'static +
+                             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                             ContinueForward<ConinueOutput=Arr<f32,1>>,
                           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
     evalutor: Option<Arc<Evalutor<M>>>,
@@ -110,14 +112,18 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     model_name:String
 }
 impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                         PreTrain<f32> + Send + Sync + 'static,
+                                         PreTrain<f32> + Send + Sync + 'static +
+                                         PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                         ContinueForward<ConinueOutput=Arr<f32,1>>,
                                       <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tiger")
     }
 }
 impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                          PreTrain<f32> + Send + Sync + 'static,
+                          PreTrain<f32> + Send + Sync +
+                          PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                          ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                        <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
         Tiger {
@@ -285,7 +291,9 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
     }
 }
 impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                          PreTrain<f32> + Send + Sync + 'static,
+                                                          PreTrain<f32> + Send + Sync +
+                                                          PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                                          ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                                       <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     const ID: &'static str = "tiger";
     const AUTHOR: &'static str = "j6k1";

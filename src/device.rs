@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 use std::ops::Mul;
-use std::ptr::read_unaligned;
 use std::simd::Simd;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
@@ -36,11 +35,10 @@ pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
     fn batch_backward_feature_transform_weight_gradient<'a>(&self,input:HalfKPListView<'a,NI>,loss:&'a Self::BatchOutput) -> Result<T,TrainingError>;
     fn batch_feature_transform_bias_gradient<'a>(&self,loss:&'a Self::BatchOutput) -> Result<B,TrainingError>;
 }
-pub trait DeviceDiffFeatureTransform<'a,U,T,B,const NI: usize,const NO: usize>: DeviceFeatureTransform<U,T,B,NI,NO>
+pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: DeviceFeatureTransform<U,T,B,NI,NO>
     where U: UnitValue<U>,
           [(); NO*2]: {
-    type DiffInput: Debug + 'a;
-    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: &Self::DiffInput) -> Result<Self::Output, EvaluateError>;
+    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: &I) -> Result<Self::Output, EvaluateError>;
 }
 #[cfg(target_feature = "avx512f")]
 pub const LANES_F32: usize = 16;
@@ -630,13 +628,12 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
         Ok(args.output)
     }
 }
-impl<'a,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<'a,f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           Simd<f32,LANES_F32>: Mul<SignFloat<f32>,Output=Simd<f32,LANES_F32>>,
           [(); NO*2]: {
-    type DiffInput = HalfKPDiff<'a,SignFloat<f32>,Arr<f32,NO>>;
-
-    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &Self::DiffInput) -> Result<Self::Output, EvaluateError> {
+    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>)
+        -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
         let (mut rs,mut ro) = result.split_at_mut(NO);

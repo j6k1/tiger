@@ -143,7 +143,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeature
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
           C: 'static,
@@ -153,7 +154,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
-                     DeviceDiffFeatureTransform<'a,U,C,B,NI,NO,DiffInput=DI> + 'static,
+                     DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
           Self: ForwardAll<Input=I>,
           Self: PreTrain<U>,
           [(); NO * 2]: {
@@ -173,7 +174,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffOutput=HalfKP<NI>> + ForwardDiff +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> + ForwardDiff +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
           C: 'static,
@@ -183,16 +185,16 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
-                     DeviceDiffFeatureTransform<'a,U,C,B,NI,NO,DiffInput=DI> + 'static,
-          Self: ForwardAll<Input=I> + PreTrain<U> +
-                PartialForward<DiffInput=DI,DiffOutput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
+                     DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
+          Self: ForwardAll<Input=I> + PreTrain<U>,
           [(); NO * 2]: {
     fn forward_diff(&self, input: Self::DiffInput) -> Result<Self::DiffOutput, EvaluateError> {
         Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input)?)
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffOutput=HalfKP<NI>> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> + ForwardDiff +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
       C: 'static,
@@ -202,7 +204,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
       DI: Debug,
       OP: Optimizer<U,D>,
       for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
-                 DeviceDiffFeatureTransform<'a,U,C,B,NI,NO,DiffInput=DI> + 'static,
+                 DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
       Self: PartialForward<PartialOutput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
       <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Clone,
       Self: ForwardAll<Input=I>,
@@ -389,7 +391,7 @@ impl<const NI:usize,const NO:usize> DiffFeatureTransformLayerBuilder<NI,NO> {
     /// * [`LayerInstantiationError`]
     pub fn build<U,C,B,P,D,I,DI,OP,OB>(&self,parent: P, device:&D, ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
         -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>,LayerInstantiationError>
-        where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffInput=DI> +
+        where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> +
                  BackwardAll<U,LossInput=()> +
                  PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
               U: Clone + Copy + UnitValue<U>,

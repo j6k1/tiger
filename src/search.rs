@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
-use nncombinator::layer::{ForwardAll, PreTrain};
+use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
 use parking_lot::RwLock;
 use rand::Rng;
 use rand::rngs::ThreadRng;
@@ -202,7 +202,9 @@ enum MoveOrder {
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
                                      M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                        PreTrain<f32> + Send + Sync + 'static,
+                                        PreTrain<f32> + Send + Sync +
+                                        PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                        ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
@@ -946,7 +948,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
                                      M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                     PreTrain<f32> + Send + Sync + 'static,
+                                     PreTrain<f32> + Send + Sync +
+                                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static
 {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
@@ -956,7 +960,9 @@ pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
 impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                               S: InfoSender,
                               M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                 PreTrain<f32> + Send + Sync + 'static,
+                                 PreTrain<f32> + Send + Sync + 'static +
+                                 PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                 ContinueForward<ConinueOutput=Arr<f32,1>>,
                               <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new(thread_pool:ThreadPool) -> Root<L,S,M> {
         let(s,r) = mpsc::channel();
@@ -1314,7 +1320,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
                                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                               PreTrain<f32> + Send + Sync + 'static,
+                                               PreTrain<f32> + Send + Sync + 'static +
+                                               PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                               ContinueForward<ConinueOutput=Arr<f32,1>>,
                                             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
@@ -1432,7 +1440,9 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
                                   S: InfoSender,
                                   M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                     PreTrain<f32> + Send + Sync + 'static,
+                                     PreTrain<f32> + Send + Sync + 'static +
+                                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                     ContinueForward<ConinueOutput=Arr<f32,1>>,
                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
@@ -1441,7 +1451,9 @@ pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
 impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                    S: InfoSender,
                                    M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                      PreTrain<f32> + Send + Sync + 'static,
+                                      PreTrain<f32> + Send + Sync + 'static +
+                                      PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                      ContinueForward<ConinueOutput=Arr<f32,1>>,
                                    <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Recursive<L,S,M> {
         Recursive {
@@ -1594,7 +1606,9 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                      S: InfoSender,
                                                      M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                        PreTrain<f32> + Send + Sync + 'static,
+                                                        PreTrain<f32> + Send + Sync + 'static +
+                                                        PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                                        ContinueForward<ConinueOutput=Arr<f32,1>>,
                                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
@@ -2059,7 +2073,9 @@ pub struct Inter<L,S,M> where L: Logger + Send + 'static,
 impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                S: InfoSender,
                                M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                  PreTrain<f32> + Send + Sync + 'static,
+                                  PreTrain<f32> + Send + Sync +
+                                  PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                  ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Inter<L,S,M> {
         Inter {
@@ -2090,7 +2106,9 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
                                                         S: InfoSender,
                                                         M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                           PreTrain<f32> + Send + Sync + 'static,
+                                                           PreTrain<f32> + Send + Sync + 'static +
+                                                           PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                                           ContinueForward<ConinueOutput=Arr<f32,1>>,
                                                         <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,

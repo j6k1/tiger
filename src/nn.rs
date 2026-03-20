@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::path::{Path};
 use std::{fs};
-use std::ascii::escape_default;
 use std::marker::PhantomData;
 use std::ops::Mul;
 use std::simd::Simd;
@@ -135,10 +134,10 @@ pub struct EvalutorCreator {
 }
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
-        -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                                PartialForward<DiffInput=HalfKPDiff<'_,SignFloat<f32>,Arr<f32,256>>,PartialOutput=Arr<f32,{256*2}>> +
-                                ContinueForward<ConinueOutput=Arr<f32,{256*2}>> +
-                                PreTrain<f32, OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError>
+        -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
+                                PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                ContinueForward<ConinueOutput=Arr<f32,1>> +
+                                PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError>
         where Simd<f32,{LANES_F32}>: Mul<SignFloat<f32>,Output=Simd<f32,{LANES_F32}>> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
@@ -218,7 +217,8 @@ impl EvalutorCreator {
 pub struct Evalutor<M>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
              PreTrain<f32> + Send + Sync + 'static +
-             PartialForward<PartialOutput=Arr<f32,{256*2}>> + ContinueForward<ConinueOutput=Arr<f32,{256*2}>>,
+             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+             ContinueForward<ConinueOutput=Arr<f32,1>>,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
@@ -226,7 +226,8 @@ pub struct Evalutor<M>
 impl<M> Evalutor<M>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
              PreTrain<f32> + Send + Sync + 'static +
-             PartialForward<PartialOutput=Arr<f32,{256*2}>> + ContinueForward<ConinueOutput=Arr<f32,{256*2}>>,
+             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+             ContinueForward<ConinueOutput=Arr<f32,1>>,
              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
