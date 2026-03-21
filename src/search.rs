@@ -332,8 +332,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 extend_depth
             };
 
-            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&state,&mc,m,Arc::clone(&self_partial_output))?);
-            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&state,&mc,m,Arc::clone(&opponent_partial_output))?);
+            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
 
             let score = if expand {
                 -self.qsearch_threatmate(teban.opposite(),
@@ -543,8 +543,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&state,&mc,m,Arc::clone(&self_partial_output))?);
-            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&state,&mc,m,Arc::clone(&opponent_partial_output))?);
+            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
 
             let expand = match mo {
                 MoveOrder::ThreatCaptures => {
@@ -1524,13 +1524,13 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
-        let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban,&gs.state,gs.mc,m,Arc::clone(&gs.self_partial_output))?);
-        let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban.opposite(),&gs.state,gs.mc,m,Arc::clone(&gs.opponent_partial_output))?);
-
         let next = Rule::apply_move_none_check(&gs.state, gs.teban, gs.mc, m.to_applied_move());
 
         match next {
             (state, mc, _) => {
+                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban,&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.self_partial_output))?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban.opposite(),&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.opponent_partial_output))?);
+
                 if extend_depth > 0 {
                     if extend_check > 0 && Rule::in_check(gs.teban.opposite(),&state) {
                         depth += 1;
@@ -1572,8 +1572,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     thread_index:gs.thread_index,
                     pv:pv,
                     move_history: gs.move_history,
-                    opponent_partial_output:Arc::clone(&self_partial_output),
                     self_partial_output:Arc::clone(&opponent_partial_output),
+                    opponent_partial_output:Arc::clone(&self_partial_output),
                     mc: &mc,
                     zh: zh.clone(),
                     prev_self_ss: gs.prev_opponent_ss,
@@ -1840,8 +1840,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                        event_dispatcher,
                                        &gs.zh,
                                        &mut HashSet::new(),
-                                       gs.self_partial_output.clone(),
-                                       gs.opponent_partial_output.clone(),
+                                       Arc::clone(&gs.self_partial_output),
+                                       Arc::clone(&gs.opponent_partial_output),
                                        gs.alpha,
                                        gs.beta,
                                  1,

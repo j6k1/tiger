@@ -233,13 +233,14 @@ impl<M> Evalutor<M>
         Ok(r)
     }
 
-    pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
+    pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections,
+                                       next:&State, nmc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let ou_position = Rule::ou_square(t, state) as u32;
 
         match m {
             LegalMove::To(m) if m.src() == ou_position => {
-                let input = HalfKP::new(InputCreator::make_input(t, state, mc), InputCreator::make_input(t.opposite(), state, mc));
+                let input = HalfKP::new(InputCreator::make_input(t, next, nmc), InputCreator::make_input(t.opposite(), next, nmc));
 
                 let r = self.nn.partial_forward(input)?;
 
@@ -258,7 +259,7 @@ impl<M> Evalutor<M>
             }
         }
     }
-    pub fn evalute(&self, partial_output: &Arr<f32, {256*2}>) -> Result<i32,ApplicationError> {
+    pub fn evalute(&self, partial_output: &Arr<f32,{256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;
 
         Ok(((r[0] - 0.5) * 1200.) as i32)
@@ -851,6 +852,8 @@ impl InputCreator {
                 )))
             },
             LegalMove::To(m) => {
+                let ou_position = Rule::ou_square(t,state);
+
                 let banmen = state.get_banmen().0;
 
                 let (sx,sy) = m.src().square_to_point();
@@ -902,6 +905,8 @@ impl InputCreator {
                 Ok(inputs)
             },
             LegalMove::Put(m) => {
+                let ou_position = Rule::ou_square(t,state);
+
                 let kind = m.kind();
 
                 if let Ok(k) = KomaKind::try_from((t,kind)) {
