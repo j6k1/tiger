@@ -236,6 +236,7 @@ impl<M> Evalutor<M>
     pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections,
                                        next:&State, nmc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
+        /*
         let ou_position = Rule::ou_square(t, state) as u32;
 
         match m {
@@ -258,6 +259,13 @@ impl<M> Evalutor<M>
                 Ok(r)
             }
         }
+
+         */
+        let input = HalfKP::new(InputCreator::make_input(t, next, nmc), InputCreator::make_input(t.opposite(), next, nmc));
+
+        let r = self.nn.partial_forward(input)?;
+
+        Ok(r)
     }
     pub fn evalute(&self, partial_output: &Arr<f32,{256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;
@@ -852,7 +860,15 @@ impl InputCreator {
                 )))
             },
             LegalMove::To(m) => {
-                let ou_position = Rule::ou_square(t,state);
+                let p = Rule::ou_square(t,state);
+
+                assert_ne!(p,-1);
+
+                let ou_position = if t == Teban::Sente {
+                    p
+                } else {
+                    80 - p
+                };
 
                 let banmen = state.get_banmen().0;
 
@@ -905,7 +921,15 @@ impl InputCreator {
                 Ok(inputs)
             },
             LegalMove::Put(m) => {
-                let ou_position = Rule::ou_square(t,state);
+                let p = Rule::ou_square(t,state);
+
+                assert_ne!(p,-1);
+
+                let ou_position = if t == Teban::Sente {
+                    p
+                } else {
+                    80 - p
+                };
 
                 let kind = m.kind();
 
