@@ -640,8 +640,10 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
         for ((i,(indexes,po)),r) in input.iter().enumerate().zip([rs,ro]) {
             let mut oi = 0;
 
+            assert_eq!(po.len(),NO,"po.len() != NO, po.len() = {}",po.len());
+
             while oi + LANES_F32 <= NO {
-                let mut acc = Simd::<f32,LANES_F32>::from_slice(&po[oi..LANES_F32]);
+                let mut acc = Simd::<f32,LANES_F32>::from_slice(&po[oi..(oi + LANES_F32)]);
 
                 for &(index,sign) in indexes.iter() {
                     assert!(index < NI,"{} >= {}",index,NI);
