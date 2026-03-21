@@ -2,8 +2,6 @@ use std::fmt::Debug;
 use std::path::{Path};
 use std::{fs};
 use std::marker::PhantomData;
-use std::ops::Mul;
-use std::simd::{f32x1, Simd};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
 use libc::size_t;
@@ -41,7 +39,6 @@ use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemo
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
 use crate::{Config, EVAL_TEST_SAMPLES};
-use crate::device::LANES_F32;
 use crate::error::{ApplicationError};
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::layer::diff_feature_transform::DiffFeatureTransformLayerBuilder;
@@ -135,7 +132,7 @@ pub struct EvalutorCreator {
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                                PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
                                 ContinueForward<ConinueOutput=Arr<f32,1>> +
                                 PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
@@ -168,10 +165,10 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<'_,SignFloat<f32>,Arr<f32,{256}>>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
+        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<f32,SignFloat<f32>,256>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
-            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,{256}>::new().build(l, &device,
+            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device,
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)
@@ -214,20 +211,20 @@ impl EvalutorCreator {
     }
 }
 pub struct Evalutor<M>
-    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-             PreTrain<f32> + Send + Sync + 'static +
-             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-             ContinueForward<ConinueOutput=Arr<f32,1>>,
-             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32, 1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
 }
 impl<M> Evalutor<M>
-    where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-             PreTrain<f32> + Send + Sync + 'static +
-             PartialForward<PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-             ContinueForward<ConinueOutput=Arr<f32,1>>,
-             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                  <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
@@ -236,9 +233,8 @@ impl<M> Evalutor<M>
         Ok(r)
     }
 
-    pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:&'a Arr<f32,{256*2}>)
-        -> Result<Arr<f32,{256*2}>,ApplicationError>
-           where M: PartialForward<DiffInput=HalfKPDiff<'a,SignFloat<f32>,Arr<f32,{256*2}>>> {
+    pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
+        -> Result<Arr<f32,{256*2}>,ApplicationError> {
         match m {
             LegalMove::To(m) if m.src() == Rule::ou_square(t, state) as u32 => {
                 let input = HalfKP::new(InputCreator::make_input(t, state, mc), InputCreator::make_input(t.opposite(), state, mc));
@@ -260,7 +256,7 @@ impl<M> Evalutor<M>
             }
         }
     }
-    pub fn evalute(&self, partial_output: &Arr<f32, { 256 * 2 }>) -> Result<i32,ApplicationError> {
+    pub fn evalute(&self, partial_output: &Arr<f32, {256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;
 
         Ok(((r[0] - 0.5) * 1200.) as i32)
@@ -277,6 +273,7 @@ impl<M> Evalutor<M>
                       win:&mut usize,
                       sr:&Receiver<Result<Option<(GameEndState, f32)>,ApplicationError>>,
     ) -> Result<(),ApplicationError> {
+        /*
         while *current_threads > 0 {
             match sr.recv().map_err(|_| {
                 ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
@@ -319,6 +316,8 @@ impl<M> Evalutor<M>
             }
         }
 
+         */
+
         Ok(())
     }
     pub fn eval_test<F>(self:Arc<Self>,
@@ -350,6 +349,7 @@ impl<M> Evalutor<M>
         let mut current_threads = 0usize;
         let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32)>,ApplicationError>>();
 
+        /*
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
                 if current_threads >= eval_test_max_threads {
@@ -397,7 +397,7 @@ impl<M> Evalutor<M>
                  (count - estimated_win) as f32 / count as f32 * 100.);
         println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
         println!("{}件のテストサンプルを利用しました。",count);
-
+        */
         Ok(())
     }
 

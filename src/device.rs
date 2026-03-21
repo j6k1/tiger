@@ -628,10 +628,10 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
         Ok(args.output)
     }
 }
-impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<f32,SignFloat<f32>,NO>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           [(); NO*2]: {
-    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<'_,SignFloat<f32>,Arr<f32,NO>>)
+    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<f32,SignFloat<f32>,NO>)
         -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
@@ -641,7 +641,7 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
             let mut oi = 0;
 
             while oi + LANES_F32 <= NO {
-                let mut acc = Simd::<f32,LANES_F32>::from_slice(&po.as_raw_slice()[oi..LANES_F32]);
+                let mut acc = Simd::<f32,LANES_F32>::from_slice(&po[oi..LANES_F32]);
 
                 for &(index,sign) in indexes.iter() {
                     assert!(index < NI,"{} >= {}",index,NI);

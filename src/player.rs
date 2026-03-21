@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::{fmt, fs};
+use std::fmt::Debug;
 use std::fs::DirEntry;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,8 @@ use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
 use usiagent::rule::{AppliedMove, Kyokumen, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, Teban};
 use crate::error::ApplicationError;
-use crate::features::HalfKP;
+use crate::features::{HalfKP, HalfKPDiff};
+use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN};
 use crate::transposition_table::{TT, ZobristHash, Score};
@@ -91,11 +93,12 @@ impl FromOption for String {
         }
     }
 }
-pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                             PreTrain<f32> + Send + Sync + 'static +
-                             PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                             ContinueForward<ConinueOutput=Arr<f32,1>>,
-                          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+pub struct Tiger<M>
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
     evalutor: Option<Arc<Evalutor<M>>>,
     kyokumen:Option<Kyokumen>,
@@ -111,20 +114,22 @@ pub struct Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f
     timelimit_margin:u64,
     model_name:String
 }
-impl<M> fmt::Debug for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                         PreTrain<f32> + Send + Sync + 'static +
-                                         PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                         ContinueForward<ConinueOutput=Arr<f32,1>>,
-                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
+impl<M> fmt::Debug for Tiger<M>
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tiger")
     }
 }
-impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                          PreTrain<f32> + Send + Sync +
-                          PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                          ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
-                       <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
+impl<M> Tiger<M>
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
         Tiger {
             evalutor_creator:Box::new(evalutor_creator),
@@ -204,6 +209,9 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
 
                 let mut rng = rand::thread_rng();
 
+                let self_partial_output = Arc::new(evalutor.prepare_evalute(teban,&state,&mc)?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute(teban.opposite(),&state,&mc)?);
+
                 let mut gs = GameState {
                     teban: teban,
                     state: &Arc::new(state.clone()),
@@ -214,6 +222,8 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
                     best_score: Score::NEGINFINITE,
                     m:None,
                     prev_kind: KomaKind::Blank,
+                    self_partial_output:self_partial_output,
+                    opponent_partial_output:opponent_partial_output,
                     thread_index:0,
                     pv:&VecDeque::new(),
                     move_history:&mut Vec::new(),
@@ -290,11 +300,12 @@ impl<M> Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,
         }
     }
 }
-impl<M> USIPlayer<ApplicationError> for Tiger<M> where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                          PreTrain<f32> + Send + Sync +
-                                                          PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                                          ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
-                                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+impl<M> USIPlayer<ApplicationError> for Tiger<M>
+    where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     const ID: &'static str = "tiger";
     const AUTHOR: &'static str = "j6k1";
 

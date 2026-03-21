@@ -29,6 +29,7 @@ extern crate usiagent;
 extern crate nncombinator;
 extern crate packedsfen;
 extern crate shogi_dataloader;
+extern crate core;
 
 use std::{env};
 use std::fs::{File, OpenOptions};

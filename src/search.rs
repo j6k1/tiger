@@ -28,7 +28,8 @@ use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
-use crate::features::HalfKP;
+use crate::features::{HalfKP, HalfKPDiff};
+use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactScoreBound, Score};
 
@@ -160,6 +161,8 @@ pub struct GameState<'a> {
     pub m:Option<LegalMove>,
     pub prev_kind:KomaKind,
     pub move_history:&'a mut Vec<Option<(u8,u8)>>,
+    pub self_partial_output: Arc<Arr<f32,{256*2}>>,
+    pub opponent_partial_output: Arc<Arr<f32,{256*2}>>,
     pub thread_index:usize,
     pub pv:&'a VecDeque<LegalMove>,
     pub mc:&'a Arc<MochigomaCollections>,
@@ -177,8 +180,10 @@ pub struct GameState<'a> {
 }
 pub struct Root<L,S,M> where L: Logger + Send + 'static,
                              S: InfoSender,
-                             M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                PreTrain<f32> + Send + Sync + 'static,
+                             for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                        PreTrain<f32> + Send + Sync +
+                                        PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                        ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                              <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
@@ -201,10 +206,10 @@ enum MoveOrder {
 
 pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
-                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                        PreTrain<f32> + Send + Sync +
-                                        PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                        ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                                     for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                                PreTrain<f32> + Send + Sync +
+                                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                                ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
@@ -214,8 +219,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                zh: &ZobristHash<u64>,
                history:&mut HashSet<(Teban,u64,u64)>,
+               self_partial_output: Arc<Arr<f32,{256*2}>>,
+               opponent_partial_output: Arc<Arr<f32,{256*2}>>,
                mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,
-               evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
+               evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng)
+        -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -223,7 +231,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             env.qsearch_max_depth.map(|d| depth >= d as usize).unwrap_or(false) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
-            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            let score = Score::Value(evalutor.evalute(&self_partial_output)?);
             return Ok(score);
         }
 
@@ -242,18 +250,18 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         }
 
         if picker.len() == 0 {
-            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
+            return Ok(Score::Value(evalutor.evalute(&self_partial_output)?));
         }
 
         let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
         if mvs.len() == 0 {
-            return Ok(Score::Value(evalutor.evalute(teban,state,mc)?));
+            return Ok(Score::Value(evalutor.evalute(&self_partial_output)?));
         }
 
         history.insert((teban,mk,sk));
 
-        let stand_pat = Score::Value(evalutor.evalute(teban,state,mc)?);
+        let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
 
         if stand_pat >= beta {
             return Ok(stand_pat);
@@ -324,6 +332,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                 extend_depth
             };
 
+            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+
             let score = if expand {
                 -self.qsearch_threatmate(teban.opposite(),
                               &next,
@@ -332,6 +343,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               event_dispatcher,
                               &zh,
                               history,
+                              opponent_partial_output,
+                              self_partial_output,
                               -beta,
                               -alpha,
                               depth+1,
@@ -346,6 +359,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               event_dispatcher,
                               &zh,
                               history,
+                              opponent_partial_output,
+                              self_partial_output,
                               -beta,
                               -alpha,
                               depth+1,
@@ -385,8 +400,11 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                    event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                    zh: &ZobristHash<u64>,
                    history:&mut HashSet<(Teban,u64,u64)>,
+                   self_partial_output: Arc<Arr<f32,{256*2}>>,
+                   opponent_partial_output: Arc<Arr<f32,{256*2}>>,
                    mut alpha:Score,beta:Score,depth:usize,mut extend_depth:usize,
-                   evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng) -> Result<Score,ApplicationError> {
+                   evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng)
+        -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -394,7 +412,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             env.qsearch_max_depth.map(|d| depth >= d as usize).unwrap_or(false) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
-            let score = Score::Value(evalutor.evalute(teban, state, mc)?);
+            let score = Score::Value(evalutor.evalute(&self_partial_output)?);
             return Ok(score);
         }
 
@@ -490,7 +508,7 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         history.insert((teban,mk,sk));
 
-        let stand_pat = Score::Value(evalutor.evalute(teban,state,mc)?);
+        let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
 
         if stand_pat >= beta {
             return Ok(stand_pat);
@@ -525,6 +543,9 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
+            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban.opposite(),&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+
             let expand = match mo {
                 MoveOrder::ThreatCaptures => {
                     extend_depth > 0 && !Rule::in_check(teban.opposite(),&next)
@@ -546,6 +567,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               event_dispatcher,
                               &zh,
                               history,
+                              opponent_partial_output,
+                              self_partial_output,
                               -beta,
                               -alpha,
                               depth+1,
@@ -560,6 +583,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
                               event_dispatcher,
                               &zh,
                               history,
+                              opponent_partial_output,
+                              self_partial_output,
                               -beta,
                               -alpha,
                               depth+1,
@@ -947,10 +972,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 }
 pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
-                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                     PreTrain<f32> + Send + Sync +
-                                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                                     for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                                PreTrain<f32> + Send + Sync +
+                                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                                ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static
 {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
@@ -959,10 +984,10 @@ pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
 }
 impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                               S: InfoSender,
-                              M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                 PreTrain<f32> + Send + Sync + 'static +
-                                 PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                 ContinueForward<ConinueOutput=Arr<f32,1>>,
+                              for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                         PreTrain<f32> + Send + Sync +
+                                         PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                         ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                               <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new(thread_pool:ThreadPool) -> Root<L,S,M> {
         let(s,r) = mpsc::channel();
@@ -1063,6 +1088,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
         let mut best_score = Score::NEGINFINITE;
 
+        let self_partial_output = gs.self_partial_output.clone();
+        let opponent_partial_output = gs.opponent_partial_output.clone();
+
         let shared_depth = Arc::clone(shared_depth);
 
         if thread_index == 0 {
@@ -1133,6 +1161,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             m: None,
                             prev_kind: KomaKind::Blank,
                             move_history: &mut Vec::new(),
+                            self_partial_output:Arc::clone(&self_partial_output),
+                            opponent_partial_output:Arc::clone(&opponent_partial_output),
                             thread_index:thread_index,
                             pv:&pv,
                             mc: &mc,
@@ -1200,6 +1230,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         } else {
             let pv = VecDeque::new();
 
+            let self_partial_output = gs.self_partial_output.clone();
+            let opponent_partial_output = gs.opponent_partial_output.clone();
+
             self.thread_pool.spawn(move || {
                 let mut rng = rand::thread_rng();
 
@@ -1224,6 +1257,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         m: None,
                         prev_kind: KomaKind::Blank,
                         move_history: &mut Vec::new(),
+                        self_partial_output:Arc::clone(&self_partial_output),
+                        opponent_partial_output:Arc::clone(&opponent_partial_output),
                         thread_index:thread_index,
                         pv:&pv,
                         mc: &mc,
@@ -1319,10 +1354,10 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
-                                            M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                               PreTrain<f32> + Send + Sync + 'static +
-                                               PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                               ContinueForward<ConinueOutput=Arr<f32,1>>,
+                                            for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                                       PreTrain<f32> + Send + Sync + 'static +
+                                                       PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                                       ContinueForward<ConinueOutput=Arr<f32,1>>,
                                             <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
@@ -1439,21 +1474,21 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 }
 pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
                                   S: InfoSender,
-                                  M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                     PreTrain<f32> + Send + Sync + 'static +
-                                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                     ContinueForward<ConinueOutput=Arr<f32,1>>,
+                                  for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                             PreTrain<f32> + Send + Sync + 'static +
+                                             PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                             ContinueForward<ConinueOutput=Arr<f32,1>>,
                                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
-    m:PhantomData<M>
+    m:PhantomData<M>,
 }
 impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                    S: InfoSender,
-                                   M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                      PreTrain<f32> + Send + Sync + 'static +
-                                      PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                      ContinueForward<ConinueOutput=Arr<f32,1>>,
+                                   for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                                              PreTrain<f32> + Send + Sync + 'static +
+                                              PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                              ContinueForward<ConinueOutput=Arr<f32,1>>,
                                    <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Recursive<L,S,M> {
         Recursive {
@@ -1506,6 +1541,9 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
 
+                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban,&state,&mc,m,Arc::clone(&gs.self_partial_output))?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban.opposite(),&state,&mc,m,Arc::clone(&gs.opponent_partial_output))?);
+
                 let state = Arc::new(state);
 
                 let mc = Arc::new(mc);
@@ -1534,6 +1572,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     thread_index:gs.thread_index,
                     pv:pv,
                     move_history: gs.move_history,
+                    self_partial_output:Arc::clone(&opponent_partial_output),
+                    opponent_partial_output:Arc::clone(&self_partial_output),
                     mc: &mc,
                     zh: zh.clone(),
                     prev_self_ss: gs.prev_opponent_ss,
@@ -1585,6 +1625,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             thread_index:gs.thread_index,
             pv:&VecDeque::new(),
             move_history: gs.move_history,
+            self_partial_output:Arc::clone(&gs.opponent_partial_output),
+            opponent_partial_output:Arc::clone(&gs.self_partial_output),
             mc: &mc,
             zh: zh.clone(),
             prev_self_ss: gs.prev_opponent_ss,
@@ -1605,10 +1647,10 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                      S: InfoSender,
-                                                     M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                        PreTrain<f32> + Send + Sync + 'static +
-                                                        PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                                        ContinueForward<ConinueOutput=Arr<f32,1>>,
+                                                     for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                                                PreTrain<f32> + Send + Sync +
+                                                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                                                ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                                      <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
@@ -1798,6 +1840,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                        event_dispatcher,
                                        &gs.zh,
                                        &mut HashSet::new(),
+                                       gs.self_partial_output.clone(),
+                                       gs.opponent_partial_output.clone(),
                                        gs.alpha,
                                        gs.beta,
                                  1,
@@ -2072,10 +2116,10 @@ pub struct Inter<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                S: InfoSender,
-                               M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                  PreTrain<f32> + Send + Sync +
-                                  PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                  ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                               for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                           PreTrain<f32> + Send + Sync +
+                                           PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                           ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new() -> Inter<L,S,M> {
         Inter {
@@ -2105,10 +2149,10 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
                                                         S: InfoSender,
-                                                        M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                           PreTrain<f32> + Send + Sync + 'static +
-                                                           PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                                                           ContinueForward<ConinueOutput=Arr<f32,1>>,
+                                                        for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                                                                   PreTrain<f32> + Send + Sync +
+                                                                   PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                                                                   ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
                                                         <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
