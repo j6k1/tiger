@@ -637,7 +637,7 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
 
         let (mut rs,mut ro) = result.split_at_mut(NO);
 
-        for ((i,(indexes,po)),r) in input.iter().enumerate().zip([rs,ro]) {
+        for ((indexes,po),r) in input.iter().zip([rs,ro]) {
             let mut oi = 0;
 
             assert_eq!(po.len(),NO,"po.len() != NO, po.len() = {}",po.len());

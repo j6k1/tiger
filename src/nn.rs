@@ -235,8 +235,10 @@ impl<M> Evalutor<M>
 
     pub fn prepare_evalute_by_diff<'a>(&self, t:Teban, state:&State, mc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
+        let ou_position = Rule::ou_square(t, state) as u32;
+
         match m {
-            LegalMove::To(m) if m.src() == Rule::ou_square(t, state) as u32 => {
+            LegalMove::To(m) if m.src() == ou_position => {
                 let input = HalfKP::new(InputCreator::make_input(t, state, mc), InputCreator::make_input(t.opposite(), state, mc));
 
                 let r = self.nn.partial_forward(input)?;
@@ -245,8 +247,8 @@ impl<M> Evalutor<M>
             },
             m => {
                 let input = HalfKPDiff::new(
-                    InputCreator::make_diff_input(t, state, mc, m)?,
-                    InputCreator::make_diff_input(t.opposite(), state, mc, m)?,
+                    InputCreator::make_diff_input(t, state, mc, m,ou_position)?,
+                    InputCreator::make_diff_input(t.opposite(), state, mc, m,ou_position)?,
                     partial_output
                 );
 
@@ -839,10 +841,8 @@ impl InputCreator {
         }
         inputs
     }
-    pub fn make_diff_input(t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
+    pub fn make_diff_input(t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove,ou_position:u32) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
         let mut inputs = Vec::new();
-
-        let ou_position = Rule::ou_square(t, state);
 
         match m {
             LegalMove::To(m) if m.src() == ou_position as u32 => {
@@ -864,8 +864,6 @@ impl InputCreator {
                 }
 
                 let (dx,dy) = m.dst().square_to_point();
-
-                let kind = banmen[dy as usize][dx as usize];
 
                 let kind = if m.is_nari() {
                     kind.to_nari()
@@ -890,7 +888,7 @@ impl InputCreator {
                         Teban::Gote => mg,
                     };
 
-                    if let Ok(k) = MochigomaKind::try_from(kind) {
+                    if let Ok(k) = MochigomaKind::try_from(o) {
                         let c = mc.get(k);
 
                         if c > 0 {
@@ -931,7 +929,9 @@ impl InputCreator {
 
                 let c = mc.get(kind);
 
-                inputs.push((s + SELF_INDEX_MAP[kind as usize] + c, SignFloat::plus()));
+                if c > 0 {
+                    inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignFloat::minus()));
+                }
 
                 Ok(inputs)
             }
