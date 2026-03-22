@@ -233,14 +233,10 @@ impl<M> Evalutor<M>
         Ok(r)
     }
 
-    pub fn prepare_evalute_by_diff<'a>(&self, active: bool, t:Teban, state:&State, mc:&MochigomaCollections,
+    pub fn prepare_evalute_by_diff<'a>(&self, active_player: Teban, t:Teban, state:&State, mc:&MochigomaCollections,
                                        next:&State, nmc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
-        let ou_position = if active {
-            Rule::ou_square(t, state) as u32
-        } else {
-            Rule::ou_square(t.opposite(), state) as u32
-        };
+        let ou_position = Rule::ou_square(active_player, state) as u32;
 
         match m {
             LegalMove::To(m) if m.src() == ou_position => {
@@ -252,28 +248,12 @@ impl<M> Evalutor<M>
             },
             m => {
                 let input = HalfKPDiff::new(
-                    InputCreator::make_diff_input(active, t, state, mc, m)?,
-                    InputCreator::make_diff_input(!active, t.opposite(), state, mc, m)?,
+                    InputCreator::make_diff_input(active_player, t, state, mc, m)?,
+                    InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?,
                     partial_output
                 );
 
                 let r = self.nn.partial_forward_by_diff(input)?;
-
-                let full = {
-                    let input = HalfKP::new(InputCreator::make_input(t, next, nmc), InputCreator::make_input(t.opposite(), next, nmc));
-
-                    let r = self.nn.partial_forward(input)?;
-
-                    r
-                };
-
-                for (i,(d,f)) in r.iter().zip(full.iter()).take(256).enumerate() {
-                    assert!((d - f).abs() < 1e-5, "self, active = {}, diff = {}, full = {}, index = {}", active, d, f, i);
-                }
-
-                for (i,(d,f)) in r.iter().zip(full.iter()).skip(256).enumerate() {
-                    assert!((d - f).abs() < 1e-5, "opponent active = {}, diff = {}, full = {}, index = {}",active, d, f, i);
-                }
 
                 Ok(r)
             }
@@ -862,7 +842,7 @@ impl InputCreator {
         }
         inputs
     }
-    pub fn make_diff_input(active:bool, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
+    pub fn make_diff_input(active_player: Teban, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
         let mut inputs = Vec::new();
 
         let p = Rule::ou_square(t,state);
@@ -928,11 +908,9 @@ impl InputCreator {
                         &MochigomaCollections::Empty => (&ms,&mg),
                     };
 
-                    let mc = match t {
-                        Teban::Sente if active => ms,
-                        Teban::Sente => mg,
-                        Teban::Gote if active => mg,
-                        Teban::Gote => ms,
+                    let mc = match active_player {
+                        Teban::Sente => ms,
+                        Teban::Gote => mg,
                     };
 
                     if let Ok(k) = MochigomaKind::try_from(o) {
@@ -940,7 +918,7 @@ impl InputCreator {
 
                         let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
 
-                        if active {
+                        if t == active_player {
                             inputs.push((s + SELF_INDEX_MAP[k as usize] + c, SignFloat::plus()));
                         } else {
                             inputs.push((s + OPPONENT_INDEX_MAP[k as usize] + c, SignFloat::plus()));
@@ -959,13 +937,7 @@ impl InputCreator {
 
                 let kind = m.kind();
 
-                let kt = if active {
-                    t
-                } else {
-                    t.opposite()
-                };
-
-                if let Ok(k) = KomaKind::try_from((kt,kind)) {
+                if let Ok(k) = KomaKind::try_from((active_player,kind)) {
                     let (dx,dy) = m.dst().square_to_point();
 
                     let index = InputCreator::input_index_of_banmen(t, k, dx as u32, dy as u32).unwrap();
@@ -983,11 +955,9 @@ impl InputCreator {
                     &MochigomaCollections::Empty => (&ms,&mg),
                 };
 
-                let mc = match t {
-                    Teban::Sente if active => ms,
-                    Teban::Sente => mg,
-                    Teban::Gote if active => mg,
-                    Teban::Gote => ms,
+                let mc = match active_player {
+                    Teban::Sente => ms,
+                    Teban::Gote => mg,
                 };
 
                 let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
@@ -995,7 +965,7 @@ impl InputCreator {
                 let c = mc.get(kind);
 
                 if c > 0 {
-                    if active {
+                    if t == active_player {
                         inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignFloat::minus()));
                     } else {
                         inputs.push((s + OPPONENT_INDEX_MAP[kind as usize] + c - 1, SignFloat::minus()));

@@ -655,11 +655,6 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
                     });
                 }
 
-                let bias = bias.as_raw_slice();
-                let bias = &bias[oi..];
-
-                acc += Simd::<f32,LANES_F32>::from_slice(&bias[..LANES_F32]);
-
                 acc.copy_to_slice(&mut r[oi..(oi + LANES_F32)]);
 
                 oi += LANES_F32;
@@ -669,7 +664,7 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
                 let offset = NO / LANES_F32 * LANES_F32;
 
                 for oi in offset..NO {
-                    let mut acc = 0.;
+                    let mut acc = po[oi];
 
                     for &(index,sign) in indexes.iter() {
                         assert!(index < NI,"{} >= {}",index,NI);
@@ -677,8 +672,6 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
                             acc += w[oi] * sign;
                         });
                     }
-
-                    r[oi] += acc + bias[oi];
                 }
             }
         }
