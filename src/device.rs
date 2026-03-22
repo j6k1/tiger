@@ -121,7 +121,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
                         });
                     }
 
-                    result[oi] += bias[oi - (NO * i)];
+                    result[oi] += acc + bias[oi - (NO * i)];
                 }
             }
 
@@ -678,7 +678,7 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
                         });
                     }
 
-                    r[oi] += bias[oi];
+                    r[oi] += acc + bias[oi];
                 }
             }
         }
