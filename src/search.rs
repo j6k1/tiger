@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
+use std::mem;
 use std::ops::{Deref};
 use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -93,6 +94,14 @@ pub enum EvaluationResult {
     Timeout,
     Stop,
     Repetition
+}
+impl EvaluationResult {
+    pub fn best_score(&self) -> Option<Score> {
+        match self {
+            EvaluationResult::Immediate(s,_,_,_) => Some(*s),
+            _ => None
+        }
+    }
 }
 #[derive(Debug)]
 pub enum RootEvaluationResult {
@@ -1099,58 +1108,89 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 let mut rng = rand::thread_rng();
                 let search_offset = 0;
 
-                for depth in 1..=base_depth {
-                    let r = /*if let Score::Value(prev_score) = prev_score {
-                let delta = Self::compute_aspiration_window_delta(depth);
+                let mut prev_score = Score::NEGINFINITE;
 
-                let mut alpha = Score::Value(prev_score - delta);
-                let mut beta = Score::Value(prev_score + delta);
+                'ounter: for depth in 1..=base_depth {
+                    if let Score::Value(ps) = prev_score {
+                        //let delta = Self::compute_aspiration_window_delta(depth);
+                        let delta = FU_SCORE * 2;
 
-                let mut gs = GameState {
-                    teban: teban,
-                    state: &state,
-                    alpha: alpha,
-                    beta: beta,
-                    search_offset: search_offset,
-                    best_score: best_score,
-                    m: None,
-                    prev_kind: KomaKind::Blank,
-                    pv:&pv,
-                    mc: &mc,
-                    zh: zh,
-                    depth: depth,
-                    current_depth: current_depth,
-                    current_max_ply: current_max_ply,
-                    base_depth: base_depth,
-                    extend_depth: extend_depth,
-                    extend_check: 1,
-                    extend_threatmate: 1,
-                    rng:&mut rng
-                };
+                        let mut alpha = Score::Value(ps - delta);
+                        let mut beta = Score::Value(ps + delta);
 
-                let strategy = Inter::new();
+                        let strategy = Inter::new();
 
-                let mut r = strategy.search(&mut env, &mut gs, &evalutor, &mvs);
+                        for i in 0..2 {
+                            let mut gs = GameState {
+                                teban: teban,
+                                state: &state,
+                                alpha: alpha,
+                                beta: beta,
+                                search_offset: search_offset,
+                                best_score: best_score,
+                                m: None,
+                                prev_kind: KomaKind::Blank,
+                                move_history: &mut Vec::new(),
+                                self_partial_output:Arc::clone(&self_partial_output),
+                                opponent_partial_output:Arc::clone(&opponent_partial_output),
+                                thread_index:thread_index,
+                                pv:&pv,
+                                mc: &mc,
+                                zh: zh.clone(),
+                                prev_self_ss: None,
+                                prev_opponent_ss: None,
+                                depth: depth,
+                                current_depth: current_depth,
+                                current_max_ply: current_max_ply,
+                                base_depth: base_depth,
+                                extend_depth: extend_depth,
+                                extend_check: 1,
+                                extend_threatmate: 1,
+                                rng:&mut rng
+                            };
 
-                r = match r {
-                    Ok(EvaluationResult::Immediate(score,rmvs,zh)) => {
-                        if score <= alpha {
-                            gs.alpha = Score::NEGINFINITE;
-                            strategy.search(&mut env, &mut gs, &evalutor, &mvs)
-                        } else if score >= beta {
-                            gs.beta = Score::INFINITE;
-                            strategy.search(&mut env, &mut gs, &evalutor, &mvs)
-                        } else {
-                            Ok(EvaluationResult::Immediate(score,rmvs,zh))
+                            match strategy.search(&mut env, &mut gs, &evalutor, &mvs) {
+                                Ok(EvaluationResult::Immediate(score,mvs,zh,seldepth)) => {
+                                    if i == 0 && score <= alpha {
+                                        alpha = Score::NEGINFINITE;
+                                    } else if i == 0 && score >= beta {
+                                        beta = Score::INFINITE;
+                                    } else {
+                                        prev_score = score;
+
+                                        pv = mvs.clone();
+
+                                        if score > best_score {
+                                            best_score = score;
+                                        }
+
+                                        let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,seldepth,thread_index)));
+                                        break;
+                                    }
+                                },
+                                Ok(EvaluationResult::NodeLimits) => {
+                                    let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
+                                    break 'ounter;
+                                },
+                                Ok(EvaluationResult::Timeout) => {
+                                    let _ = sender.send(Ok(RootEvaluationResult::Timeout));
+                                    break 'ounter;
+                                },
+                                Ok(EvaluationResult::Repetition) => {
+                                    let _ = sender.send(Ok(RootEvaluationResult::Repetition));
+                                    break 'ounter;
+                                },
+                                Ok(EvaluationResult::Stop) => {
+                                    let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                                    break 'ounter;
+                                },
+                                Err(e) => {
+                                    let _ = sender.send(Err(e));
+                                    break 'ounter;
+                                }
+                            };
                         }
-                    },
-                    r => {
-                        r
-                    }
-                };
-
-                r
-            } else */{
+                    } else {
                         let mut gs = GameState {
                             teban: teban,
                             state: &state,
@@ -1161,10 +1201,10 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             m: None,
                             prev_kind: KomaKind::Blank,
                             move_history: &mut Vec::new(),
-                            self_partial_output:Arc::clone(&self_partial_output),
-                            opponent_partial_output:Arc::clone(&opponent_partial_output),
-                            thread_index:thread_index,
-                            pv:&pv,
+                            self_partial_output: Arc::clone(&self_partial_output),
+                            opponent_partial_output: Arc::clone(&opponent_partial_output),
+                            thread_index: thread_index,
+                            pv: &pv,
                             mc: &mc,
                             zh: zh.clone(),
                             prev_self_ss: None,
@@ -1176,43 +1216,41 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             extend_depth: extend_depth,
                             extend_check: 1,
                             extend_threatmate: 1,
-                            rng:&mut rng
+                            rng: &mut rng
                         };
 
                         let strategy = Inter::new();
 
-                        strategy.search(&mut env, &mut gs, &evalutor, &mvs)
-                    };
+                        match strategy.search(&mut env, &mut gs, &evalutor, &mvs) {
+                            Ok(EvaluationResult::Immediate(score, mvs, zh, seldepth)) => {
+                                pv = mvs.clone();
 
-                    match r {
-                        Ok(EvaluationResult::Immediate(score,mvs,zh, seldepth)) => {
-                            pv = mvs.clone();
+                                if score > best_score {
+                                    best_score = score;
+                                }
 
-                            if score > best_score {
-                                best_score = score;
+                                let _ = sender.send(Ok(RootEvaluationResult::Immediate(score, mvs, zh, depth, seldepth, thread_index)));
+                            },
+                            Ok(EvaluationResult::NodeLimits) => {
+                                let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
+                                break;
+                            },
+                            Ok(EvaluationResult::Timeout) => {
+                                let _ = sender.send(Ok(RootEvaluationResult::Timeout));
+                                break;
+                            },
+                            Ok(EvaluationResult::Repetition) => {
+                                let _ = sender.send(Ok(RootEvaluationResult::Repetition));
+                                break;
+                            },
+                            Ok(EvaluationResult::Stop) => {
+                                let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                                break;
+                            },
+                            Err(e) => {
+                                let _ = sender.send(Err(e));
+                                break;
                             }
-
-                            let _ = sender.send(Ok(RootEvaluationResult::Immediate(score,mvs,zh,depth,seldepth,thread_index)));
-                        },
-                        Ok(EvaluationResult::NodeLimits) => {
-                            let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
-                            break;
-                        },
-                        Ok(EvaluationResult::Timeout) => {
-                            let _ = sender.send(Ok(RootEvaluationResult::Timeout));
-                            break;
-                        },
-                        Ok(EvaluationResult::Repetition) => {
-                            let _ = sender.send(Ok(RootEvaluationResult::Repetition));
-                            break;
-                        },
-                        Ok(EvaluationResult::Stop) => {
-                            let _ = sender.send(Ok(RootEvaluationResult::Stop));
-                            break;
-                        },
-                        Err(e) => {
-                            let _ = sender.send(Err(e));
-                            break;
                         }
                     }
 
@@ -1351,6 +1389,19 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
 
         (delta * 1.4) as i32
     }
+
+    pub fn choose_result(&self, pv_result:&mut [Option<EvaluationResult>], pv_depth: usize,
+                                worker_result: &mut [Option<EvaluationResult>], worker_depth: usize) -> Option<EvaluationResult> {
+        if worker_depth > pv_depth && worker_result[worker_depth].as_ref().and_then(|wr| {
+            pv_result[pv_depth].as_ref().map(|pr| {
+                wr.best_score().and_then(|ws| pr.best_score().map(|ps| ws >= ps)).unwrap_or(false)
+            }).or(Some(true))
+        }).unwrap_or(false) {
+            worker_result[worker_depth].take()
+        } else {
+            pv_result[pv_depth].take()
+        }
+    }
 }
 impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                                             S: InfoSender,
@@ -1366,8 +1417,13 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
         let base_depth = gs.base_depth;
         let max_depth = base_depth as usize + 2;
-        let mut result = vec![None;max_depth+1];
-        let mut decided_depth = 0;
+        let mut pv_result = vec![None;max_depth+1];
+        let mut worker_result = vec![None;max_depth+1];
+        let mut pv_depth = 0;
+        let mut worker_depth = 0;
+        let mut pv_best_score = vec![Score::NEGINFINITE;max_depth+1];;
+        let mut worker_best_score = vec![Score::NEGINFINITE;max_depth+1];;
+
         let shared_depth = Arc::new(AtomicUsize::new(1));
 
         let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
@@ -1414,38 +1470,56 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                         let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                     }
 
-                    match result[depth as usize] {
-                        Some(EvaluationResult::Immediate(bs, _, _, _)) if thread_index == 0 => {
-                            result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
-                        },
-                        None => {
-                            result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
-                        },
-                        _ => ()
+                    if thread_index == 0 {
+                        match pv_result[depth as usize] {
+                            Some(EvaluationResult::Immediate(bs, _, _, _)) if bs > pv_best_score[depth as usize] => {
+                                pv_best_score[depth as usize] = bs;
+                                pv_result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                            },
+                            None => {
+                                pv_result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                            },
+                            _ => ()
+                        }
+
+                        if depth > pv_depth {
+                            pv_depth = depth;
+                        }
+                    } else {
+                        match worker_result[depth as usize] {
+                            Some(EvaluationResult::Immediate(bs, _, _, _)) if bs > worker_best_score[depth as usize] => {
+                                worker_best_score[depth as usize] = bs;
+                                worker_result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                            },
+                            None => {
+                                worker_result[depth as usize] = Some(EvaluationResult::Immediate(s, mvs, zh, seldepth));
+                            },
+                            _ => ()
+                        }
+
+                        if depth > worker_depth {
+                            worker_depth = depth;
+                        }
                     }
 
-                    if depth > decided_depth && thread_index == 0 {
-                        decided_depth = depth;
-                    }
-
-                    self.send_message(env, format!("search_id = {}, decided_depth = {}, {}",
-                                                   env.search_id.load(Ordering::Acquire), decided_depth, result[decided_depth as usize].is_some()
+                    self.send_message(env, format!("search_id = {}, pv_depth = {}, worker_depth = {}",
+                                                   env.search_id.load(Ordering::Acquire), pv_depth, worker_depth
                     ).as_str())?;
                 },
                 Ok(RootEvaluationResult::NodeLimits) => {
                     self.termination(env, busy_threads)?;
 
-                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::NodeLimits));
+                    return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::NodeLimits));
                 },
                 Ok(RootEvaluationResult::Timeout) => {
                     self.termination(env, busy_threads)?;
 
-                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Timeout));
+                    return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Timeout));
                 },
                 Ok(RootEvaluationResult::Stop) => {
                     self.termination(env, busy_threads)?;
 
-                    return Ok(result[decided_depth.max(1) as usize].take().unwrap_or(EvaluationResult::Stop));
+                    return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Stop));
                 },
                 Ok(RootEvaluationResult::Repetition) => {
                     self.termination(env, busy_threads)?;
@@ -1465,7 +1539,7 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
-        result[decided_depth.max(1) as usize].take().ok_or(
+        self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).ok_or(
             ApplicationError::LogicError(String::from(
                 "No search results"
             ))
