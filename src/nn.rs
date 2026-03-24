@@ -276,7 +276,6 @@ impl<M> Evalutor<M>
                       win:&mut usize,
                       sr:&Receiver<Result<Option<(GameEndState, f32)>,ApplicationError>>,
     ) -> Result<(),ApplicationError> {
-        /*
         while *current_threads > 0 {
             match sr.recv().map_err(|_| {
                 ApplicationError::InvalidStateError(String::from("evalution thread worker is dead."))
@@ -319,8 +318,6 @@ impl<M> Evalutor<M>
             }
         }
 
-         */
-
         Ok(())
     }
     pub fn eval_test<F>(self:Arc<Self>,
@@ -352,7 +349,6 @@ impl<M> Evalutor<M>
         let mut current_threads = 0usize;
         let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32)>,ApplicationError>>();
 
-        /*
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
                 if current_threads >= eval_test_max_threads {
@@ -400,7 +396,7 @@ impl<M> Evalutor<M>
                  (count - estimated_win) as f32 / count as f32 * 100.);
         println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
         println!("{}件のテストサンプルを利用しました。",count);
-        */
+
         Ok(())
     }
 
