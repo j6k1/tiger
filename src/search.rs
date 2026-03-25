@@ -37,6 +37,26 @@ use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactSc
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
 pub const MAX_THREADS:u32 = 2;
+pub struct StaticEval {
+    pub static_eval:Option<i32>,
+}
+impl StaticEval {
+    pub fn new() -> StaticEval {
+        StaticEval {
+            static_eval:None
+        }
+    }
+
+    pub fn get_or_insert_with<F: FnOnce() -> Result<i32,ApplicationError>>(&mut self, f:F) -> Result<i32,ApplicationError> {
+        match self.static_eval {
+            Some(e) => Ok(e),
+            None => {
+                let static_eval = f()?;
+                Ok(*self.static_eval.get_or_insert(static_eval))
+            }
+        }
+    }
+}
 pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub event_queue:Arc<Mutex<UserEventQueue>>,
     pub info_sender:S,
@@ -1580,7 +1600,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
                                      depth:u32,
-                                     static_eval: i32,
                                      evasions_count: Option<usize>,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
@@ -1651,7 +1670,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     mc: &mc,
                     zh: zh.clone(),
                     prev_self_ss: gs.prev_opponent_ss,
-                    prev_opponent_ss: Some(static_eval),
+                    prev_opponent_ss: gs.prev_self_ss,
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
                     current_max_ply: gs.current_max_ply,
@@ -1749,7 +1768,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let prev_eval = gs.prev_self_ss;
 
-        let static_eval = 0;//evalutor.evalute(gs.teban,&gs.state,&gs.mc)?;
+        let mut static_eval = StaticEval::new();
 
         if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
@@ -1859,23 +1878,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             }
         }
+        */
 
-         */
-        /*
-        if gs.depth >= 1 && gs.depth <= 3 &&
-            !Rule::in_check(gs.teban,&gs.state) {
-            let static_eval = evalutor.evalute(gs.teban,gs.state,gs.mc)?;
-
-            // Futility Pruning
-            if gs.depth <= 2 && Score::Value(static_eval + FU_SCORE * (2 * gs.depth as i32 + 3)) <= gs.alpha {
-                let mut mvs = VecDeque::new();
-
-                prev_move.map(|m| mvs.push_front(m));
-
-                return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone(),gs.current_depth));
-            // Razoring
-            } else if gs.depth >= 2 && gs.depth <= 3 &&
-                Score::Value(static_eval + FU_SCORE * (3 * gs.depth as i32 + 5)) <= gs.alpha {
+        // Razoring
+        if gs.depth >= 1 && gs.pv.is_empty() {
+            if Score::Value(static_eval.get_or_insert_with(|| {
+                evalutor.evalute(&gs.self_partial_output)
+            })?) < gs.alpha - 514 - 294 * gs.depth as i32 * gs.depth as i32 {
                 let s = self.qsearch(gs.teban,
                                      &gs.state,
                                      &gs.mc,
@@ -1883,6 +1892,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                      event_dispatcher,
                                      &gs.zh,
                                      &mut HashSet::new(),
+                                     Arc::clone(&gs.self_partial_output),
+                                     Arc::clone(&gs.opponent_partial_output),
                                      gs.alpha,
                                      gs.beta,
                                      1,
@@ -1903,8 +1914,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                 }
             }
         }
-
-         */
 
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
@@ -1939,6 +1948,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         let mut quiet_alpha = gs.alpha;
 
         let beta = gs.beta;
+
         let mut scoreval = Score::NEGINFINITE;
         let mut best_moves = VecDeque::new();
 
@@ -2029,6 +2039,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                     }
                 }
 
+                if gs.depth >= 1 && gs.depth <= 3 &&
+                    !Rule::in_check(gs.teban,&gs.state) {
+                    let static_eval = static_eval.unwrap();
+                    // Futility Pruning
+                    if gs.depth <= 2 && gs.pv.is_empty() && scoreval - static_eval > Score::Value((16. * gs.depth as f32 * 1.) as i32) {
+                        let mut mvs = VecDeque::new();
+
+                        mvs.push_front(m);
+                        prev_move.map(|m| mvs.push_front(m));
+
+                        return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone(),gs.current_depth));
+                    }
                  */
 
                 let mut r = self.calc_lmr(env,
@@ -2066,7 +2088,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         &pv_non
                     };
 
-                    match self.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,event_dispatcher,evalutor)? {
+                    match self.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
@@ -2218,7 +2240,7 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -2376,7 +2398,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         &pv_non
                     };
 
-                    match recur.search_child_node(env,gs,m,pv,alpha,depth,static_eval,evasions_count,&mut event_dispatcher,evalutor)? {
+                    match recur.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,&mut event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 

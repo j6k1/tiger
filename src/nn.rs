@@ -262,7 +262,7 @@ impl<M> Evalutor<M>
     pub fn evalute(&self, partial_output: &Arr<f32,{256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;
 
-        Ok(((r[0] - 0.5) * 2000.) as i32)
+        Ok(((r[0] - 0.5) * 2230.) as i32)
     }
     pub fn evalute_material(&self,teban:Teban,state:&State,mc:&MochigomaCollections) -> i32 {
         self.material_evalutor.evalute(teban,state,mc)
