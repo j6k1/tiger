@@ -37,6 +37,7 @@ use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactSc
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
 pub const MAX_THREADS:u32 = 2;
+#[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
 pub struct StaticEval {
     pub static_eval:Option<i32>,
 }
@@ -110,6 +111,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
 #[derive(Debug,Clone)]
 pub enum EvaluationResult {
     Immediate(Score, VecDeque<LegalMove>, ZobristHash<u64>,u32),
+    Cut,
     NodeLimits,
     Timeout,
     Stop,
@@ -188,6 +190,7 @@ pub struct GameState<'a> {
     pub search_offset:usize,
     pub best_score:Score,
     pub m:Option<LegalMove>,
+    pub static_eval:StaticEval,
     pub prev_kind:KomaKind,
     pub move_history:&'a mut Vec<Option<(u8,u8)>>,
     pub self_partial_output: Arc<Arr<f32,{256*2}>>,
@@ -196,11 +199,11 @@ pub struct GameState<'a> {
     pub pv:&'a VecDeque<LegalMove>,
     pub mc:&'a Arc<MochigomaCollections>,
     pub zh:ZobristHash<u64>,
-    pub prev_self_ss:Option<i32>,
-    pub prev_opponent_ss:Option<i32>,
     pub depth:u32,
     pub current_depth:u32,
     pub current_max_ply:usize,
+    pub cut_node:bool,
+    pub nmp_min_ply:Option<u32>,
     pub base_depth:u32,
     pub extend_depth:u32,
     pub extend_check:u32,
@@ -1149,6 +1152,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                 search_offset: search_offset,
                                 best_score: best_score,
                                 m: None,
+                                static_eval: StaticEval::new(),
                                 prev_kind: KomaKind::Blank,
                                 move_history: &mut Vec::new(),
                                 self_partial_output:Arc::clone(&self_partial_output),
@@ -1157,11 +1161,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                 pv:&pv,
                                 mc: &mc,
                                 zh: zh.clone(),
-                                prev_self_ss: None,
-                                prev_opponent_ss: None,
                                 depth: depth,
                                 current_depth: current_depth,
                                 current_max_ply: current_max_ply,
+                                cut_node: false,
+                                nmp_min_ply: None,
                                 base_depth: base_depth,
                                 extend_depth: extend_depth,
                                 extend_check: 1,
@@ -1204,6 +1208,10 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                     let _ = sender.send(Ok(RootEvaluationResult::Stop));
                                     break 'ounter;
                                 },
+                                Ok(EvaluationResult::Cut) => {
+                                    let _ = sender.send(Err(ApplicationError::LogicError(String::from("The root node has been pruned."))));
+                                    break 'ounter;
+                                },
                                 Err(e) => {
                                     let _ = sender.send(Err(e));
                                     break 'ounter;
@@ -1219,6 +1227,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             search_offset: search_offset,
                             best_score: best_score,
                             m: None,
+                            static_eval: StaticEval::new(),
                             prev_kind: KomaKind::Blank,
                             move_history: &mut Vec::new(),
                             self_partial_output: Arc::clone(&self_partial_output),
@@ -1227,11 +1236,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             pv: &pv,
                             mc: &mc,
                             zh: zh.clone(),
-                            prev_self_ss: None,
-                            prev_opponent_ss: None,
                             depth: depth,
                             current_depth: current_depth,
                             current_max_ply: current_max_ply,
+                            cut_node: false,
+                            nmp_min_ply: None,
                             base_depth: base_depth,
                             extend_depth: extend_depth,
                             extend_check: 1,
@@ -1267,6 +1276,10 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                 let _ = sender.send(Ok(RootEvaluationResult::Stop));
                                 break;
                             },
+                            Ok(EvaluationResult::Cut) => {
+                                let _ = sender.send(Err(ApplicationError::LogicError(String::from("The root node has been pruned."))));
+                                break;
+                            }
                             Err(e) => {
                                 let _ = sender.send(Err(e));
                                 break;
@@ -1313,6 +1326,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         search_offset: search_offset,
                         best_score: best_score,
                         m: None,
+                        static_eval:StaticEval::new(),
                         prev_kind: KomaKind::Blank,
                         move_history: &mut Vec::new(),
                         self_partial_output:Arc::clone(&self_partial_output),
@@ -1321,11 +1335,11 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         pv:&pv,
                         mc: &mc,
                         zh: zh.clone(),
-                        prev_self_ss: None,
-                        prev_opponent_ss: None,
                         depth: depth,
                         current_depth: current_depth,
                         current_max_ply: current_max_ply,
+                        cut_node: false,
+                        nmp_min_ply: None,
                         base_depth: base_depth,
                         extend_depth: extend_depth,
                         extend_check: 1,
@@ -1356,6 +1370,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         },
                         Ok(EvaluationResult::Stop) => {
                             let _ = sender.send(Ok(RootEvaluationResult::Stop));
+                        },
+                        Ok(EvaluationResult::Cut) => {
+                            let _ = sender.send(Err(ApplicationError::LogicError(String::from("The root node has been pruned."))));
                         },
                         Err(e) => {
                             let _ = sender.send(Err(e));
@@ -1599,8 +1616,10 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
+                                     best_score:Score,
                                      depth:u32,
-                                     evasions_count: Option<usize>,
+                                     cut_node:bool,
+                                     nmp_min_ply:Option<u32>,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let o = match m {
@@ -1624,6 +1643,20 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                 let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban,&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.self_partial_output))?);
                 let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban.opposite(),&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.opponent_partial_output))?);
 
+                let mut static_eval = StaticEval::new();
+
+                // Futility Pruning
+                /*
+                if !cut_node && gs.depth >= 1 && gs.depth <= 3 &&
+                    pv.is_empty() && !Rule::in_check(gs.teban,&gs.state) &&
+                    // Since the score is calculated from the opponent's perspective,
+                    // the sign is reversed. Therefore, we add rather than subtract.
+                    best_score + static_eval.get_or_insert_with(|| {
+                        evalutor.evalute(&opponent_partial_output)
+                    })? > Score::Value((16. * gs.depth as f32 * 1.) as i32) {
+                    return Ok(EvaluationResult::Cut);
+                }
+                */
                 if extend_depth > 0 {
                     if extend_check > 0 && Rule::in_check(gs.teban.opposite(),&state) {
                         depth += 1;
@@ -1661,6 +1694,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     search_offset: 0,
                     best_score: gs.best_score,
                     m: Some(m),
+                    static_eval:static_eval,
                     prev_kind: prev_kind,
                     thread_index:gs.thread_index,
                     pv:pv,
@@ -1669,11 +1703,11 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     opponent_partial_output:Arc::clone(&self_partial_output),
                     mc: &mc,
                     zh: zh.clone(),
-                    prev_self_ss: gs.prev_opponent_ss,
-                    prev_opponent_ss: gs.prev_self_ss,
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
                     current_max_ply: gs.current_max_ply,
+                    cut_node: cut_node,
+                    nmp_min_ply: nmp_min_ply,
                     base_depth: gs.base_depth,
                     extend_depth: extend_depth,
                     extend_check: extend_check,
@@ -1695,7 +1729,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                                    alpha:Score,
                                    beta:Score,
                                    depth:u32,
-                                   static_eval: i32,
                                    event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                    evalutor: &Arc<Evalutor<M>>)
         -> Result<EvaluationResult, ApplicationError> {
@@ -1714,6 +1747,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             search_offset: 0,
             best_score: gs.best_score,
             m: None,
+            static_eval: StaticEval::new(),
             prev_kind: Blank,
             thread_index:gs.thread_index,
             pv:&VecDeque::new(),
@@ -1722,11 +1756,11 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             opponent_partial_output:Arc::clone(&gs.self_partial_output),
             mc: &mc,
             zh: zh.clone(),
-            prev_self_ss: gs.prev_opponent_ss,
-            prev_opponent_ss: Some(static_eval),
-            depth: depth - 1,
+            depth: depth,
             current_depth: gs.current_depth + 1,
             current_max_ply: gs.current_max_ply,
+            cut_node: false,
+            nmp_min_ply: gs.nmp_min_ply,
             base_depth: gs.base_depth,
             extend_depth: gs.extend_depth,
             extend_check: gs.extend_check,
@@ -1766,9 +1800,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             return Ok(EvaluationResult::Timeout);
         }
 
-        let prev_eval = gs.prev_self_ss;
-
-        let mut static_eval = StaticEval::new();
+        let mut static_eval = gs.static_eval;
 
         if self.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
@@ -1826,59 +1858,33 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
-        /*
-        {
-            const R:u32 = 2;
+        if gs.depth == 0 {
+            let s = self.qsearch(gs.teban,
+                                 &gs.state,
+                                 &gs.mc,
+                                 env,
+                                 event_dispatcher,
+                                 &gs.zh,
+                                 &mut HashSet::new(),
+                                 Arc::clone(&gs.self_partial_output),
+                                 Arc::clone(&gs.opponent_partial_output),
+                                 gs.alpha,
+                                 gs.beta,
+                                 1,
+                                 1,
+                                 evalutor,
+                                 gs.rng)?;
 
-            let ou_surrounding_threats_count = match gs.teban {
-                Teban::Sente => Rule::sente_ou_surrounding_threats_count(&gs.state.get_part()),
-                Teban::Gote => Rule::gote_ou_surrounding_threats_count(&gs.state.get_part())
-            };
+            let mut mvs = VecDeque::new();
 
-            let mcount = match &gs.mc.deref() {
-                &MochigomaCollections::Empty => 0,
-                &MochigomaCollections::Pair(ms,mg) => {
-                    ms.iter().fold(0,|acc,(_,c)| acc + c) +
-                    mg.iter().fold(0,|acc,(_,c)| acc + c)
-                }
-            };
+            prev_move.map(|m| mvs.push_front(m));
 
-            if gs.depth >= 4 &&
-                gs.beta < Score::MAYBEINFINITE &&
-                gs.beta > Score::MAYBENEGINFINITE &&
-                !Rule::in_check(gs.teban,&gs.state) &&
-                ((gs.state.get_part().sente_self_board | gs.state.get_part().sente_opponent_board).bitcount() > 12 ||
-                  mcount > 6) && ou_surrounding_threats_count < 3 {
-
-                let depth = gs.depth - R;
-
-                match self.search_null_move(env, gs,-gs.beta,-gs.beta+1, depth, event_dispatcher, evalutor)? {
-                    EvaluationResult::Immediate(s, _, _) => {
-                        let s = -s;
-
-                        if s >= gs.beta {
-                            env.transposition_table.update(&gs.zh,depth as i8,s,gs.beta,gs.alpha,Bound::LowerBound,None);
-
-                            let mut best_moves = VecDeque::new();
-
-                            gs.m.map(|m| best_moves.push_front(m));
-
-                            return Ok(EvaluationResult::Immediate(s, best_moves, gs.zh.clone()));
-                        }
-                    },
-                    EvaluationResult::Timeout => {
-                        return Ok(EvaluationResult::Timeout);
-                    },
-                    EvaluationResult::Stop => {
-                        return Ok(EvaluationResult::Stop);
-                    },
-                    EvaluationResult::Repetition => {
-
-                    }
-                }
+            if env.stop.load(Ordering::Acquire) {
+                return Ok(EvaluationResult::Stop);
+            } else {
+                return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone(),gs.current_depth));
             }
         }
-        */
 
         // Razoring
         if gs.depth >= 1 && gs.pv.is_empty() {
@@ -1915,31 +1921,105 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             }
         }
 
-        if gs.depth == 0 {
-            let s = self.qsearch(gs.teban,
-                                       &gs.state,
-                                       &gs.mc,
-                                       env,
-                                       event_dispatcher,
-                                       &gs.zh,
-                                       &mut HashSet::new(),
-                                       Arc::clone(&gs.self_partial_output),
-                                       Arc::clone(&gs.opponent_partial_output),
-                                       gs.alpha,
-                                       gs.beta,
-                                 1,
-                                       1,
-                                       evalutor,
-                                       gs.rng)?;
+        if let Score::Value(beta) = gs.beta {
+            if gs.pv.is_empty() && gs.cut_node && static_eval.get_or_insert_with(|| {
+                evalutor.evalute(&gs.self_partial_output)
+            })? >= beta - 18 * gs.depth as i32 + 390 && gs.current_depth >= gs.nmp_min_ply.unwrap_or(0) {
+                //let r = 7 + gs.depth as u32 / 3;
+                let r = 2 + gs.depth as u32 / 4;
 
-            let mut mvs = VecDeque::new();
+                match self.search_null_move(env, gs, -gs.beta, -gs.beta + 1, gs.depth.saturating_sub(r), event_dispatcher, evalutor)? {
+                    EvaluationResult::Immediate(s, _, zh,_) => {
+                        let s = -s;
 
-            prev_move.map(|m| mvs.push_front(m));
+                        let null_value = s;
 
-            if env.stop.load(Ordering::Acquire) {
-                return Ok(EvaluationResult::Stop);
-            } else {
-                return Ok(EvaluationResult::Immediate(s, mvs, gs.zh.clone(),gs.current_depth));
+                        let mut best_moves = VecDeque::new();
+
+                        gs.m.map(|m| best_moves.push_front(m));
+
+                        if s >= gs.beta && s < Score::MAYBEINFINITE {
+                            if gs.nmp_min_ply.unwrap_or(0) == 0 || gs.depth < 16 {
+                                return Ok(EvaluationResult::Immediate(s, best_moves, zh, gs.current_depth));
+                            }
+
+                            let nmp_min_ply = (gs.current_depth as i32 + 3 * (gs.depth as i32 - r as i32) / 4).max(0) as u32;
+
+                            let mut gs = GameState {
+                                teban: gs.teban,
+                                state: &gs.state,
+                                rng: gs.rng,
+                                alpha: Score::Value(beta - 1),
+                                beta: Score::Value(beta),
+                                search_offset: gs.search_offset,
+                                best_score: gs.best_score,
+                                m: gs.m,
+                                static_eval:static_eval.clone(),
+                                prev_kind: gs.prev_kind,
+                                thread_index:gs.thread_index,
+                                pv:&VecDeque::new(),
+                                move_history: gs.move_history,
+                                self_partial_output:Arc::clone(&gs.self_partial_output),
+                                opponent_partial_output:Arc::clone(&gs.opponent_partial_output),
+                                mc: gs.mc,
+                                zh: gs.zh.clone(),
+                                depth: gs.depth.saturating_sub(r),
+                                current_depth: gs.current_depth,
+                                current_max_ply: gs.current_max_ply,
+                                cut_node: false,
+                                nmp_min_ply: Some(nmp_min_ply),
+                                base_depth: gs.base_depth,
+                                extend_depth: gs.extend_depth,
+                                extend_check: gs.extend_check,
+                                extend_threatmate: gs.extend_threatmate,
+                            };
+
+                            let strategy = Recursive::new();
+
+                            match strategy.search(env, &mut gs, event_dispatcher, evalutor)? {
+                                EvaluationResult::Immediate(s, _, _,_) => {
+                                    if s >= gs.beta {
+                                        return Ok(EvaluationResult::Immediate(null_value, best_moves, gs.zh, gs.current_depth));
+                                    }
+                                },
+                                EvaluationResult::NodeLimits => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::NodeLimits);
+                                },
+                                EvaluationResult::Timeout => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Timeout);
+                                },
+                                EvaluationResult::Stop => {
+                                    env.history.remove(&(gs.teban,mk,sk));
+
+                                    return Ok(EvaluationResult::Stop);
+                                },
+                                EvaluationResult::Repetition | EvaluationResult::Cut => {
+                                }
+                            }
+                        }
+                    },
+                    EvaluationResult::NodeLimits => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::NodeLimits);
+                    },
+                    EvaluationResult::Timeout => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Timeout);
+                    },
+                    EvaluationResult::Stop => {
+                        env.history.remove(&(gs.teban,mk,sk));
+
+                        return Ok(EvaluationResult::Stop);
+                    },
+                    EvaluationResult::Repetition | EvaluationResult::Cut => {
+                    }
+                }
             }
         }
 
@@ -2038,19 +2118,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         continue;
                     }
                 }
-
-                if gs.depth >= 1 && gs.depth <= 3 &&
-                    !Rule::in_check(gs.teban,&gs.state) {
-                    let static_eval = static_eval.unwrap();
-                    // Futility Pruning
-                    if gs.depth <= 2 && gs.pv.is_empty() && scoreval - static_eval > Score::Value((16. * gs.depth as f32 * 1.) as i32) {
-                        let mut mvs = VecDeque::new();
-
-                        mvs.push_front(m);
-                        prev_move.map(|m| mvs.push_front(m));
-
-                        return Ok(EvaluationResult::Immediate(Score::Value(static_eval), mvs, gs.zh.clone(),gs.current_depth));
-                    }
                  */
 
                 let mut r = self.calc_lmr(env,
@@ -2088,7 +2155,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                         &pv_non
                     };
 
-                    match self.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)? {
+                    match self.search_child_node(env,gs,m,pv,alpha,scoreval,depth,gs.cut_node,gs.nmp_min_ply,event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
@@ -2167,6 +2234,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                             return Ok(EvaluationResult::Stop);
                         },
+                        EvaluationResult::Cut => {
+                            pruned_count += 1;
+                        },
                         EvaluationResult::Repetition => {
                         }
                     }
@@ -2235,12 +2305,13 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     alpha:Score,
                                     depth:u32,
                                     static_eval: i32,
-                                    evasions_count: Option<usize>,
+                                    cut_node:bool,
+                                    nmp_min_ply:Option<u32>,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,gs.best_score,depth,cut_node,nmp_min_ply,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'static,
@@ -2268,9 +2339,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             return Ok(EvaluationResult::Timeout);
         }
 
-        let prev_eval = gs.prev_self_ss;
-
-        let static_eval = 0;//evalutor.evalute(gs.teban,&gs.state,&gs.mc)?;
+        let mut static_eval = gs.static_eval.clone();
 
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
@@ -2331,8 +2400,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         let mut pruned_count = 0;
         let mut enable_pruning_by_see = true;
-
-        let mut evasions_count = None;
 
         let mut quiet_moves = Vec::with_capacity(593);
 
@@ -2398,7 +2465,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                         &pv_non
                     };
 
-                    match recur.search_child_node(env,gs,m,pv,alpha,depth,evasions_count,&mut event_dispatcher,evalutor)? {
+                    match recur.search_child_node(env,gs,m,pv,alpha,scoreval,depth,gs.cut_node,gs.nmp_min_ply,&mut event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
@@ -2469,6 +2536,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                             env.history.remove(&(gs.teban,mk,sk));
 
                             return Ok(EvaluationResult::Stop);
+                        },
+                        EvaluationResult::Cut => {
+                            pruned_count += 1;
                         },
                         EvaluationResult::Repetition => {
                         }

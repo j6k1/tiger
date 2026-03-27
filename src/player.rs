@@ -23,7 +23,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval};
 use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {
@@ -221,6 +221,7 @@ impl<M> Tiger<M>
                     search_offset: 0,
                     best_score: Score::NEGINFINITE,
                     m:None,
+                    static_eval:StaticEval::new(),
                     prev_kind: KomaKind::Blank,
                     self_partial_output:self_partial_output,
                     opponent_partial_output:opponent_partial_output,
@@ -229,10 +230,10 @@ impl<M> Tiger<M>
                     move_history:&mut Vec::new(),
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
-                    prev_self_ss: None,
-                    prev_opponent_ss: None,
                     depth:base_depth,
                     current_depth:0,
+                    cut_node: false,
+                    nmp_min_ply: None,
                     current_max_ply:1,
                     base_depth:base_depth,
                     extend_depth:2,
@@ -270,6 +271,15 @@ impl<M> Tiger<M>
                         strategy.send_message(&mut env,"stop!")?;
                         env.info_sender.flush()?;
 
+                        BestMove::Resign
+                    },
+                    Ok(EvaluationResult::Cut) => {
+                        let e = ApplicationError::InvalidStateError(String::from("The root node has been pruned."));
+
+                        strategy.send_message(&mut env,format!("error {}",&e).as_str())?;
+                        env.info_sender.flush()?;
+
+                        let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         BestMove::Resign
                     },
                     Ok(EvaluationResult::Repetition) => {
