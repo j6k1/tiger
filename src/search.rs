@@ -355,8 +355,10 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) &&
-                    m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0);
+            //let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) &&
+            //        m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0);
+
+            let expand = false;
 
             let extend_depth = if expand {
                 extend_depth - 1
@@ -450,7 +452,8 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
-        Rule::generate_moves_by_banmen::<NonEvasions>(teban,state,&mut picker)?;
+        let mut bestscore = Score::NEGINFINITE;
+        let mut stand_pat = Score::NEGINFINITE;
 
         let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
 
@@ -474,172 +477,178 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
             opponent_surrounding_mask = opponent_surrounding_mask << 1;
         }
 
-        let mut mvs = (&mut picker).map(|m| {
-            let is_pawn_move = match m {
-                LegalMove::To(m) if teban == Teban::Sente => {
-                    state.get_part().sente_fu_board & (1 << (m.src() + 1)) != 0
-                },
-                LegalMove::To(m) if teban == Teban::Gote => {
-                    state.get_part().gote_fu_board & (1 << (m.src() + 1)) != 0
-                },
-                _ => false
-            };
-
-            let is_kin_move = match m {
-                LegalMove::Put(m) if m.kind() == MochigomaKind::Kin => true,
-                LegalMove::To(m) => {
-                    if teban == Teban::Sente {
-                        state.get_part().sente_kin_board & (1 << (m.src() + 1)) != 0
-                    } else {
-                        state.get_part().gote_kin_board & (1 << (m.src() + 1)) != 0
-                    }
-                },
-                _ => false
-            };
-
-            let is_gin_move = match m {
-                LegalMove::Put(m) if m.kind() == MochigomaKind::Gin => true,
-                LegalMove::To(m) => {
-                    if teban == Teban::Sente {
-                        state.get_part().sente_gin_board & (1 << (m.src() + 1)) != 0
-                    } else {
-                        state.get_part().gote_gin_board & (1 << (m.src() + 1)) != 0
-                    }
-                },
-                _ => false
-            };
-
-            let is_nari = m.is_nari();
-
-            let dst_mask = 1 << (m.dst() + 1);
-
-            if Rule::is_oute_move(state,teban,m) {
-                (MoveOrder::Check, m)
-            } else if m.obtained().is_some() && (
-                opponent_surrounding_mask & dst_mask != 0
-            ) {
-                (MoveOrder::ThreatCaptures,m)
-            } else if ((is_nari && is_pawn_move) || is_kin_move || is_gin_move) && (
-                opponent_surrounding_mask & dst_mask != 0
-            ) {
-                (MoveOrder::ThreatMate, m)
-            } else if m.obtained().is_some() {
-                (MoveOrder::Captures, m)
-            } else if is_pawn_move && is_nari {
-                (MoveOrder::PawnPromotions, m)
+        'outer: for i in 0..2 {
+            if i == 0 {
+                Rule::generate_moves::<CaptureOrPawnPromotions>(teban,state,mc,&mut picker)?;
             } else {
-                (MoveOrder::Quiet,m)
-            }
-        }).collect::<Vec<(MoveOrder,LegalMove)>>();
-
-        mvs.sort_by(|a,b| b.0.cmp(&a.0));
-
-        if mvs.len() == 0 {
-            return Ok(Score::NEGINFINITE);
-        }
-
-        history.insert((teban,mk,sk));
-
-        let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
-
-        if stand_pat >= beta {
-            return Ok(stand_pat);
-        }
-
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
-
-        let mut bestscore = Score::NEGINFINITE;
-
-        for (mo,m) in mvs {
-            if let Some(ObtainKind::Ou) = match m {
-                LegalMove::To(m) => m.obtained(),
-                _ => None
-            } {
-                history.remove(&(teban,mk,sk));
-
-                return Ok(Score::INFINITE);
+                Rule::generate_moves::<QuietsWithoutPawnPromotions>(teban,state,mc,&mut picker)?;
             }
 
-            if mo < MoveOrder::Captures {
-                continue;
+            let mut mvs = (&mut picker).map(|m| {
+                let is_pawn_move = match m {
+                    LegalMove::To(m) if teban == Teban::Sente => {
+                        state.get_part().sente_fu_board & (1 << (m.src() + 1)) != 0
+                    },
+                    LegalMove::To(m) if teban == Teban::Gote => {
+                        state.get_part().gote_fu_board & (1 << (m.src() + 1)) != 0
+                    },
+                    _ => false
+                };
+
+                let is_kin_move = match m {
+                    LegalMove::Put(m) if m.kind() == MochigomaKind::Kin => true,
+                    LegalMove::To(m) => {
+                        if teban == Teban::Sente {
+                            state.get_part().sente_kin_board & (1 << (m.src() + 1)) != 0
+                        } else {
+                            state.get_part().gote_kin_board & (1 << (m.src() + 1)) != 0
+                        }
+                    },
+                    _ => false
+                };
+
+                let is_gin_move = match m {
+                    LegalMove::Put(m) if m.kind() == MochigomaKind::Gin => true,
+                    LegalMove::To(m) => {
+                        if teban == Teban::Sente {
+                            state.get_part().sente_gin_board & (1 << (m.src() + 1)) != 0
+                        } else {
+                            state.get_part().gote_gin_board & (1 << (m.src() + 1)) != 0
+                        }
+                    },
+                    _ => false
+                };
+
+                let is_nari = m.is_nari();
+
+                let dst_mask = 1 << (m.dst() + 1);
+
+                if Rule::is_oute_move(state,teban,m) {
+                    (MoveOrder::Check, m)
+                } else if m.obtained().is_some() && (
+                    opponent_surrounding_mask & dst_mask != 0
+                ) {
+                    (MoveOrder::ThreatCaptures,m)
+                } else if ((is_nari && is_pawn_move) || is_kin_move || is_gin_move) && (
+                    opponent_surrounding_mask & dst_mask != 0
+                ) {
+                    (MoveOrder::ThreatMate, m)
+                } else if m.obtained().is_some() {
+                    (MoveOrder::Captures, m)
+                } else if is_pawn_move && is_nari {
+                    (MoveOrder::PawnPromotions, m)
+                } else {
+                    (MoveOrder::Quiet,m)
+                }
+            }).collect::<Vec<(MoveOrder,LegalMove)>>();
+
+            mvs.sort_by(|a,b| b.0.cmp(&a.0));
+
+            if mvs.len() == 0 {
+                return Ok(Score::NEGINFINITE);
             }
 
-            let o = match m {
-                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
-                _ => None
-            };
+            history.insert((teban,mk,sk));
 
-            let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+            stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
 
-            let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
-
-            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
-            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
-
-            let expand = match mo {
-                MoveOrder::ThreatCaptures => {
-                    extend_depth > 0 && !Rule::in_check(teban.opposite(),&next)
-                },
-                _ => false
-            };
-
-            let extend_depth = if expand {
-                extend_depth - 1
-            } else {
-                extend_depth
-            };
-
-            let score = if expand {
-                -self.qsearch_threatmate(teban.opposite(),
-                              &next,
-                              &nmc,
-                              env,
-                              event_dispatcher,
-                              &zh,
-                              history,
-                              opponent_partial_output,
-                              self_partial_output,
-                              -beta,
-                              -alpha,
-                              depth+1,
-                              extend_depth,
-                              evalutor,
-                              rng)?
-            } else {
-                -self.qsearch(teban.opposite(),
-                              &next,
-                              &nmc,
-                              env,
-                              event_dispatcher,
-                              &zh,
-                              history,
-                              opponent_partial_output,
-                              self_partial_output,
-                              -beta,
-                              -alpha,
-                              depth+1,
-                              extend_depth,
-                              evalutor,
-                              rng)?
-            };
-
-            if score >= beta {
-                return Ok(score);
+            if stand_pat >= beta {
+                return Ok(stand_pat);
             }
 
-            if score > bestscore {
-                bestscore = score;
+            if stand_pat > alpha {
+                alpha = stand_pat;
             }
 
-            if score > alpha {
-                alpha = score;
-            }
+            for (mo,m) in mvs {
+                if let Some(ObtainKind::Ou) = match m {
+                    LegalMove::To(m) => m.obtained(),
+                    _ => None
+                } {
+                    history.remove(&(teban,mk,sk));
 
-            if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-                self.timelimit_reached(env)? {
-                break;
+                    return Ok(Score::INFINITE);
+                }
+
+                if mo < MoveOrder::Captures {
+                    continue;
+                }
+
+                let o = match m {
+                    LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                    _ => None
+                };
+
+                let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
+                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+
+                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+
+                let expand = match mo {
+                    MoveOrder::ThreatCaptures => {
+                        extend_depth > 0 && !Rule::in_check(teban.opposite(),&next)
+                    },
+                    _ => false
+                };
+
+                let extend_depth = if expand {
+                    extend_depth - 1
+                } else {
+                    extend_depth
+                };
+
+                let score = if expand {
+                    -self.qsearch_threatmate(teban.opposite(),
+                                             &next,
+                                             &nmc,
+                                             env,
+                                             event_dispatcher,
+                                             &zh,
+                                             history,
+                                             opponent_partial_output,
+                                             self_partial_output,
+                                             -beta,
+                                             -alpha,
+                                             depth+1,
+                                             extend_depth,
+                                             evalutor,
+                                             rng)?
+                } else {
+                    -self.qsearch(teban.opposite(),
+                                  &next,
+                                  &nmc,
+                                  env,
+                                  event_dispatcher,
+                                  &zh,
+                                  history,
+                                  opponent_partial_output,
+                                  self_partial_output,
+                                  -beta,
+                                  -alpha,
+                                  depth+1,
+                                  extend_depth,
+                                  evalutor,
+                                  rng)?
+                };
+
+                if score >= beta {
+                    return Ok(score);
+                }
+
+                if score > bestscore {
+                    bestscore = score;
+                }
+
+                if score > alpha {
+                    alpha = score;
+                }
+
+                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                    self.timelimit_reached(env)? {
+                    break 'outer;
+                }
             }
         }
 
