@@ -201,7 +201,6 @@ pub struct GameState<'a> {
     pub zh:ZobristHash<u64>,
     pub depth:u32,
     pub current_depth:u32,
-    pub current_max_ply:usize,
     pub cut_node:bool,
     pub nmp_min_ply:Option<u32>,
     pub base_depth:u32,
@@ -1125,7 +1124,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let current_depth = 0;
         let base_depth = gs.base_depth;
         let extend_depth = gs.extend_depth;
-        let mut current_max_ply = gs.current_max_ply;
 
         let mut best_score = Score::NEGINFINITE;
 
@@ -1172,7 +1170,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                                 zh: zh.clone(),
                                 depth: depth,
                                 current_depth: current_depth,
-                                current_max_ply: current_max_ply,
                                 cut_node: false,
                                 nmp_min_ply: None,
                                 base_depth: base_depth,
@@ -1247,7 +1244,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                             zh: zh.clone(),
                             depth: depth,
                             current_depth: current_depth,
-                            current_max_ply: current_max_ply,
                             cut_node: false,
                             nmp_min_ply: None,
                             base_depth: base_depth,
@@ -1346,7 +1342,6 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                         zh: zh.clone(),
                         depth: depth,
                         current_depth: current_depth,
-                        current_max_ply: current_max_ply,
                         cut_node: false,
                         nmp_min_ply: None,
                         base_depth: base_depth,
@@ -1625,7 +1620,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
-                                     best_score:Score,
+                                     _:Score,
                                      depth:u32,
                                      cut_node:bool,
                                      nmp_min_ply:Option<u32>,
@@ -1714,7 +1709,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                     zh: zh.clone(),
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
-                    current_max_ply: gs.current_max_ply,
                     cut_node: cut_node,
                     nmp_min_ply: nmp_min_ply,
                     base_depth: gs.base_depth,
@@ -1724,6 +1718,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
                 };
 
                 let strategy = Recursive::new();
+
+                env.move_orderer.enter_node(gs.current_depth);
 
                 let r = strategy.search(env, &mut gs, event_dispatcher, evalutor);
 
@@ -1767,7 +1763,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             zh: zh.clone(),
             depth: depth,
             current_depth: gs.current_depth + 1,
-            current_max_ply: gs.current_max_ply,
             cut_node: false,
             nmp_min_ply: gs.nmp_min_ply,
             base_depth: gs.base_depth,
@@ -1777,6 +1772,8 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         };
 
         let strategy = Recursive::new();
+
+        env.move_orderer.enter_node(gs.current_depth);
 
         strategy.search(env, &mut gs, event_dispatcher, evalutor)
     }
@@ -1974,7 +1971,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                 zh: gs.zh.clone(),
                                 depth: gs.depth.saturating_sub(r),
                                 current_depth: gs.current_depth,
-                                current_max_ply: gs.current_max_ply,
                                 cut_node: false,
                                 nmp_min_ply: Some(nmp_min_ply),
                                 base_depth: gs.base_depth,
@@ -2060,8 +2056,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
         let mut pruned_count = 0;
 
-        let mut evasions_count = None;
-
         let mut quiet_moves = Vec::with_capacity(593);
 
         let tt_move = if let Some(TTPartialEntry {
@@ -2087,8 +2081,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             None
         };
 
-        let mut move_offset = 0;
-
         let mut quiet_index = 0;
 
         let mut max_seldepth = gs.current_depth;
@@ -2096,13 +2088,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
         for i in 0..count {
             if i == 0 && Rule::in_check(gs.teban,&gs.state) {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
-                evasions_count = Some(picker.len());
             } else if i == 0 {
                 Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
-                evasions_count = None;
             } else {
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
-                evasions_count = None;
             }
 
             mvs_count += picker.len();
@@ -2197,7 +2186,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                 }).unwrap_or(Ok(()))?;
                                             }
 
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
                                         },
                                         LegalMove::Put(_) => {
                                             env.move_orderer.update_killer(gs.current_depth, m)?;
@@ -2206,7 +2195,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
                                                 env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
                                             }).unwrap_or(Ok(()))?;
 
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
                                         },
                                         _ => ()
                                     };
@@ -2253,8 +2242,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 search_count += 1;
             }
-
-            move_offset = mvs_count;
         }
 
         if quiet_alpha == start_alpha {
@@ -2313,7 +2300,6 @@ impl<L,S,M> Inter<L,S,M> where L: Logger + Send + 'static,
                                     pv:&VecDeque<LegalMove>,
                                     alpha:Score,
                                     depth:u32,
-                                    static_eval: i32,
                                     cut_node:bool,
                                     nmp_min_ply:Option<u32>,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
@@ -2348,8 +2334,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             return Ok(EvaluationResult::Timeout);
         }
 
-        let mut static_eval = gs.static_eval.clone();
-
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
@@ -2367,8 +2351,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Timeout);
         }
-
-        let prev_move = gs.m.clone();
 
         let start_alpha = gs.alpha;
         let mut alpha = gs.alpha;
@@ -2506,11 +2488,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
                                             if !mv.is_nari() {
                                                 env.move_orderer.update_killer(gs.current_depth, m)?;
                                             }
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
                                         },
                                         LegalMove::Put(_) => {
                                             env.move_orderer.update_killer(gs.current_depth, m)?;
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
                                         },
                                         _ => ()
                                     };

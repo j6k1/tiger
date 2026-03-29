@@ -234,7 +234,6 @@ impl<M> Tiger<M>
                     current_depth:0,
                     cut_node: false,
                     nmp_min_ply: None,
-                    current_max_ply:1,
                     base_depth:base_depth,
                     extend_depth:2,
                     extend_check:1,
