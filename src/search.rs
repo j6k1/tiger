@@ -1636,7 +1636,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         let mut extend_check = gs.extend_check;
         let mut extend_threatmate = gs.extend_threatmate;
 
-        let piece_index = env.move_orderer.calc_piece_index(gs.teban,gs.state,m)?;
+        let piece_index = env.move_orderer.calc_piece_us_index(gs.teban,env.move_orderer.calc_piece_index(gs.teban,gs.state,m)?)?;
 
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
 
@@ -1719,8 +1719,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 let strategy = Recursive::new();
 
-                env.move_orderer.enter_node(gs.current_depth);
-
                 let r = strategy.search(env, &mut gs, event_dispatcher, evalutor);
 
                 gs.move_history.pop();
@@ -1772,8 +1770,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         };
 
         let strategy = Recursive::new();
-
-        env.move_orderer.enter_node(gs.current_depth);
 
         strategy.search(env, &mut gs, event_dispatcher, evalutor)
     }
@@ -2097,7 +2093,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
             mvs_count += picker.len();
 
             for (j,(m,see)) in env.move_orderer.ordering(
-                &mut picker, gs.current_depth, gs.teban, &gs.state, gs.m, tt_move,pv_move,gs.prev_kind,gs.move_history)?.enumerate() {
+                &mut picker, gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)?.enumerate() {
 
                 if m.obtained().is_none() {
                     quiet_moves.push(m);
@@ -2400,7 +2396,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
 
         for i in 0..2 {
             for (j,(m,see)) in env.move_orderer.ordering(
-                mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, gs.m, tt_move, pv_move, gs.prev_kind, gs.move_history
+                mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
             )?.skip(gs.search_offset).enumerate() {
                 if i == 0 && m.obtained().is_none() {
                     quiet_moves.push(m);

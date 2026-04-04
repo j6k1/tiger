@@ -39,4 +39,6 @@ path = "../USIAgent"
 path = "../shogi_dataloader"
 [build-dependencies]
 cc = "1.0.73"
+[profile.dev]
+opt-level = 1
 
