@@ -132,7 +132,7 @@ pub enum RootEvaluationResult {
     Timeout,
     Stop,
     Repetition,
-    Quit
+    Quit(MoveOrderer<UnusedQuietSee>,usize)
 }
 impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
     pub fn new(event_queue:Arc<Mutex<UserEventQueue>>,
@@ -234,14 +234,65 @@ enum MoveOrder {
     ThreatCaptures,
     Check
 }
+pub trait SendInfo<L,S,M>: Sized
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+    fn send_info(&self, env:&mut Environment<L,S>,
+                 depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
+        where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
 
-pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
-                                     S: InfoSender,
-                                     for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                                                PreTrain<f32> + Send + Sync +
-                                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                                                ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
-                                     <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+        let mut commands: Vec<UsiInfoSubCommand> = Vec::new();
+
+        match score {
+            Score::INFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Plus)))
+            },
+            Score::NEGINFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Minus)))
+            },
+            Score::MAYBEINFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(1000000)))
+            },
+            Score::MAYBENEGINFINITE => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(-1000000)))
+            },
+            Score::Value(s) => {
+                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(*s as i64)))
+            }
+        }
+
+        commands.push(UsiInfoSubCommand::Depth(depth));
+        commands.push(UsiInfoSubCommand::SelDepth(seldepth));
+
+        if pv.len() > 0 {
+            commands.push(UsiInfoSubCommand::CurrMove(pv[0].to_move()));
+            commands.push(UsiInfoSubCommand::Pv(pv.clone().into_iter().map(|m| m.to_move()).collect()));
+        }
+
+        Ok(env.info_sender.send(commands)?)
+    }
+
+    fn send_message(&self, env:&mut Environment<L,S>, message:&str) -> Result<(),ApplicationError>
+        where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
+        let mut commands:Vec<UsiInfoSubCommand> = Vec::new();
+        commands.push(UsiInfoSubCommand::Str(String::from(message)));
+
+        Ok(env.info_sender.send(commands)?)
+    }
+}
+pub trait Search<L,S,M>: SendInfo<L,S,M>
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError>;
@@ -967,48 +1018,6 @@ pub trait Search<L,S,M>: Sized where L: Logger + Send + 'static,
          */
         false
     }
-    fn send_info(&self, env:&mut Environment<L,S>,
-                 depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
-        where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
-
-        let mut commands: Vec<UsiInfoSubCommand> = Vec::new();
-
-        match score {
-            Score::INFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Plus)))
-            },
-            Score::NEGINFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Minus)))
-            },
-            Score::MAYBEINFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(1000000)))
-            },
-            Score::MAYBENEGINFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(-1000000)))
-            },
-            Score::Value(s) => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(*s as i64)))
-            }
-        }
-
-        commands.push(UsiInfoSubCommand::Depth(depth));
-        commands.push(UsiInfoSubCommand::SelDepth(seldepth));
-
-        if pv.len() > 0 {
-            commands.push(UsiInfoSubCommand::CurrMove(pv[0].to_move()));
-            commands.push(UsiInfoSubCommand::Pv(pv.clone().into_iter().map(|m| m.to_move()).collect()));
-        }
-
-        Ok(env.info_sender.send(commands)?)
-    }
-
-    fn send_message(&self, env:&mut Environment<L,S>, message:&str) -> Result<(),ApplicationError>
-        where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
-        let mut commands:Vec<UsiInfoSubCommand> = Vec::new();
-        commands.push(UsiInfoSubCommand::Str(String::from(message)));
-
-        Ok(env.info_sender.send(commands)?)
-    }
 }
 pub trait PartialSearch<L,S,M>: Sized where L: Logger + Send + 'static,
                                      S: InfoSender,
@@ -1112,11 +1121,14 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                            shared_depth:&Arc<AtomicUsize>,
                            env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                            mvs: Arc<Vec<LegalMove>>,
-                           evalutor:&Arc<Evalutor<M>>) {
+                           evalutor:&Arc<Evalutor<M>>,
+                           move_orderer: MoveOrderer<UnusedQuietSee>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
         let state = Arc::clone(&gs.state);
         let mut env = env.clone();
+
+        env.move_orderer = move_orderer;
 
         let evalutor = Arc::clone(&evalutor);
         let mc = Arc::clone(&gs.mc);
@@ -1299,7 +1311,7 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                     shared_depth.fetch_add(1, Ordering::Release);
                 }
 
-                let _ = sender.send(Ok(RootEvaluationResult::Quit));
+                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,thread_index)));
 
                 env.abort.store(true,Ordering::Release);
             });
@@ -1392,12 +1404,12 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                     depth = (depth + 1).max(shared_depth.load(Ordering::Acquire) as u32);
                 }
 
-                let _ = sender.send(Ok(RootEvaluationResult::Quit));
+                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,thread_index)));
             });
         }
     }
 
-    fn termination(&self,env:&mut Environment<L,S>,mut busy_threads:u32) -> Result<(),ApplicationError> {
+    fn termination(&self,env:&mut Environment<L,S>,mut busy_threads:u32,move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>) -> Result<(),ApplicationError> {
         env.abort.store(true,Ordering::Release);
 
         let mut last_error = None;
@@ -1407,8 +1419,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
                 Err(e) => {
                     last_error = Some(e);
                 },
-                Ok(RootEvaluationResult::Quit) => {
+                Ok(RootEvaluationResult::Quit(move_orderer,thread_index)) => {
                     busy_threads -= 1;
+                    move_orderers[thread_index] = move_orderer;
                 },
                 _ => ()
             }
@@ -1443,17 +1456,9 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
             pv_result[pv_depth].take()
         }
     }
-}
-impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
-                                            S: InfoSender,
-                                            for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                                                       PreTrain<f32> + Send + Sync + 'static +
-                                                       PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                                                       ContinueForward<ConinueOutput=Arr<f32,1>>,
-                                            <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
+    pub fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
-                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError> {
+                     evalutor: &Arc<Evalutor<M>>,move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>) -> Result<EvaluationResult,ApplicationError> {
         env.search_id.fetch_add(1, Ordering::Release);
 
         let base_depth = gs.base_depth;
@@ -1492,13 +1497,16 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
 
         env.abort.store(false,Ordering::Release);
 
+        println!("move_orderers.len() = {}",move_orderers.len());
+
         for i in 0..env.max_threads {
             let mvs = Arc::clone(&mvs);
 
             self.start_thread(i as usize,
                               &shared_depth,
                               env,gs,mvs,
-                              evalutor);
+                              evalutor,
+                              move_orderers[i as usize].clone());
 
         }
 
@@ -1548,32 +1556,33 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
                     ).as_str())?;
                 },
                 Ok(RootEvaluationResult::NodeLimits) => {
-                    self.termination(env, busy_threads)?;
+                    self.termination(env, busy_threads, move_orderers)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::NodeLimits));
                 },
                 Ok(RootEvaluationResult::Timeout) => {
-                    self.termination(env, busy_threads)?;
+                    self.termination(env, busy_threads, move_orderers)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Timeout));
                 },
                 Ok(RootEvaluationResult::Stop) => {
-                    self.termination(env, busy_threads)?;
+                    self.termination(env, busy_threads, move_orderers)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Stop));
                 },
                 Ok(RootEvaluationResult::Repetition) => {
-                    self.termination(env, busy_threads)?;
+                    self.termination(env, busy_threads, move_orderers)?;
 
                     return Err(ApplicationError::LogicError(String::from(
                         "A Repetition was returned at the root node."
                     )));
                 },
-                Ok(RootEvaluationResult::Quit) => {
+                Ok(RootEvaluationResult::Quit(move_orderer,thread_index)) => {
                     busy_threads -= 1;
+                    move_orderers[thread_index] = move_orderer;
                 },
                 Err(e) => {
-                    self.termination(env, busy_threads)?;
+                    self.termination(env, busy_threads, move_orderers)?;
 
                     return Err(e);
                 }
@@ -1587,6 +1596,14 @@ impl<L,S,M> Search<L,S,M> for Root<L,S,M> where L: Logger + Send + 'static,
         )
     }
 }
+impl<L,S,M> SendInfo<L,S,M> for Root<L,S,M>
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+                     PreTrain<f32> + Send + Sync + 'static +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>>,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {}
 pub struct Recursive<L,S,M> where L: Logger + Send + 'static,
                                   S: InfoSender,
                                   for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
@@ -1774,13 +1791,22 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         strategy.search(env, &mut gs, event_dispatcher, evalutor)
     }
 }
-impl<L,S,M> Search<L,S,M> for Recursive<L,S,M> where L: Logger + Send + 'static,
-                                                     S: InfoSender,
-                                                     for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                                                                PreTrain<f32> + Send + Sync +
-                                                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                                                                ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
-                                                     <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+impl<L,S,M> SendInfo<L,S,M> for Recursive<L,S,M>
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {}
+impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                     PreTrain<f32> + Send + Sync +
+                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
+                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                       evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {

@@ -14,6 +14,7 @@ use usiagent::error::{PlayerError, UsiProtocolError};
 use usiagent::event::{GameEndState, SysEventOption, SysEventOptionKind, UserEvent, UserEventQueue, UsiGoMateTimeLimit, UsiGoTimeLimit};
 use usiagent::hash::{KyokumenHash};
 use usiagent::logger::Logger;
+use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::OnErrorHandler;
 use usiagent::output::USIOutputWriter;
 use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
@@ -23,7 +24,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo};
 use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {
@@ -112,7 +113,8 @@ pub struct Tiger<M>
     max_threads:u32,
     turn_limit:Option<u32>,
     timelimit_margin:u64,
-    model_name:String
+    model_name:String,
+    move_orderers:Vec<MoveOrderer<UnusedQuietSee>>
 }
 impl<M> fmt::Debug for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
@@ -145,7 +147,8 @@ impl<M> Tiger<M>
             max_threads:MAX_THREADS,
             turn_limit:None,
             timelimit_margin:TIMELIMIT_MARGIN,
-            model_name: String::from("nn.bin")
+            model_name: String::from("nn.bin"),
+            move_orderers:Vec::new(),
         }
     }
 
@@ -244,7 +247,7 @@ impl<M> Tiger<M>
                     .num_threads(self.max_threads as usize)
                     .stack_size(1024 * 1024 * 200).build()?);
 
-                let result = strategy.search(&mut env,&mut gs, &mut event_dispatcher, &evalutor);
+                let result = strategy.search(&mut env,&mut gs, &mut event_dispatcher, &evalutor, &mut self.move_orderers);
 
                 let bestmove = match result {
                     Err(ref e) => {
@@ -380,6 +383,11 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 self.evalutor = Some(Arc::new((self.evalutor_creator)(self.model_name.clone())?))
             }
         }
+
+        if self.move_orderers.len() == 0 {
+            self.move_orderers = (0..(self.max_threads)).map(|_| MoveOrderer::new(self.base_depth as usize + 2)).collect();
+        }
+
         Ok(())
     }
 
@@ -437,6 +445,11 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 )));
             }
         }
+
+        for mo in self.move_orderers.iter_mut() {
+            mo.clear();
+        }
+
         Ok(())
     }
     fn set_position(&mut self,teban:Teban,banmen:Banmen,
