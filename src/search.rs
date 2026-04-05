@@ -1633,7 +1633,7 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
             160 + 40 * (depth as i32)
         }
     }
-    
+
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
