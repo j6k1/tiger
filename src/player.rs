@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::{fmt, fs};
-use std::fmt::Debug;
 use std::fs::DirEntry;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -24,7 +23,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, Search, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo};
 use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {

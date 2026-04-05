@@ -1,6 +1,5 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::{Deref};
 use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -24,15 +23,14 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasions, QuietsWithoutPawnPromotions, Rule, Square, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
-use usiagent::see::calc_see;
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK, POSSIBLE_OU_CAPTURES_MASK_OF_GOTE, POSSIBLE_OU_CAPTURES_MASK_OF_SENTE};
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, ExactScoreBound, Score};
+use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score};
 
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
@@ -254,12 +252,6 @@ pub trait SendInfo<L,S,M>: Sized
             },
             Score::NEGINFINITE => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Minus)))
-            },
-            Score::MAYBEINFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(1000000)))
-            },
-            Score::MAYBENEGINFINITE => {
-                commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(-1000000)))
             },
             Score::Value(s) => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(*s as i64)))
@@ -1467,8 +1459,8 @@ impl<L,S,M> Root<L,S,M> where L: Logger + Send + 'static,
         let mut worker_result = vec![None;max_depth+1];
         let mut pv_depth = 0;
         let mut worker_depth = 0;
-        let mut pv_best_score = vec![Score::NEGINFINITE;max_depth+1];;
-        let mut worker_best_score = vec![Score::NEGINFINITE;max_depth+1];;
+        let mut pv_best_score = vec![Score::NEGINFINITE;max_depth+1];
+        let mut worker_best_score = vec![Score::NEGINFINITE;max_depth+1];
 
         let shared_depth = Arc::new(AtomicUsize::new(1));
 
@@ -1634,10 +1626,18 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
         Ok(Some(ObtainKind::Ou) == m.obtained())
     }
 
+    pub fn futility_margin(&self,depth:u32,m:LegalMove) -> i32 {
+        if m.is_nari() {
+            81 + 40 * (depth as i32)
+        } else {
+            160 + 40 * (depth as i32)
+        }
+    }
+    
     pub fn search_child_node<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                                      m:LegalMove,pv:&VecDeque<LegalMove>,
                                      alpha:Score,
-                                     _:Score,
+                                     best_score:Score,
                                      depth:u32,
                                      cut_node:bool,
                                      nmp_min_ply:Option<u32>,
@@ -1666,18 +1666,6 @@ impl<L,S,M> Recursive<L,S,M> where L: Logger + Send + 'static,
 
                 let mut static_eval = StaticEval::new();
 
-                // Futility Pruning
-                /*
-                if !cut_node && gs.depth >= 1 && gs.depth <= 3 &&
-                    pv.is_empty() && !Rule::in_check(gs.teban,&gs.state) &&
-                    // Since the score is calculated from the opponent's perspective,
-                    // the sign is reversed. Therefore, we add rather than subtract.
-                    best_score + static_eval.get_or_insert_with(|| {
-                        evalutor.evalute(&opponent_partial_output)
-                    })? > Score::Value((16. * gs.depth as f32 * 1.) as i32) {
-                    return Ok(EvaluationResult::Cut);
-                }
-                */
                 if extend_depth > 0 {
                     if extend_check > 0 && Rule::in_check(gs.teban.opposite(),&state) {
                         depth += 1;
@@ -1966,7 +1954,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                         gs.m.map(|m| best_moves.push_front(m));
 
-                        if s >= gs.beta && s < Score::MAYBEINFINITE {
+                        if s >= gs.beta && s < Score::INFINITE {
                             if gs.nmp_min_ply.unwrap_or(0) == 0 || gs.depth < 16 {
                                 return Ok(EvaluationResult::Immediate(s, best_moves, zh, gs.current_depth));
                             }
@@ -2125,10 +2113,20 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     quiet_moves.push(m);
                 }
 
-                let is_nari = match m {
-                    LegalMove::To(mv) => mv.is_nari(),
-                    _ => false
-                };
+                // Futility Pruning
+                if !gs.cut_node && gs.depth >= 2 && gs.depth <= 4 &&
+                    m.obtained().is_none() &&
+                    !pv_move.map(|pm| pm == m).unwrap_or(false) &&
+                    !Rule::in_check(gs.teban,&gs.state) &&
+                    !Rule::is_oute_move(&gs.state,gs.teban,m) &&
+                    Score::Value(gs.static_eval.get_or_insert_with(|| {
+                        evalutor.evalute(&gs.self_partial_output)
+                    })? + self.futility_margin(gs.depth,m)) <= alpha {
+
+                    pruned_count += 1;
+
+                    continue;
+                }
 
                 /*
                 if let Some(o) = m.obtained() {
@@ -2272,13 +2270,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             }
         }
 
-        if pruned_count > 0 && scoreval == Score::NEGINFINITE {
-            scoreval = Score::MAYBENEGINFINITE;
-        }
-
         if scoreval <= start_alpha {
             env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::UpperBound, None);
-        } else if scoreval != Score::MAYBEINFINITE && scoreval != Score::MAYBENEGINFINITE {
+        } else {
             env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::Exact, best_moves.front().map(|m| m.clone()));
         }
 
@@ -2574,13 +2568,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M> where L: Logger + Send + 'stat
             }
         }
 
-        if pruned_count > 0 && scoreval == Score::NEGINFINITE {
-            scoreval = Score::MAYBENEGINFINITE;
-        }
-
         if gs.search_offset == 0 && scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,None);
-        } else if gs.search_offset == 0 && scoreval != Score::MAYBEINFINITE && scoreval != Score::MAYBENEGINFINITE  {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+        } else {
             env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 

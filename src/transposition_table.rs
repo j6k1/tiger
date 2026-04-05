@@ -50,9 +50,7 @@ impl ToBucketIndex for u8 {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
     NEGINFINITE,
-    MAYBENEGINFINITE,
     Value(i32),
-    MAYBEINFINITE,
     INFINITE,
 }
 impl Neg for Score {
@@ -62,9 +60,7 @@ impl Neg for Score {
         match self {
             Score::Value(v) => Score::Value(-v),
             Score::INFINITE => Score::NEGINFINITE,
-            Score::NEGINFINITE => Score::INFINITE,
-            Score::MAYBEINFINITE => Score::MAYBENEGINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBEINFINITE,
+            Score::NEGINFINITE => Score::INFINITE
         }
     }
 }
@@ -75,9 +71,7 @@ impl Add<i32> for Score {
         match self {
             Score::Value(v) => Score::Value(v + other),
             Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE,
-            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
+            Score::NEGINFINITE => Score::NEGINFINITE
         }
     }
 }
@@ -88,9 +82,7 @@ impl Sub<i32> for Score {
         match self {
             Score::Value(v) => Score::Value(v - other),
             Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE,
-            Score::MAYBEINFINITE => Score::MAYBEINFINITE,
-            Score::MAYBENEGINFINITE => Score::MAYBENEGINFINITE,
+            Score::NEGINFINITE => Score::NEGINFINITE
         }
     }
 }

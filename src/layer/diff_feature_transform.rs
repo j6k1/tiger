@@ -11,7 +11,6 @@ use nncombinator::lossfunction::LossFunction;
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;
-use nncombinator::device::linear::DeviceLinear;
 use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransform};
 use crate::features::HalfKP;
 

@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::ops::Mul;
 use std::simd::Simd;
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
@@ -635,7 +634,7 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
         -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
-        let (mut rs,mut ro) = result.split_at_mut(NO);
+        let (rs,ro) = result.split_at_mut(NO);
 
         for ((indexes,po),r) in input.iter().zip([rs,ro]) {
             let mut oi = 0;
