@@ -933,14 +933,17 @@ impl InputCreator {
 
                 let kind = m.kind();
 
-                if let Ok(k) = KomaKind::try_from((active_player,kind)) {
-                    let (dx,dy) = m.dst().square_to_point();
+                match KomaKind::try_from((active_player,kind)) {
+                    Ok(k) => {
+                        let (dx,dy) = m.dst().square_to_point();
 
-                    let index = InputCreator::input_index_of_banmen(t, k, dx as u32, dy as u32).unwrap();
+                        let index = InputCreator::input_index_of_banmen(t, k, dx as u32, dy as u32).unwrap();
 
-                    if index < MOCHIGOMA_END {
-                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::plus()));
-                    }
+                        if index < MOCHIGOMA_END {
+                            inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::plus()));
+                        }
+                    },
+                    _ => ()
                 }
 
                 let ms = Mochigoma::new();

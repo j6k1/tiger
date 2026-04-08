@@ -374,8 +374,8 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
     }
 
     fn take_ready<W,L>(&mut self, _:OnKeepAlive<W,L>)
-                       -> Result<(),ApplicationError> where W: USIOutputWriter + Send + 'static,
-                                                            L: Logger + Send + 'static {
+        -> Result<(),ApplicationError> where W: USIOutputWriter + Send + 'static,
+                                             L: Logger + Send + 'static {
         match self.evalutor {
             Some(_) => (),
             None => {
@@ -541,8 +541,8 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
 
     fn think_ponder<L,S,P>(&mut self,limit:&UsiGoTimeLimit,event_queue:Arc<Mutex<UserEventQueue>>,
                            info_sender:S,periodically_info:P,on_error_handler:Arc<Mutex<OnErrorHandler<L>>>)
-                           -> Result<BestMove,ApplicationError> where L: Logger + Send + 'static, S: InfoSender,
-                                                                      P: PeriodicallyInfo + Send + 'static {
+        -> Result<BestMove,ApplicationError> where L: Logger + Send + 'static, S: InfoSender,
+                                                   P: PeriodicallyInfo + Send + 'static {
         let env = {
             let limit = Some(limit.clone());
 

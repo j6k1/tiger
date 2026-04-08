@@ -79,52 +79,51 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
     #[inline]
     fn forward_feature_transform<'a>(&self,bias:&Arr<f32,NO>,units:&Arr2<f32,NI,NO>,input:HalfKPView<'a,NI>)
         -> Result<Arr<f32,{NO*2}>,EvaluateError> {
-        let mut result = [0.0;NO*2];
+        let mut result = [0.0; NO*2];
 
-        let mut oi = 0;
+        let (rs,ro) = result.split_at_mut(NO);
 
-        for (i,indexes) in input.iter().enumerate() {
-            while oi + LANES_F32 <= NO * (i + 1) {
+        let bias = bias.as_raw_slice();
+
+        for (indexes,r) in input.iter().zip([rs,ro]) {
+            for oi in (0..NO).take(NO / LANES_F32 * LANES_F32).step_by(LANES_F32) {
                 let mut acc = Simd::<f32,LANES_F32>::splat(0.0);
 
                 for index in indexes.iter() {
                     assert!(*index < NI,"{} >= {}",*index,NI);
-                    units.iter().nth(*index).map(|w| {
-                        let w_row = &w[(oi - NO * i)..];
-                        let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]);
 
-                        acc += wv;
-                    });
+                    let w = &units[*index];
+
+                    let w_row = &w[oi..];
+                    let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]);
+
+                    acc += wv;
                 }
 
-                let bias = bias.as_raw_slice();
-                let bias = &bias[(oi - NO * i)..];
+                let bias = &bias[oi..];
 
                 acc += Simd::<f32,LANES_F32>::from_slice(&bias[..LANES_F32]);
 
-                acc.copy_to_slice(&mut result[(oi)..(oi + LANES_F32)]);
-
-                oi += LANES_F32;
+                acc.copy_to_slice(&mut r[oi..(oi + LANES_F32)]);
             }
 
             if NO % LANES_F32 > 0 {
-                let offset = NO / LANES_F32 * LANES_F32 + (NO * i);
+                let offset = NO / LANES_F32 * LANES_F32;
 
-                for oi in offset..(NO * (i + 1)){
+                for oi in offset..NO {
                     let mut acc = 0.;
 
                     for index in indexes.iter() {
                         assert!(*index < NI,"{} >= {}",*index,NI);
-                        units.iter().nth(*index).map(|w| {
-                            acc += w[oi - NO * i];
-                        });
+
+                        let w = &units[*index];
+
+                        acc += w[oi];
                     }
 
-                    result[oi] = acc + bias[oi - (NO * i)];
+                    r[oi] = acc + bias[oi];
                 }
             }
-
-            oi = NO;
         }
 
         Ok(Arr::from(result))
@@ -630,7 +629,7 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
 impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<f32,SignFloat<f32>,NO>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           [(); NO*2]: {
-    fn forward_diff_feature_transform(&self, bias: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<f32,SignFloat<f32>,NO>)
+    fn forward_diff_feature_transform(&self, _: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<f32,SignFloat<f32>,NO>)
         -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
@@ -646,12 +645,13 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
 
                 for &(index,sign) in indexes.iter() {
                     assert!(index < NI,"{} >= {}",index,NI);
-                    units.iter().nth(index).map(|w| {
-                        let w_row = &w[oi..];
-                        let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]) * sign;
 
-                        acc += wv;
-                    });
+                    let w = &units[index];
+
+                    let w_row = &w[oi..];
+                    let wv = Simd::<f32,LANES_F32>::from_slice(&w_row[..LANES_F32]) * sign;
+
+                    acc += wv;
                 }
 
                 acc.copy_to_slice(&mut r[oi..(oi + LANES_F32)]);
@@ -667,9 +667,10 @@ impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<
 
                     for &(index,sign) in indexes.iter() {
                         assert!(index < NI,"{} >= {}",index,NI);
-                        units.iter().nth(index).map(|w| {
-                            acc += w[oi] * sign;
-                        });
+
+                        let w = &units[index];
+
+                        acc += w[oi] * sign;
                     }
 
                     r[oi] = acc;
