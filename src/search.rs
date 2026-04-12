@@ -311,6 +311,30 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(score);
         }
 
+        let tt_move = {
+            let r = env.transposition_table.get(&zh).map(|tte| tte.deref().clone());
+
+            if let Some(TTPartialEntry {
+                            depth: _,
+                            score: s,
+                            beta: _,
+                            alpha: _,
+                            bound,
+                            best_move: tt_move
+                        }) = r {
+
+                if bound == Bound::Exact ||
+                   (bound == Bound::LowerBound && s >= beta) ||
+                   (bound == Bound::UpperBound && s <= alpha) {
+                    return Ok(s);
+                }
+
+                tt_move
+            } else {
+                None
+            }
+        };
+
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
         let in_check = Rule::in_check(teban,state);
@@ -322,18 +346,38 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if in_check && picker.len() == 0 {
+            env.transposition_table.update(&zh,0,Score::NEGINFINITE,beta,alpha,Bound::Exact,None);
             return Ok(Score::NEGINFINITE);
         }
 
         if picker.len() == 0 {
-            return Ok(Score::Value(evalutor.evalute(&self_partial_output)?));
+            let s = evalutor.evalute(&self_partial_output)?;
+
+            return Ok(Score::Value(s));
         }
 
-        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+        let mut mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
         if mvs.len() == 0 {
-            return Ok(Score::Value(evalutor.evalute(&self_partial_output)?));
+            let s = evalutor.evalute(&self_partial_output)?;
+
+            return Ok(Score::Value(s));
         }
+
+        /*
+        if let Some(tm) = tt_move {
+            if unsafe { *mvs.get_unchecked(0) } != tm {
+                let len = mvs.len();
+
+                for i in 1..len {
+                    if unsafe { *mvs.get_unchecked(i) } == tm {
+                        mvs.swap(0,i);
+                        break;
+                    }
+                }
+            }
+        }
+         */
 
         history.insert((teban,mk,sk));
 
@@ -372,6 +416,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             opponent_surrounding_mask = opponent_surrounding_mask << 1;
         }
         */
+
+        let mut best_move = None;
+
         for m in mvs {
             /*
             if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
@@ -388,6 +435,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             } {
                 history.remove(&(teban,mk,sk));
 
+                env.transposition_table.update(&zh,0,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+
                 return Ok(Score::INFINITE);
             }
 
@@ -396,7 +445,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 _ => None
             };
 
-            let zh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+            let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
@@ -432,27 +481,31 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                               rng)?
             } else {
                 */-self.qsearch(teban.opposite(),
-                              &next,
-                              &nmc,
-                              env,
-                              event_dispatcher,
-                              &zh,
-                              history,
-                              opponent_partial_output,
-                              self_partial_output,
-                              -beta,
-                              -alpha,
-                              depth+1,
-                              0,
-                              evalutor,
-                              rng)?;
+                                &next,
+                                &nmc,
+                                env,
+                                event_dispatcher,
+                                &nzh,
+                                history,
+                                opponent_partial_output,
+                                self_partial_output,
+                                -beta,
+                                -alpha,
+                                depth+1,
+                                0,
+                                evalutor,
+                                rng)?;
             //};
 
             if score >= beta {
+                env.transposition_table.update(&zh, 0, score, beta, alpha, Bound::LowerBound, Some(m));
+
                 return Ok(score);
             }
 
             if score > bestscore {
+                best_move = Some(m);
+
                 bestscore = score;
             }
 
@@ -471,6 +524,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         if bestscore == Score::NEGINFINITE {
             Ok(stand_pat)
         } else {
+            env.transposition_table.update(&zh, 0, bestscore, beta, alpha, Bound::UpperBound, best_move);
+
             Ok(bestscore)
         }
     }

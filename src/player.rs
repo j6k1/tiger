@@ -327,7 +327,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
         kinds.insert(String::from("USI_Ponder"),SysEventOptionKind::Bool);
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
-        kinds.insert(String::from("QSearchMexDepth"),SysEventOptionKind::Num);
+        kinds.insert(String::from("QSearchMaxDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("MaxNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
@@ -363,7 +363,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
-        options.insert(String::from("QSearchMexDepth"),UsiOptType::Spin(0,100,Some(0)));
+        options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0,100,Some(0)));
         options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
@@ -395,7 +395,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
             "BaseDepth" => {
                 self.base_depth = u32::from_option(value).unwrap_or(BASE_DEPTH);
             },
-            "QSearchMexDepth" => {
+            "QSearchMaxDepth" => {
                 self.qsearch_max_depth = u32::from_option(value).and_then(|d| {
                     if d == 0 {
                         None
