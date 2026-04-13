@@ -311,7 +311,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(score);
         }
 
-        let tt_move = {
+        {
             let r = env.transposition_table.get(&zh).map(|tte| tte.deref().clone());
 
             if let Some(TTPartialEntry {
@@ -320,7 +320,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                             beta: _,
                             alpha: _,
                             bound,
-                            best_move: tt_move
+                            best_move: _
                         }) = r {
 
                 if bound == Bound::Exact ||
@@ -328,12 +328,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                    (bound == Bound::UpperBound && s <= alpha) {
                     return Ok(s);
                 }
-
-                tt_move
-            } else {
-                None
             }
-        };
+        }
 
         let mut picker = RandomPicker::new(Prng::new(rng.gen()));
 
@@ -779,18 +775,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         Ok(reached)
     }
 
-    /*
     fn is_important_move(&self, env:&mut Environment<L,S>,
-                depth:u32,
                 current_depth:u32,
                 teban: Teban,
                 state: &State,
-                m:LegalMove,
-                pv:Option<&LegalMove>)
-        -> Result<bool,ApplicationError> {
+                m:LegalMove) -> Result<bool,ApplicationError> {
         Ok(m.obtained().is_some() ||
             m.is_nari() ||
-            pv.map(|pm| pm == &m).unwrap_or(false) ||
             env.move_orderer.is_killer(current_depth,m)? ||
             Rule::is_oute_move(state,teban,m)
         )
@@ -807,8 +798,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         if depth < 3 ||
             Rule::in_check(teban,state) ||
             tt_move.map(|&tm| tm == m).unwrap_or(false) ||
-            self.is_important_move(env,depth,current_depth,
-                                   teban,state,m,pv)? {
+            pv.map(|pm| pm == &m).unwrap_or(false) ||
+            self.is_important_move(env,current_depth,
+                                   teban,state,m)? {
             Ok(0)
         } else if *index < 1 {
             *index += 1;
@@ -821,18 +813,17 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             *index += 1;
 
-            if h > depth as i64 * 6 {
+            if h > depth as i32 * 6 * 256 {
                 Ok(r.saturating_sub(1) as u32)
-            } else if h < -(depth as i64) * 6 {
+            } else if h < -(depth as i32) * 6 * 256 {
                 Ok(r.saturating_add(1).min(depth - 1))
             } else {
                 Ok(r as u32)
             }
         }
-
-        Ok(0)
     }
 
+    /*
     fn in_danger(&self, teban: Teban, state:&State, m: LegalMove) -> bool {
         match teban {
             Teban::Sente => {
@@ -2148,7 +2139,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             None
         };
 
-        let mut quiet_index = 0;
+        let mut lmr_index = 0;
 
         let mut max_seldepth = gs.current_depth;
 
@@ -2195,19 +2186,15 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 }
                  */
 
-                /*
                 let mut r = self.calc_lmr(env,
-                                  &mut quiet_index,
-                                  gs.depth,
-                                  gs.current_depth,
-                                  gs.teban,
-                                  gs.state,
-                                  m,
-                                  tt_move.as_ref(),
-                                  pv_move.as_ref())?;
-                */
-
-                let mut r = 0;
+                                          &mut lmr_index,
+                                          gs.depth,
+                                          gs.current_depth,
+                                          gs.teban,
+                                          gs.state,
+                                          m,
+                                          tt_move.as_ref(),
+                                          pv_move.as_ref())?;
 
                 for k in 0..2 {
                     let depth = if k == 0 {
@@ -2495,19 +2482,17 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                         continue;
                     }
                 }
-
-               let mut r = recur.calc_lmr(env,
-                                   &mut quiet_index,
-                                   gs.depth,
-                                   gs.current_depth,
-                                   gs.teban,
-                                   gs.state,
-                                   m,
-                                   tt_move.as_ref(),
-                                   pv_move.as_ref())?;
                 */
 
-                let mut r = 0;
+                let mut r = recur.calc_lmr(env,
+                                               &mut quiet_index,
+                                               gs.depth,
+                                               gs.current_depth,
+                                               gs.teban,
+                                               gs.state,
+                                               m,
+                                               tt_move.as_ref(),
+                                               pv_move.as_ref())?;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
