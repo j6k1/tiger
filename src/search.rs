@@ -199,6 +199,7 @@ pub struct GameState<'a> {
     pub depth:u32,
     pub current_depth:u32,
     pub cut_node:bool,
+    pub already_reduced_lmr:bool,
     pub nmp_min_ply:Option<u32>,
     pub base_depth:u32,
     pub extend_depth:u32,
@@ -1222,6 +1223,7 @@ impl<L,S,M> Root<L,S,M>
                                 depth: depth,
                                 current_depth: current_depth,
                                 cut_node: false,
+                                already_reduced_lmr: false,
                                 nmp_min_ply: None,
                                 base_depth: base_depth,
                                 extend_depth: extend_depth,
@@ -1296,6 +1298,7 @@ impl<L,S,M> Root<L,S,M>
                             depth: depth,
                             current_depth: current_depth,
                             cut_node: false,
+                            already_reduced_lmr: false,
                             nmp_min_ply: None,
                             base_depth: base_depth,
                             extend_depth: extend_depth,
@@ -1394,6 +1397,7 @@ impl<L,S,M> Root<L,S,M>
                         depth: depth,
                         current_depth: current_depth,
                         cut_node: false,
+                        already_reduced_lmr: false,
                         nmp_min_ply: None,
                         base_depth: base_depth,
                         extend_depth: extend_depth,
@@ -1688,6 +1692,7 @@ impl<L,S,M> Recursive<L,S,M>
                                      alpha:Score,
                                      depth:u32,
                                      cut_node:bool,
+                                     lmr_reduced:bool,
                                      nmp_min_ply:Option<u32>,
                                      event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
@@ -1763,6 +1768,7 @@ impl<L,S,M> Recursive<L,S,M>
                     depth: depth - 1,
                     current_depth: gs.current_depth + 1,
                     cut_node: cut_node,
+                    already_reduced_lmr: lmr_reduced,
                     nmp_min_ply: nmp_min_ply,
                     base_depth: gs.base_depth,
                     extend_depth: extend_depth,
@@ -1815,6 +1821,7 @@ impl<L,S,M> Recursive<L,S,M>
             depth: depth,
             current_depth: gs.current_depth + 1,
             cut_node: false,
+            already_reduced_lmr:gs.already_reduced_lmr,
             nmp_min_ply: gs.nmp_min_ply,
             base_depth: gs.base_depth,
             extend_depth: gs.extend_depth,
@@ -2030,6 +2037,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                 depth: gs.depth.saturating_sub(r),
                                 current_depth: gs.current_depth,
                                 cut_node: false,
+                                already_reduced_lmr: gs.already_reduced_lmr,
                                 nmp_min_ply: Some(nmp_min_ply),
                                 base_depth: gs.base_depth,
                                 extend_depth: gs.extend_depth,
@@ -2186,15 +2194,21 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 }
                  */
 
-                let mut r = self.calc_lmr(env,
-                                          &mut lmr_index,
-                                          gs.depth,
-                                          gs.current_depth,
-                                          gs.teban,
-                                          gs.state,
-                                          m,
-                                          tt_move.as_ref(),
-                                          pv_move.as_ref())?;
+                let mut r = if gs.already_reduced_lmr {
+                    0
+                } else {
+                    self.calc_lmr(env,
+                                  &mut lmr_index,
+                                  gs.depth,
+                                  gs.current_depth,
+                                  gs.teban,
+                                  gs.state,
+                                  m,
+                                  tt_move.as_ref(),
+                                  pv_move.as_ref())?
+                };
+
+                let mut lmr_reduced = gs.already_reduced_lmr || r > 0;
 
                 for k in 0..2 {
                     let depth = if k == 0 {
@@ -2221,12 +2235,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         &pv_non
                     };
 
-                    match self.search_child_node(env,gs,m,pv,alpha,depth,gs.cut_node,gs.nmp_min_ply,event_dispatcher,evalutor)? {
+                    match self.search_child_node(env,gs,m,pv,alpha,depth,gs.cut_node,lmr_reduced,gs.nmp_min_ply,event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
                             if r > 0 && s >= beta {
                                 r = 0;
+                                lmr_reduced = gs.already_reduced_lmr;
                                 continue
                             }
 
@@ -2367,12 +2382,13 @@ impl<L,S,M> Inter<L,S,M>
                                     alpha:Score,
                                     depth:u32,
                                     cut_node:bool,
+                                    lmr_reduced:bool,
                                     nmp_min_ply:Option<u32>,
                                     event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                     evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
         let search = Recursive::new();
 
-        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,cut_node,nmp_min_ply,event_dispatcher,evalutor)?)
+        Ok(search.search_child_node(env,gs,m,pv,alpha,depth,cut_node,lmr_reduced,nmp_min_ply,event_dispatcher,evalutor)?)
     }
 }
 impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
@@ -2484,15 +2500,21 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                 }
                 */
 
-                let mut r = recur.calc_lmr(env,
-                                               &mut quiet_index,
-                                               gs.depth,
-                                               gs.current_depth,
-                                               gs.teban,
-                                               gs.state,
-                                               m,
-                                               tt_move.as_ref(),
-                                               pv_move.as_ref())?;
+                let mut r = if gs.already_reduced_lmr {
+                    0
+                } else {
+                    recur.calc_lmr(env,
+                                   &mut quiet_index,
+                                   gs.depth,
+                                   gs.current_depth,
+                                   gs.teban,
+                                   gs.state,
+                                   m,
+                                   tt_move.as_ref(),
+                                   pv_move.as_ref())?
+                };
+
+                let mut lmr_reduced = gs.already_reduced_lmr || r > 0;
 
                 for j in 0..2 {
                     let depth = if j == 0 {
@@ -2518,12 +2540,13 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                         &pv_non
                     };
 
-                    match recur.search_child_node(env,gs,m,pv,alpha,depth,gs.cut_node,gs.nmp_min_ply,&mut event_dispatcher,evalutor)? {
+                    match recur.search_child_node(env,gs,m,pv,alpha,depth,gs.cut_node,lmr_reduced,gs.nmp_min_ply,&mut event_dispatcher,evalutor)? {
                         EvaluationResult::Immediate(s, mvs, _, seldepth) => {
                             let s = -s;
 
                             if r > 0 && s >= beta {
                                 r = 0;
+                                lmr_reduced = gs.already_reduced_lmr;
                                 continue;
                             }
 
