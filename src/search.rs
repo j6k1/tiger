@@ -1997,7 +1997,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 evalutor.evalute(&gs.self_partial_output)
             })? >= beta - 18 * gs.depth as i32 + 390 && gs.current_depth >= gs.nmp_min_ply.unwrap_or(0) {
                 //let r = 7 + gs.depth as u32 / 3;
-                let r = 2 + gs.depth as u32 / 4;
+                let r = 3 + gs.depth as u32 / 3;
 
                 match self.search_null_move(env, gs, -gs.beta, -gs.beta + 1, gs.depth.saturating_sub(r), event_dispatcher, evalutor)? {
                     EvaluationResult::Immediate(s, _, zh,_) => {
