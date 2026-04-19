@@ -12,7 +12,7 @@ use rand::Rng;
 use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
-use usiagent::consts::{FU_SCORE};
+use usiagent::consts::{CAPTURED_SCORE_MAP, FU_SCORE};
 use usiagent::error::EventHandlerError;
 use usiagent::event::{EventDispatcher, MapEventKind, UserEvent, UserEventDispatcher, UserEventKind, UserEventQueue, USIEventDispatcher, UsiGoTimeLimit};
 use usiagent::hash::KyokumenHash;
@@ -23,6 +23,7 @@ use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
 use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
+use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
 use crate::error::ApplicationError;
@@ -361,21 +362,6 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(Score::Value(s));
         }
 
-        /*
-        if let Some(tm) = tt_move {
-            if unsafe { *mvs.get_unchecked(0) } != tm {
-                let len = mvs.len();
-
-                for i in 1..len {
-                    if unsafe { *mvs.get_unchecked(i) } == tm {
-                        mvs.swap(0,i);
-                        break;
-                    }
-                }
-            }
-        }
-         */
-
         history.insert((teban,mk,sk));
 
         let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
@@ -420,7 +406,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             /*
             if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
                 if let Some(o) = m.obtained() {
-                    if calc_see(teban,state,m) < -PIECE_SCORE_MAP[o as usize] / 2 {
+                    if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 3 / 4 {
                         continue;
                     }
                 }
