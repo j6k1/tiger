@@ -403,15 +403,14 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         let mut best_move = None;
 
         for m in mvs {
-            /*
             if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
                 if let Some(o) = m.obtained() {
-                    if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 3 / 4 {
+                    if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
                         continue;
                     }
                 }
             }
-            */
+
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
