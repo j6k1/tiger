@@ -300,6 +300,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                self_partial_output: Arc<Arr<f32,{256*2}>>,
                opponent_partial_output: Arc<Arr<f32,{256*2}>>,
                mut alpha:Score,beta:Score,depth:usize,_:usize,
+               prev_move:Option<LegalMove>,
                evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng)
         -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
@@ -403,10 +404,14 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         let mut best_move = None;
 
         for m in mvs {
-            if !in_check && !m.is_nari() && !Rule::is_oute_move(state,teban,m) {
+            if !in_check && !m.is_nari() {
                 if let Some(o) = m.obtained() {
-                    if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
-                        continue;
+                    if !prev_move.map(|pm| {
+                        pm.obtained().is_some() && m.dst() == pm.dst()
+                    }).unwrap_or(false) && !Rule::is_oute_move(state,teban,m) {
+                        if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 3 / 4 {
+                            continue;
+                        }
                     }
                 }
             }
@@ -475,6 +480,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                 -alpha,
                                 depth+1,
                                 0,
+                                Some(m),
                                 evalutor,
                                 rng)?;
             //};
@@ -1928,6 +1934,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                  gs.beta,
                                  1,
                                  1,
+                                 prev_move.clone(),
                                  evalutor,
                                  gs.rng)?;
 
@@ -1960,6 +1967,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                      gs.beta,
                                      1,
                                      1,
+                                     prev_move.clone(),
                                      evalutor,
                                      gs.rng)?;
 
