@@ -22,7 +22,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
+use usiagent::rule::{CaptureOrPawnPromotions, Evasions, LegalMove, NonEvasions, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK};
 use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::Blank;
@@ -35,6 +35,8 @@ use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score};
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
 pub const MAX_THREADS:u32 = 2;
+pub const THREATMATE_DEPTH:u32 = 7;
+
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
 pub struct StaticEval {
     pub static_eval:Option<i32>,
@@ -69,6 +71,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub current_limit:Arc<RwLock<(Option<Instant>,Option<Instant>)>>,
     pub base_depth:u32,
     pub qsearch_max_depth:Option<u32>,
+    pub threatmate_depth:u32,
     pub max_nodes:Option<u64>,
     pub max_threads:u32,
     pub abort:Arc<AtomicBool>,
@@ -94,6 +97,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             current_limit:self.current_limit.clone(),
             base_depth:self.base_depth,
             qsearch_max_depth:self.qsearch_max_depth.clone(),
+            threatmate_depth:self.threatmate_depth,
             max_nodes:self.max_nodes.clone(),
             max_threads:self.max_threads,
             abort:Arc::clone(&self.abort),
@@ -145,6 +149,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                current_limit:(Option<Instant>,Option<Instant>),
                base_depth:u32,
                qsearch_max_depth:Option<u32>,
+               threatmate_depth:u32,
                max_nodes:Option<u64>,
                max_threads:u32,
                history:HashSet<(Teban,u64,u64)>,
@@ -167,6 +172,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             current_limit:Arc::new(RwLock::new(current_limit)),
             base_depth:base_depth,
             qsearch_max_depth:qsearch_max_depth,
+            threatmate_depth:threatmate_depth,
             max_nodes:max_nodes,
             max_threads:max_threads,
             abort:abort,
@@ -355,7 +361,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(Score::Value(s));
         }
 
-        let mut mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
+        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
         if mvs.len() == 0 {
             let s = evalutor.evalute(&self_partial_output)?;
@@ -753,6 +759,288 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
      */
 
+    fn satisfy_threatmate_search(&self, attacker:Teban, state:&State, m:LegalMove, depth:u32, evasions_count:usize) -> bool {
+        if evasions_count > 4 || depth < 4 || depth > 6 {
+            return false;
+        }
+
+        let ps = state.get_part();
+
+        match attacker {
+            Teban::Sente => {
+                if ps.sente_checked_board & (
+                    (ps.sente_kyou_board & !ps.sente_nari_board) |
+                     ps.sente_kaku_board | ps.sente_hisha_board
+                ) == 0 && !m.is_nari() && match m {
+                    LegalMove::To(_) => true,
+                    LegalMove::Put(_) => false
+                } {
+                    return false;
+                }
+
+                let mut count = 0;
+
+                if (ps.sente_self_board | ps.sente_opponent_board).bitcount() <= 18 {
+                    count += 1;
+                }
+
+                if (ps.sente_kaku_board | ps.sente_hisha_board |
+                    ps.gote_kaku_board | ps.gote_hisha_board).bitcount() <= 2 {
+                    count += 1;
+                }
+
+                if (ps.gote_nari_board | ps.sente_nari_board).bitcount() >= 2 {
+                    count += 1;
+                }
+
+                if count >= 3 {
+                    return true;
+                }
+
+                let p = Rule::ou_square(attacker, state) as u32;
+
+                let (_,y) = p.square_to_point();
+
+                let mut mask = OU_SURROUNDING_MASK;
+
+                if y == 0 {
+                    mask = mask & OU_SURROUNDING_TOP_MASK;
+                } else if y == 8 {
+                    mask = mask & OU_SURROUNDING_BOTTOM_MASK;
+                }
+
+                if p < 10 {
+                    mask = mask >> (10 - p) as u128;
+                } else {
+                    mask = mask << (p - 10) as u128;
+                }
+
+                if ((mask << 1) & (ps.sente_self_board | ps.sente_opponent_board)).bitcount() <= 4 {
+                    count += 1;
+                }
+
+                count >= 3
+            },
+            Teban::Gote => {
+                if ps.gote_checked_board & (
+                    (ps.gote_kyou_board & !ps.gote_nari_board) |
+                        ps.gote_kaku_board | ps.gote_hisha_board
+                ) == 0 && !m.is_nari() && match m {
+                    LegalMove::To(_) => true,
+                    LegalMove::Put(_) => false
+                } {
+                    return false;
+                }
+
+                let mut count = 0;
+
+                if (ps.gote_self_board | ps.gote_opponent_board).bitcount() <= 18 {
+                    count += 1;
+                }
+
+                if (ps.gote_kaku_board | ps.gote_hisha_board |
+                    ps.sente_kaku_board | ps.sente_hisha_board).bitcount() <= 2 {
+                    count += 1;
+                }
+
+                if (ps.gote_nari_board | ps.sente_nari_board).bitcount() >= 2 {
+                    count += 1;
+                }
+
+                if count >= 3 {
+                    return true;
+                }
+
+                let p = Rule::ou_square(attacker, state) as u32;
+
+                let (_,y) = p.square_to_point();
+
+                let mut mask = OU_SURROUNDING_MASK;
+
+                if y == 0 {
+                    mask = mask & OU_SURROUNDING_TOP_MASK;
+                } else if y == 8 {
+                    mask = mask & OU_SURROUNDING_BOTTOM_MASK;
+                }
+
+                if p < 10 {
+                    mask = mask >> (10 - p) as u128;
+                } else {
+                    mask = mask << (p - 10) as u128;
+                }
+
+                if ((mask << 1) & (ps.sente_self_board | ps.sente_opponent_board)).bitcount() <= 4 {
+                    count += 1;
+                }
+
+                count >= 3
+            }
+        }
+    }
+
+    fn threatmate_search<'b>(&self,
+                         attacker:Teban,
+                         teban:Teban,
+                         state:&State,
+                         mc:&MochigomaCollections,
+                         env:&mut Environment<L,S>,
+                         event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
+                         zh: &ZobristHash<u64>,
+                         history:&mut HashSet<(Teban,u64,u64)>,
+                         depth:usize,
+                         rng:&mut ThreadRng) -> Result<bool,ApplicationError> {
+        let (mk,sk) = zh.keys();
+
+        event_dispatcher.dispatch_events(&self,&env.event_queue)?;
+
+        if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
+            return Ok(false);
+        }
+
+        let ps = state.get_part();
+
+        let mut count = 0;
+
+        if (ps.sente_self_board | ps.sente_opponent_board).bitcount() > 18 {
+            count += 1;
+        }
+
+        if (ps.sente_kaku_board | ps.sente_hisha_board |
+            ps.gote_kaku_board | ps.gote_hisha_board).bitcount() > 2 {
+            count += 1;
+        }
+
+        if (ps.sente_nari_board | ps.gote_nari_board).bitcount() < 2 {
+            count += 1;
+        }
+
+        if count >= 2 {
+            return Ok(false);
+        }
+
+        let p = Rule::ou_square(teban,state) as u32;
+
+        let (_,y) = p.square_to_point();
+
+        let mut mask = OU_SURROUNDING_MASK;
+
+        if y == 0 {
+            mask = mask & OU_SURROUNDING_TOP_MASK;
+        } else if y == 8 {
+            mask = mask & OU_SURROUNDING_BOTTOM_MASK;
+        }
+
+        if p < 10 {
+            mask = mask >> (10 - p) as u128;
+        } else {
+            mask = mask << (p - 10) as u128;
+        }
+
+        if ((mask << 1) & (ps.sente_self_board | ps.sente_opponent_board)).bitcount() > 4 {
+            count += 1;
+        }
+
+        if count >= 2 {
+            return Ok(false);
+        }
+
+        {
+            let r = env.transposition_table.get(&zh).map(|tte| tte.deref().clone());
+
+            if let Some(TTPartialEntry {
+                            depth: _,
+                            score: s,
+                            beta: _,
+                            alpha: _,
+                            bound,
+                            best_move: _
+                        }) = r {
+
+                if bound == Bound::Exact && s == Score::INFINITE {
+                    return Ok(attacker == teban);
+                } else if bound == Bound::Exact && s == Score::NEGINFINITE {
+                    return Ok(attacker != teban);
+                }
+            }
+        }
+
+        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
+
+        let in_check = Rule::in_check(teban,state);
+
+        if in_check {
+            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+
+            if teban != attacker && picker.len() >= 8 {
+                return Ok(false);
+            }
+        } else {
+            Rule::generate_moves::<NonEvasions>(teban,state, mc, &mut picker)?;
+        }
+
+        if picker.len() == 0 {
+            return Ok(teban != attacker);
+        }
+
+        history.insert((teban,mk,sk));
+
+        for m in picker {
+            if let Some(ObtainKind::Ou) = match m {
+                LegalMove::To(m) => m.obtained(),
+                _ => None
+            } {
+                history.remove(&(teban,mk,sk));
+
+                env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Score::INFINITE,Score::NEGINFINITE,Bound::Exact,Some(m));
+
+                return Ok(teban == attacker);
+            }
+
+            if in_check || Rule::is_oute_move(state,teban,m) {
+                let o = match m {
+                    LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                    _ => None
+                };
+
+                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
+                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+
+                let checkmate = self.threatmate_search(attacker,
+                                                       teban.opposite(),
+                                                       &next,
+                                                       &nmc,
+                                                       env,
+                                                       event_dispatcher,
+                                                       &nzh,
+                                                       history,
+                                                       depth-1,
+                                                       rng)?;
+
+                if checkmate && attacker == teban {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Score::INFINITE,Score::NEGINFINITE,Bound::Exact,Some(m));
+
+                    return Ok(true);
+                } else if !checkmate && attacker != teban {
+                    history.remove(&(teban,mk,sk));
+
+                    return Ok(false);
+                }
+
+                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                    self.timelimit_reached(env)? {
+                    break;
+                }
+            }
+        }
+
+        history.remove(&(teban,mk,sk));
+
+        Ok(teban != attacker)
+    }
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         let mut reached;
         let timelimit_margin = env.timelimit_margin;
@@ -1695,7 +1983,7 @@ impl<L,S,M> Recursive<L,S,M>
         let mut depth = depth;
         let mut extend_depth = gs.extend_depth;
         let mut extend_check = gs.extend_check;
-        let mut extend_threatmate = gs.extend_threatmate;
+        let extend_threatmate = gs.extend_threatmate;
 
         let piece_index = env.move_orderer.calc_piece_us_index(gs.teban,env.move_orderer.calc_piece_index(gs.teban,gs.state,m)?)?;
 
@@ -1989,8 +2277,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             if gs.pv.is_empty() && gs.cut_node && static_eval.get_or_insert_with(|| {
                 evalutor.evalute(&gs.self_partial_output)
             })? >= beta - 18 * gs.depth as i32 + 390 && gs.current_depth >= gs.nmp_min_ply.unwrap_or(0) {
-                //let r = 7 + gs.depth as u32 / 3;
-                let r = 3 + gs.depth as u32 / 3;
+                //let r = 7 + gs.depth / 3;
+                let r = 3 + gs.depth / 3;
 
                 match self.search_null_move(env, gs, -gs.beta, -gs.beta + 1, gs.depth.saturating_sub(r), event_dispatcher, evalutor)? {
                     EvaluationResult::Immediate(s, _, zh,_) => {
@@ -2108,13 +2396,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
         let pv_non = VecDeque::new();
 
-        #[allow(unused)]
-        let mut search_count = 0;
-        #[allow(unused)]
-        let mut mvs_count = 0;
-
-        let mut pruned_count = 0;
-
         let mut quiet_moves = Vec::with_capacity(593);
 
         let tt_move = if let Some(TTPartialEntry {
@@ -2147,15 +2428,34 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         for i in 0..count {
             if i == 0 && Rule::in_check(gs.teban,&gs.state) {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+
+                if let Some(pm) = gs.m {
+                    if self.satisfy_threatmate_search(gs.teban.opposite(),gs.state,pm,gs.depth,picker.len()) {
+                        if self.threatmate_search(gs.teban.opposite(),
+                                                  gs.teban,
+                                                  gs.state,
+                                                  &gs.mc,
+                                                  env,
+                                                  event_dispatcher,
+                                                  &gs.zh,
+                                                  &mut HashSet::new(),
+                                                  env.threatmate_depth as usize,
+                                                  gs.rng)? {
+                            let mut mvs = VecDeque::new();
+
+                            mvs.push_front(pm);
+
+                            return Ok(EvaluationResult::Immediate(Score::NEGINFINITE, mvs, gs.zh.clone(),gs.current_depth));
+                        }
+                    }
+                }
             } else if i == 0 {
                 Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             } else {
                 Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
             }
 
-            mvs_count += picker.len();
-
-            for (m,see) in env.move_orderer.ordering(
+            for (m,_) in env.move_orderer.ordering(
                 &mut picker, gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {
 
                 if m.obtained().is_none() {
@@ -2171,8 +2471,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     Score::Value(gs.static_eval.get_or_insert_with(|| {
                         evalutor.evalute(&gs.self_partial_output)
                     })? + self.futility_margin(gs.depth,m)) <= alpha {
-
-                    pruned_count += 1;
 
                     continue;
                 }
@@ -2309,14 +2607,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                             return Ok(EvaluationResult::Stop);
                         },
                         EvaluationResult::Cut => {
-                            pruned_count += 1;
                         },
                         EvaluationResult::Repetition => {
                         }
                     }
                 }
-
-                search_count += 1;
             }
         }
 
@@ -2462,12 +2757,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
         let pv_non = VecDeque::new();
 
-        #[allow(unused)]
-        let mut search_count =  0;
-
-        let mut pruned_count = 0;
-        let mut enable_pruning_by_see = true;
-
         let mut quiet_moves = Vec::with_capacity(593);
 
         let mut quiet_index = 0;
@@ -2475,7 +2764,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
         let mut max_seldepth = 0;
 
         for i in 0..2 {
-            for (m,see) in env.move_orderer.ordering(
+            for (m,_) in env.move_orderer.ordering(
                 mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
             )?.skip(gs.search_offset) {
                 if i == 0 && m.obtained().is_none() {
@@ -2607,20 +2896,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                             return Ok(EvaluationResult::Stop);
                         },
                         EvaluationResult::Cut => {
-                            pruned_count += 1;
                         },
                         EvaluationResult::Repetition => {
                         }
                     }
                 }
-
-                search_count += 1;
-            }
-
-            if pruned_count < mvs.len() {
-                break;
-            } else {
-                enable_pruning_by_see = false;
             }
         }
 

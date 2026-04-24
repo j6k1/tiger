@@ -23,7 +23,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo, THREATMATE_DEPTH};
 use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {
@@ -108,6 +108,7 @@ pub struct Tiger<M>
     search_id:Arc<AtomicUsize>,
     base_depth:u32,
     qsearch_max_depth:Option<u32>,
+    threatmate_depth:u32,
     max_nodes:Option<u64>,
     max_threads:u32,
     turn_limit:Option<u32>,
@@ -142,6 +143,7 @@ impl<M> Tiger<M>
             search_id:Arc::new(AtomicUsize::new(0)),
             base_depth:BASE_DEPTH,
             qsearch_max_depth:None,
+            threatmate_depth:THREATMATE_DEPTH,
             max_nodes:None,
             max_threads:MAX_THREADS,
             turn_limit:None,
@@ -329,6 +331,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
         kinds.insert(String::from("Threads"),SysEventOptionKind::Num);
         kinds.insert(String::from("BaseDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("QSearchMaxDepth"),SysEventOptionKind::Num);
+        kinds.insert(String::from("ThreatmateDepth"),SysEventOptionKind::Num);
         kinds.insert(String::from("MaxNodes"),SysEventOptionKind::Num);
         kinds.insert(String::from("TurnLimit"),SysEventOptionKind::Num);
         kinds.insert(String::from("TIMELIMIT_MARGIN"),SysEventOptionKind::Num);
@@ -365,6 +368,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
         options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0,100,Some(0)));
+        options.insert(String::from("ThreatmateDepth"),UsiOptType::Spin(0,100,Some(THREATMATE_DEPTH as i64)));
         options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));
         options.insert(String::from("TurnLimit"),UsiOptType::Spin(1,3600000,Some(TURN_LIMIT as i64)));
@@ -404,6 +408,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                         Some(d)
                     }
                 });
+            },
+            "ThreatmateDepth" => {
+                self.threatmate_depth = u32::from_option(value).unwrap_or(THREATMATE_DEPTH);
             },
             "MaxNodes" => {
                 self.max_nodes = u64::from_option(value).and_then(|n| {
@@ -526,6 +533,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 ),
                 self.base_depth,
                 self.qsearch_max_depth,
+                self.threatmate_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
                 HashSet::new(),
@@ -568,6 +576,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 (None,None),
                 self.base_depth,
                 self.qsearch_max_depth,
+                self.threatmate_depth,
                 self.max_nodes.clone(),
                 self.max_threads,
                 HashSet::new(),
