@@ -797,7 +797,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     return true;
                 }
 
-                let p = Rule::ou_square(attacker, state) as u32;
+                let p = Rule::ou_square(attacker.opposite(), state) as u32;
 
                 let (_,y) = p.square_to_point();
 
@@ -815,7 +815,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     mask = mask << (p - 10) as u128;
                 }
 
-                if ((mask << 1) & (ps.sente_self_board | ps.sente_opponent_board)).bitcount() <= 4 {
+                if ((mask << 1) & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() <= 4 {
                     count += 1;
                 }
 
@@ -851,7 +851,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     return true;
                 }
 
-                let p = Rule::ou_square(attacker, state) as u32;
+                let p = Rule::ou_square(attacker.opposite(), state) as u32;
 
                 let (_,y) = p.square_to_point();
 
@@ -878,7 +878,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
     }
 
-    fn threatmate_search<'b>(&self,
+    fn threatmate_search<'b,MP>(&self,
                          attacker:Teban,
                          teban:Teban,
                          state:&State,
@@ -888,7 +888,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                          zh: &ZobristHash<u64>,
                          history:&mut HashSet<(Teban,u64,u64)>,
                          depth:usize,
-                         rng:&mut ThreadRng) -> Result<bool,ApplicationError> {
+                         mut picker:MP,
+                         rng:&mut ThreadRng) -> Result<bool,ApplicationError> where MP: MovePicker<LegalMove> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -919,7 +920,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(false);
         }
 
-        let p = Rule::ou_square(teban,state) as u32;
+        let p = Rule::ou_square(attacker.opposite(),state) as u32;
 
         let (_,y) = p.square_to_point();
 
@@ -937,7 +938,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             mask = mask << (p - 10) as u128;
         }
 
-        if ((mask << 1) & (ps.sente_self_board | ps.sente_opponent_board)).bitcount() > 4 {
+        if ((mask << 1) & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 4 {
             count += 1;
         }
 
@@ -965,18 +966,20 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
 
-        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
-
         let in_check = Rule::in_check(teban,state);
 
         if in_check {
-            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+            if picker.len() == 0 {
+                Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+            }
 
             if teban != attacker && picker.len() >= 8 {
                 return Ok(false);
             }
         } else {
-            Rule::generate_moves::<NonEvasions>(teban,state, mc, &mut picker)?;
+            if picker.len() == 0 {
+                Rule::generate_moves::<NonEvasions>(teban, state, mc, &mut picker)?;
+            }
         }
 
         if picker.len() == 0 {
@@ -1007,6 +1010,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                 let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
+                let picker = RandomPicker::new(Prng::new(rng.gen()));
+
                 let checkmate = self.threatmate_search(attacker,
                                                        teban.opposite(),
                                                        &next,
@@ -1016,6 +1021,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                        &nzh,
                                                        history,
                                                        depth-1,
+                                                       picker,
                                                        rng)?;
 
                 if checkmate && attacker == teban {
@@ -2208,6 +2214,61 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             }
         }
 
+        let in_check = Rule::in_check(gs.teban,&gs.state);
+
+        /*
+        if gs.depth == 0 && in_check {
+            let picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+
+            let checkmate = self.threatmate_search(gs.teban.opposite(),
+                                   gs.teban,
+                                   gs.state,
+                                   &gs.mc,
+                                   env,
+                                   event_dispatcher,
+                                   &gs.zh,
+                                   &mut HashSet::new(),
+                                   env.threatmate_depth as usize,
+                                   picker,
+                                   gs.rng)?;
+
+            if checkmate {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::NEGINFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+
+                let mut mvs = VecDeque::new();
+
+                gs.m.map(|m| mvs.push_front(m));
+
+                return Ok(EvaluationResult::Immediate(Score::NEGINFINITE, mvs, gs.zh.clone(),gs.current_depth));
+            }
+        } else if gs.depth == 0 {
+            let picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+
+            let checkmate = self.threatmate_search(gs.teban,
+                                                   gs.teban,
+                                                   gs.state,
+                                                   &gs.mc,
+                                                   env,
+                                                   event_dispatcher,
+                                                   &gs.zh,
+                                                   &mut HashSet::new(),
+                                                   env.threatmate_depth as usize,
+                                                   picker,
+                                                   gs.rng)?;
+
+            if checkmate {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+
+                let mut mvs = VecDeque::new();
+
+                gs.m.map(|m| mvs.push_front(m));
+
+                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone(),gs.current_depth));
+            }
+        }
+
+         */
+
         if gs.depth == 0 {
             let s = self.qsearch(gs.teban,
                                  &gs.state,
@@ -2238,7 +2299,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         }
 
         // Razoring
-        if gs.depth >= 1 && gs.pv.is_empty() {
+        if gs.depth >= 1 && gs.pv.len() <= gs.current_depth as usize {
             if Score::Value(static_eval.get_or_insert_with(|| {
                 evalutor.evalute(&gs.self_partial_output)
             })?) < gs.alpha - 514 - 294 * gs.depth as i32 * gs.depth as i32 {
@@ -2426,11 +2487,19 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         let mut max_seldepth = gs.current_depth;
 
         for i in 0..count {
-            if i == 0 && Rule::in_check(gs.teban,&gs.state) {
+            if i == 0 && in_check {
                 Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
 
                 if let Some(pm) = gs.m {
-                    if self.satisfy_threatmate_search(gs.teban.opposite(),gs.state,pm,gs.depth,picker.len()) {
+                    if picker.len() > 0 && self.satisfy_threatmate_search(gs.teban.opposite(),gs.state,pm,gs.depth,picker.len()) {
+                        let mvs:Vec<LegalMove> = (&picker).into();
+
+                        let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+
+                        for m in mvs {
+                            picker.push(m)?;
+                        }
+
                         if self.threatmate_search(gs.teban.opposite(),
                                                   gs.teban,
                                                   gs.state,
@@ -2440,6 +2509,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                   &gs.zh,
                                                   &mut HashSet::new(),
                                                   env.threatmate_depth as usize,
+                                                  picker,
                                                   gs.rng)? {
                             let mut mvs = VecDeque::new();
 
@@ -2476,13 +2546,18 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 }
 
                 /*
-                if let Some(o) = m.obtained() {
-                    if !is_nari && !Rule::is_oute_move(gs.state,gs.teban,m) &&
-                        see < -PIECE_SCORE_MAP[o as usize] / 2 {
-                        pruned_count += 1;
-                        continue;
+                if !in_check && !m.is_nari() {
+                    if let Some(o) = m.obtained() {
+                        if !prev_move.map(|pm| {
+                            pm.obtained().is_some() && m.dst() == pm.dst()
+                        }).unwrap_or(false) && !Rule::is_oute_move(gs.state,gs.teban,m) {
+                            if see < -CAPTURED_SCORE_MAP[o as usize] * 3 / 4 {
+                                continue;
+                            }
+                        }
                     }
                 }
+
                  */
 
                 let mut r = if gs.already_reduced_lmr {
