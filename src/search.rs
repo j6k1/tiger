@@ -415,7 +415,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     if !prev_move.map(|pm| {
                         pm.obtained().is_some() && m.dst() == pm.dst()
                     }).unwrap_or(false) && !Rule::is_oute_move(state,teban,m) {
-                        if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 3 / 4 {
+                        if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
                             continue;
                         }
                     }
@@ -2299,7 +2299,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         }
 
         // Razoring
-        if gs.depth >= 1 && gs.pv.len() <= gs.current_depth as usize {
+        if gs.depth >= 1 && gs.pv.is_empty() {
             if Score::Value(static_eval.get_or_insert_with(|| {
                 evalutor.evalute(&gs.self_partial_output)
             })?) < gs.alpha - 514 - 294 * gs.depth as i32 * gs.depth as i32 {
