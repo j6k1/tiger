@@ -303,9 +303,10 @@ impl<M,A> Learnener<M,A>
                 processed_count += size;
 
                 if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) > 0 {
-                    if processed_count % batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
+                    if processed_count >= batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) * (epoch_count + 1) {
                         epoch_count += 1;
                         evalutor.nn.step()?;
+                        println!("epoch: {}", epoch_count);
                     }
                 }
 
@@ -326,9 +327,10 @@ impl<M,A> Learnener<M,A>
 
             resume = false;
 
-            if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) == 0 {
+            if processed_count >= batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) * (epoch_count + 1) {
                 epoch_count += 1;
                 evalutor.nn.step()?;
+                println!("epoch: {}", epoch_count);
             }
         }
 
