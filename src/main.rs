@@ -77,11 +77,9 @@ pub struct Config {
     lambda:Option<f32>,
     step_count:Option<usize>,
     gamma:Option<f32>,
+    eta_min:Option<f32>,
     save_batch_count:Option<usize>,
     learning_rate:Option<f32>,
-    learning_rate_middle_layer_large:Option<f32>,
-    learning_rate_for_input_layer:Option<f32>,
-    learning_rate_for_output_layer:Option<f32>,
     eval_test_max_threads:Option<usize>,
     verbose:Option<bool>,
 }
@@ -159,6 +157,7 @@ fn run() -> Result<(),ApplicationError> {
             let mut evalutor = TrainerCreator::create(String::from("data"),
                                                       String::from("nn.bin"),
                                                       &config,
+                                                      &matches,
                                                       MemoryPoolAllocator::with_size(4 * 1024 * 1024 * 1024,DeviceAlloc::new())?)?;
 
             let r = if matches.opt_present("yaneuraou") || matches.opt_present("yaneuraou,hcpe") {
