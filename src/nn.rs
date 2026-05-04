@@ -500,7 +500,7 @@ impl TrainerCreator {
 
         let device = DeviceGpu::new(&allocator)?;
 
-        let total_steps = if let Some(epoch) = options.opt_str("epoch") {
+        let total_steps = if let Some(epoch) = options.opt_str("maxepoch") {
             epoch.parse::<usize>()?
         } else {
             1
