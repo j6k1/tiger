@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
 use getopts::{Matches};
-use libc::size_t;
+use libc::{size_t};
 use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
 use rand_distr::{Normal};
@@ -108,6 +108,9 @@ const OPPONENT_INDEX_MAP:[usize; 7] = [
     OPPONENT_MOCHIGOMA_KAKU_INDEX,
     OPPONENT_MOCHIGOMA_HISHA_INDEX
 ];
+pub fn sigmoid(x:f32) -> f32 {
+    1. / (1. + (-0.0017928004128957029 * x).exp())
+}
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
                                  BatchTrain<U,D,L> + Persistence<U,P,PT> + Step
@@ -275,7 +278,9 @@ impl<M> Evalutor<M>
                       successed:&mut usize,
                       estimated_win:&mut usize,
                       win:&mut usize,
-                      sr:&Receiver<Result<Option<(GameEndState, f32)>,ApplicationError>>,
+                      mae_acc:&mut f32,
+                      lambda:f32,
+                      sr:&Receiver<Result<Option<(GameEndState, f32, i16)>,ApplicationError>>,
     ) -> Result<(),ApplicationError> {
         while *current_threads > 0 {
             match sr.recv().map_err(|_| {
@@ -286,7 +291,7 @@ impl<M> Evalutor<M>
 
                     continue
                 },
-                Some((s, score)) => {
+                Some((s, score, eval)) => {
                     *current_threads -= 1;
 
                     if *count >= EVAL_TEST_SAMPLES {
@@ -299,13 +304,23 @@ impl<M> Evalutor<M>
 
                     let success = match s {
                         GameEndState::Draw => {
+                            let t = lambda * 0.5 + sigmoid(eval as f32) * (1. - lambda);
+
+                            *mae_acc += (t - score).abs();
                             true
                         },
                         GameEndState::Win => {
+                            let t = lambda * 1.0 + sigmoid(eval as f32) * (1. - lambda);
+
+                            *mae_acc += (t - score).abs();
                             *win += 1;
                             score >= 0.5
                         },
                         _ => {
+                            let t = lambda * 0.0 + sigmoid(eval as f32) * (1. - lambda);
+
+                            *mae_acc += (t - score).abs();
+
                             score < 0.5
                         }
                     };
@@ -327,9 +342,10 @@ impl<M> Evalutor<M>
                         item_size: usize,
                         learn_sfen_read_size: usize,
                         eval_test_max_threads: usize,
+                        lambda: f32,
                         test_process: F
     ) -> Result<(), ApplicationError>
-    where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32)>, ApplicationError> + Send + Sync + 'static, {
+    where F: Fn(&Evalutor<M>, Vec<u8>) -> Result<Option<(GameEndState, f32, i16)>, ApplicationError> + Send + Sync + 'static, {
         let test_process = Arc::new(test_process);
 
         let dataloader_builder = DataLoaderBuilder::new(Path::new(&testdir)
@@ -346,9 +362,10 @@ impl<M> Evalutor<M>
         let mut estimated_win = 0usize;
         let mut win = 0usize;
         let mut count = 0usize;
+        let mut mae_acc = 0f32;
 
         let mut current_threads = 0usize;
-        let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32)>,ApplicationError>>();
+        let (ss,sr) = mpsc::channel::<Result<Option<(GameEndState,f32,i16)>,ApplicationError>>();
 
         'outer: while let Some((_,_,batch)) = dataloader.load()? {
             for packed in batch.into_iter() {
@@ -358,6 +375,8 @@ impl<M> Evalutor<M>
                                         &mut successed,
                                         &mut estimated_win,
                                         &mut win,
+                                        &mut mae_acc,
+                                        lambda,
                                         &sr)?;
                     if count >= EVAL_TEST_SAMPLES {
                         break 'outer;
@@ -386,6 +405,8 @@ impl<M> Evalutor<M>
                                 &mut successed,
                                 &mut estimated_win,
                                 &mut win,
+                                &mut mae_acc,
+                                lambda,
                                 &sr)?;
             if count >= EVAL_TEST_SAMPLES {
                 break 'outer;
@@ -396,6 +417,7 @@ impl<M> Evalutor<M>
         println!("負け {}% (負けと評価された局面の割合 {}%)", (count - win) as f32 / count as f32 * 100.,
                  (count - estimated_win) as f32 / count as f32 * 100.);
         println!("正解率(勝敗) {}%", successed as f32 / count as f32 * 100.);
+        println!("MAE {}", mae_acc / count as f32);
         println!("{}件のテストサンプルを利用しました。",count);
 
         Ok(())
@@ -403,11 +425,11 @@ impl<M> Evalutor<M>
 
     pub fn test_by_packed_sfens(&self,
                                 packed_sfen:Vec<u8>)
-                                -> Result<Option<(GameEndState,f32)>,ApplicationError> {
+                                -> Result<Option<(GameEndState,f32,i16)>,ApplicationError> {
         let mut packed_sfen_reader = PackedSfenReader::new();
 
         let ((teban,banmen,mc),yaneuraou::haffman_code::ExtendFields {
-            value: _,
+            value: score,
             best_move: _,
             end_ply: _,
             game_result
@@ -422,16 +444,16 @@ impl<M> Evalutor<M>
 
         let r = self.nn.forward_all(input)?;
 
-        Ok(Some((game_result,r[0])))
+        Ok(Some((game_result,r[0],score)))
     }
 
     pub fn test_by_packed_hcpe(&self,
                                hcpe:Vec<u8>)
-                               -> Result<Option<(GameEndState,f32)>,ApplicationError> {
+                               -> Result<Option<(GameEndState,f32,i16)>,ApplicationError> {
         let mut hcpe_reader = HcpeReader::new();
 
         let ((teban,banmen,mc),hcpe::haffman_code::ExtendFields {
-            eval: _,
+            eval: score,
             best_move: _,
             game_result
         }) = hcpe_reader.read_sfen_with_extended(hcpe)?;
@@ -461,7 +483,7 @@ impl<M> Evalutor<M>
             _ => GameEndState::Draw
         };
 
-        Ok(Some((s,r[0])))
+        Ok(Some((s,r[0],score)))
     }
 }
 pub type LF = CrossEntropy<f32>;
@@ -584,7 +606,7 @@ impl<M,A> Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {
     fn sigmoid(x:f32) -> f32 {
-        1. / (1. + (-0.0017928004128957029 * x).exp())
+        sigmoid(x)
     }
 
     pub fn make_packed_sfens_parser<'a>(lambda:f32, verbose: bool)

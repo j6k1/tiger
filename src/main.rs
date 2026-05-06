@@ -134,6 +134,7 @@ fn run() -> Result<(),ApplicationError> {
     opts.optflag("", "hcpe,yaneuraou", "hcpe format teacher phase. and YaneuraOu format test phase.");
     opts.optopt("e", "maxepoch", "Number of epochs in batch learning.", "number of epoch");
     opts.optopt("", "eval", "Test only the evaluation of learned models. The argument is the path to the directory containing the teacher phase for testing", "path string.");
+    opts.optopt("", "maelambda", "The coefficients of the win-loss terms used during training for MAE calculations", "lambda");
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -181,6 +182,7 @@ fn run() -> Result<(),ApplicationError> {
                         evalutor.eval_test(testdir,"bin",40,
                                            config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                            config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
                                            |evalutor, packed| {
                                                evalutor.test_by_packed_sfens(packed)
                                            })
@@ -188,6 +190,7 @@ fn run() -> Result<(),ApplicationError> {
                         evalutor.eval_test(testdir,"hcpe",38,
                                            config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                            config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
                                            |evalutor, packed| {
                                                evalutor.test_by_packed_hcpe(packed)
                                            })
@@ -214,6 +217,7 @@ fn run() -> Result<(),ApplicationError> {
                         evalutor.eval_test(testdir,"bin",40,
                                            config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                            config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
                                            |evalutor, packed| {
                                                evalutor.test_by_packed_sfens(packed)
                                            })
@@ -221,6 +225,7 @@ fn run() -> Result<(),ApplicationError> {
                         evalutor.eval_test(testdir,"hcpe",38,
                                            config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                                            config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                                           matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
                                            |evalutor, packed| {
                                                evalutor.test_by_packed_hcpe(packed)
                                            })
@@ -250,6 +255,7 @@ fn run() -> Result<(),ApplicationError> {
             evalutor.eval_test(testdir,"bin",40,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                               matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
                |evalutor, packed| {
                    evalutor.test_by_packed_sfens(packed)
                })?;
@@ -257,6 +263,7 @@ fn run() -> Result<(),ApplicationError> {
             evalutor.eval_test(testdir,"hcpe",38,
                config.learn_sfen_read_size.unwrap_or(LEAN_SFEN_READ_SIZE),
                config.eval_test_max_threads.unwrap_or(EVAL_TEST_MAX_THREADS),
+                               matches.opt_str("maelambda").unwrap_or(String::from("0.5")).parse()?,
        |evalutor, packed| {
                    evalutor.test_by_packed_hcpe(packed)
                })?;
