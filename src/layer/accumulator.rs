@@ -40,18 +40,18 @@ pub struct AccumulatorLayer<U,P,D,I,PI,const N:usize>
 }
 
 // Persistence just delegates to parent
-impl<U,P,D,I,PI,const N:usize> Persistence<U,TextFilePersistence<U>,Specialized> for AccumulatorLayer<U,P,D,I,PI,N>
-    where P: ForwardAll<Input=I,Output=PI> + BackwardAll<U,LossInput=PI> + PreTrain<U> + Loss<U> + Persistence<U,TextFilePersistence<U>,Specialized>,
+impl<U,P,D,I,PI,const N:usize> Persistence<U,TextFilePersistence,Specialized> for AccumulatorLayer<U,P,D,I,PI,N>
+    where P: ForwardAll<Input=I,Output=PI> + BackwardAll<U,LossInput=PI> + PreTrain<U> + Loss<U> + Persistence<U,TextFilePersistence,Specialized>,
           U: Default + Clone + Copy + UnitValue<U> + FromStr,
           D: Device<U>,
           I: Debug + Send + Sync,
           PI: Debug,
           ModelLoadError: From<<U as FromStr>::Err> {
-    fn load(&mut self, persistence: &mut TextFilePersistence<U>) -> Result<(),ModelLoadError> {
+    fn load(&mut self, persistence: &mut TextFilePersistence) -> Result<(),ModelLoadError> {
         self.parent.load(persistence)
     }
 
-    fn save(&mut self, persistence: &mut TextFilePersistence<U>) -> Result<(),PersistenceError> {
+    fn save(&mut self, persistence: &mut TextFilePersistence) -> Result<(),PersistenceError> {
         self.parent.save(persistence)
     }
 }

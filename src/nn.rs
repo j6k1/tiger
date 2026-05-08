@@ -490,7 +490,7 @@ pub type LF = CrossEntropy<f32>;
 
 #[cfg(feature = "cuda")]
 pub struct Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A:CudaAllocator {
     pub nn:M,
     a:PhantomData<A>,
@@ -503,7 +503,7 @@ pub struct TrainerCreator {
 impl TrainerCreator {
     pub fn create<A: CudaAllocator + MemoryType + 'static>(
         save_dir:String, nn_path:String, config:&Config, options:&Matches, allocator:A
-    ) -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
+    ) -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
         where A: CudaAllocator,
               for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
@@ -530,22 +530,22 @@ impl TrainerCreator {
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(total_steps,config.eta_min.unwrap_or(0.00001)))
+            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle_large = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(total_steps,config.eta_min.unwrap_or(0.00001)))
+            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
             .weight_decay(1e-5);
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(total_steps,config.eta_min.unwrap_or(0.00001)))
+            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
             .weight_decay(1e-5);
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(total_steps,config.eta_min.unwrap_or(0.00001)))
+            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
             .weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
@@ -603,7 +603,7 @@ impl TrainerCreator {
 }
 #[cfg(feature = "cuda")]
 impl<M,A> Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence<f32>,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {
     fn sigmoid(x:f32) -> f32 {
         sigmoid(x)
