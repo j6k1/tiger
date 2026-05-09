@@ -6,7 +6,7 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
-use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PreTrain, UpdateWeight};
+use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PersistProgress, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::mem::AsRawSlice;
@@ -640,8 +640,43 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> OnStep for FeatureTransformLa
 
         Ok(self.parent.on_step(step)?)
     }
-}
+    fn on_frequently_step(&mut self, step: usize, frequently_step: usize) -> Result<(), TrainingError> {
+        self.unit_optimizer.on_frequently_step(step,frequently_step)?;
+        self.bias_optimizer.on_frequently_step(step,frequently_step)?;
 
+        Ok(self.parent.on_frequently_step(step,frequently_step)?)
+    }
+}
+#[cfg(feature = "cuda")]
+impl<T,U,P,I,A,OP,const NI:usize,const NO:usize> PersistProgress<T,Linear>
+    for FeatureTransformLayer<U,P,I,CudaTensor2dPtr<U,A,NI,NO>,CudaTensor1dPtr<U,A,NO>,DeviceGpu<U,A>,OP,NI,NO>
+    where T: LinearPersistence<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>> + PersistProgress<T,Linear> +
+             BackwardAll<U,LossInput=()> + PreTrain<U> + Loss<U>,
+          DeviceGpu<U,A>: Device<U>,
+          U: UnitValue<U>,
+          I: Debug + Send + Sync,
+          A: CudaAllocator,
+          OP: Optimizer<U,DeviceGpu<U,A>> + Persistence<U,T,Linear> + 'static,
+          CudaPtr<U,A>: ReadMemory<U> + WriteMemory<U> {
+    fn load_progress(&mut self, persistence: &mut T) -> Result<(), TrainingError> {
+        self.parent.load_progress(persistence)?;
+
+        self.unit_optimizer.load(persistence)?;
+        self.bias_optimizer.load(persistence)?;
+
+        Ok(())
+    }
+
+    fn save_progress(&mut self, persistence: &mut T) -> Result<(), PersistenceError> {
+        self.parent.save_progress(persistence)?;
+
+        self.unit_optimizer.save(persistence)?;
+        self.bias_optimizer.save(persistence)?;
+
+        Ok(())
+    }
+}
 pub trait FeatureTransformLayerInstantiation<U,P,I,C,BC,D,OP,const NI:usize,const NO:usize>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,

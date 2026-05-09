@@ -13,7 +13,7 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, PartialForward, PreTrain, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, PartialForward, PersistProgress, PreTrain, Step, TryAddLayer};
 use nncombinator::layer::input::{DiffInputLayer, InputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
@@ -22,7 +22,7 @@ use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
 use nncombinator::optimizer::{AdamWBuilder};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
-use nncombinator::scheduler::{CosineAnnealingLR, StepLR};
+use nncombinator::scheduler::{CosineAnnealingLR, LinearWarmupLR, Scheduler, StepLR};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
@@ -113,7 +113,7 @@ pub fn sigmoid(x:f32) -> f32 {
 }
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-                                 BatchTrain<U,D,L> + Persistence<U,P,PT> + Step
+                                 BatchTrain<U,D,L> + Persistence<U,P,PT> + PersistProgress<P,PT> + Step
                                  where U: UnitValue<U>,
                                        D: Device<U>,
                                        I: BatchDataType + Debug + Send + Sync,
@@ -123,7 +123,7 @@ pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
 impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
     where T: ForwardAll<Input=I,Output=O> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-             BatchTrain<U,D,L> + Persistence<U,P,PT> + Step,
+             BatchTrain<U,D,L> + Persistence<U,P,PT> + PersistProgress<P,PT> + Step,
              U: UnitValue<U>,
              D: Device<U>,
              I: BatchDataType + Debug + Send + Sync,
@@ -523,30 +523,54 @@ impl TrainerCreator {
         let device = DeviceGpu::new(&allocator)?;
 
         let total_steps = if let Some(epoch) = options.opt_str("maxepoch") {
-            epoch.parse::<usize>()?
+            epoch.parse::<usize>()? - config.warmup_epochs.unwrap_or(0)
         } else {
             1
         };
 
         let optimizer_builder_feature = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
-            .weight_decay(1e-5);
+            .scheduler(LinearWarmupLR::new(
+                config.warmup_steps.unwrap_or(1000),
+                config.learning_rate.unwrap_or(0.001),
+                config.start_factor.unwrap_or(0.1)
+            ).seq(config.warmup_epochs.unwrap_or(0),
+                  CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),
+                                         total_steps,config.eta_min.unwrap_or(0.00001)))
+            ).weight_decay(1e-5);
 
         let optimizer_builder_middle_large = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
-            .weight_decay(1e-5);
+            .scheduler(LinearWarmupLR::new(
+                config.warmup_steps.unwrap_or(1000),
+                config.learning_rate.unwrap_or(0.001),
+                config.start_factor.unwrap_or(0.1)
+            ).seq(config.warmup_epochs.unwrap_or(0),
+                  CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),
+                                         total_steps,config.eta_min.unwrap_or(0.00001)))
+            ).weight_decay(1e-5);
 
         let optimizer_builder_middle = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
-            .weight_decay(1e-5);
+            .scheduler(LinearWarmupLR::new(
+                config.warmup_steps.unwrap_or(1000),
+                config.learning_rate.unwrap_or(0.001),
+                config.start_factor.unwrap_or(0.1)
+            ).seq(config.warmup_epochs.unwrap_or(0),
+                  CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),
+                                         total_steps,config.eta_min.unwrap_or(0.00001)))
+            ).weight_decay(1e-5);
 
         let optimizer_builder_out = AdamWBuilder::new(&device)
             .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),total_steps,config.eta_min.unwrap_or(0.00001)))
-            .weight_decay(1e-5);
+            .scheduler(LinearWarmupLR::new(
+                config.warmup_steps.unwrap_or(1000),
+                config.learning_rate.unwrap_or(0.001),
+                config.start_factor.unwrap_or(0.1)
+            ).seq(config.warmup_epochs.unwrap_or(0),
+                  CosineAnnealingLR::new(config.learning_rate.unwrap_or(0.001),
+                                         total_steps,config.eta_min.unwrap_or(0.00001)))
+            ).weight_decay(1e-5);
 
         let net: InputLayer<f32, HalfKP<FEATURES_NUM>, (), _> = InputLayer::new(&device);
 
@@ -590,6 +614,20 @@ impl TrainerCreator {
                 )?;
 
                 nn.load(&mut p)?;
+            }
+        }
+
+        {
+            let save_dir = Path::new(&save_dir);
+
+            let progress_path = Path::new("progress.bin");
+
+            if save_dir.join(progress_path).exists() {
+                let mut p = BinFilePersistence::new(save_dir
+                    .join(progress_path)
+                )?;
+
+                nn.load_progress(&mut p)?;
             }
         }
 
@@ -803,6 +841,22 @@ impl<M,A> Trainer<M,A>
         fs::rename(Path::new(&tmp_nn_path),Path::new(&self.nnsavedir).join(&self.nn_path).as_os_str()
             .to_str().ok_or(ApplicationError::InvalidSettingError(
             String::from("ニューラルネットワークのモデルのパスの処理時にエラーが発生しました。")
+        ))?)?;
+
+        let tmp_progress_path = Path::new(&self.nnsavedir).join("progress.bin.tmp");
+
+        let mut p = BinFilePersistence::new(tmp_progress_path.as_os_str()
+            .to_str().ok_or(ApplicationError::InvalidSettingError(
+            String::from("学習状態の保存処理時にエラーが発生しました。")
+        ))?)?;
+
+        self.nn.save_progress(&mut p)?;
+
+        p.save(&tmp_progress_path)?;
+
+        fs::rename(Path::new(&tmp_progress_path),Path::new(&self.nnsavedir).join("progress.bin").as_os_str()
+            .to_str().ok_or(ApplicationError::InvalidSettingError(
+            String::from("学習状態の保存処理時のパスの処理時にエラーが発生しました。")
         ))?)?;
 
         Ok(())

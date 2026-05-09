@@ -15,7 +15,7 @@ use usiagent::logger::*;
 use usiagent::input::*;
 
 use nncombinator::arr::{Arr, SerializedVec};
-use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll, Step};
+use nncombinator::layer::{BatchDataType, BatchForwardBase, BatchTrain, ForwardAll, PersistProgress, Step};
 use nncombinator::persistence::{BinFilePersistence, Linear, Persistence};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder};
 use nncombinator::cuda::allocator::CudaAllocator;
@@ -102,7 +102,10 @@ pub struct Learnener<M,A>
 impl<M,A> Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
-             BatchTrain<f32,DeviceGpu<f32,A>,LF> + Persistence<f32,BinFilePersistence,Linear> + Step + 'static,
+             BatchTrain<f32,DeviceGpu<f32,A>,LF> +
+             Persistence<f32,BinFilePersistence,Linear> +
+             PersistProgress<BinFilePersistence,Linear> + 
+             Step + 'static,
           A: CudaAllocator,
           [(); FEATURES_NUM * 2]:,
           [(); FEATURES_NUM * 256]: {

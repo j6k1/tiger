@@ -327,6 +327,12 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OnStep for DiffFeatureTran
 
         Ok(self.parent.on_step(step)?)
     }
+    fn on_frequently_step(&mut self, step: usize, frequently_step: usize) -> Result<(), TrainingError> {
+        self.unit_optimizer.on_frequently_step(step,frequently_step)?;
+        self.bias_optimizer.on_frequently_step(step,frequently_step)?;
+
+        Ok(self.parent.on_frequently_step(step,frequently_step)?)
+    }
 }
 pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usize,const NO:usize>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +

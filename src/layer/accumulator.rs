@@ -339,6 +339,9 @@ impl<U,P,D,I,PI,const N:usize> OnStep for AccumulatorLayer<U,P,D,I,PI,N>
           I: Debug + Send + Sync,
           PI: Debug {
     fn on_step(&mut self, step: usize) -> Result<(),TrainingError> { self.parent.on_step(step) }
+    fn on_frequently_step(&mut self, step: usize, frequently_step: usize) -> Result<(), TrainingError> {
+        Ok(self.parent.on_frequently_step(step,frequently_step)?)
+    }
 }
 
 // Generic instantiation for any device implementing Clone
