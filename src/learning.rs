@@ -104,7 +104,7 @@ impl<M,A> Learnener<M,A>
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
              BatchTrain<f32,DeviceGpu<f32,A>,LF> +
              Persistence<f32,BinFilePersistence,Linear> +
-             PersistProgress<BinFilePersistence,Linear> + 
+             PersistProgress<BinFilePersistence,Linear> +
              Step + 'static,
           A: CudaAllocator,
           [(); FEATURES_NUM * 2]:,
@@ -304,6 +304,8 @@ impl<M,A> Learnener<M,A>
                 pending_count += 1;
 
                 processed_count += size;
+
+                evalutor.nn.frequently_step()?;
 
                 if batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) > 0 {
                     if processed_count >= batches_per_epoch.unwrap_or(DEFAULT_EPOCH_SIZE) * learn_batch_size * (epoch_count + 1) {
