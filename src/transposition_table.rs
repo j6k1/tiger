@@ -151,8 +151,6 @@ impl<T> ZobristHash<T>
 pub struct TTPartialEntry<T> where T: Default + Neg<Output = T> {
     pub depth:i8,
     pub score:T,
-    pub beta:T,
-    pub alpha:T,
     pub bound:Bound,
     pub best_move:Option<LegalMove>
 }
@@ -161,8 +159,6 @@ impl<T> Default for TTPartialEntry<T> where T: Default + Neg<Output = T> {
         TTPartialEntry {
             depth:-1,
             score:T::default(),
-            beta:-T::default(),
-            alpha:T::default(),
             bound:Bound::None,
             best_move: None
         }
@@ -384,8 +380,6 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
                       zh: &'a ZobristHash<K>,
                       depth: i8,
                       score: T,
-                      beta: T,
-                      alpha:T,
                       bound:Bound,
                       best_move: Option<LegalMove>) {
         let mut tte = self.entry(zh);
@@ -396,8 +390,6 @@ impl<K,T,const S:usize,const N:usize> TT<K,T,S,N>
             tte.bound = bound;
             tte.depth = depth;
             tte.score = score;
-            tte.beta = beta;
-            tte.alpha = alpha;
             tte.best_move = best_move;
         }
     }

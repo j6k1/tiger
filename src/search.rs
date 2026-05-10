@@ -322,8 +322,6 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             if let Some(TTPartialEntry {
                             depth: _,
                             score: s,
-                            beta: _,
-                            alpha: _,
                             bound,
                             best_move: _
                         }) = r {
@@ -347,7 +345,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if in_check && picker.len() == 0 {
-            env.transposition_table.update(&zh,0,Score::NEGINFINITE,beta,alpha,Bound::Exact,None);
+            env.transposition_table.update(&zh,0,Score::NEGINFINITE,Bound::Exact,None);
             return Ok(Score::NEGINFINITE);
         }
 
@@ -424,7 +422,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             } {
                 history.remove(&(teban,mk,sk));
 
-                env.transposition_table.update(&zh,0,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                env.transposition_table.update(&zh,0,Score::INFINITE,Bound::Exact,Some(m));
 
                 return Ok(Score::INFINITE);
             }
@@ -488,7 +486,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             //};
 
             if score >= beta {
-                env.transposition_table.update(&zh, 0, score, beta, alpha, Bound::LowerBound, Some(m));
+                env.transposition_table.update(&zh, 0, score, Bound::LowerBound, Some(m));
 
                 return Ok(score);
             }
@@ -514,7 +512,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         if bestscore == Score::NEGINFINITE {
             Ok(stand_pat)
         } else {
-            env.transposition_table.update(&zh, 0, bestscore, beta, alpha, Bound::UpperBound, best_move);
+            env.transposition_table.update(&zh, 0, bestscore, Bound::UpperBound, best_move);
 
             Ok(bestscore)
         }
@@ -948,8 +946,6 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             if let Some(TTPartialEntry {
                             depth: _,
                             score: s,
-                            beta: _,
-                            alpha: _,
                             bound,
                             best_move: _
                         }) = r {
@@ -991,7 +987,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             } {
                 history.remove(&(teban,mk,sk));
 
-                env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Score::INFINITE,Score::NEGINFINITE,Bound::Exact,Some(m));
+                env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Bound::Exact,Some(m));
 
                 return Ok(teban == attacker);
             }
@@ -1023,7 +1019,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 if checkmate && attacker == teban {
                     history.remove(&(teban,mk,sk));
 
-                    env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Score::INFINITE,Score::NEGINFINITE,Bound::Exact,Some(m));
+                    env.transposition_table.update(&zh,depth as i8,Score::INFINITE,Bound::Exact,Some(m));
 
                     return Ok(true);
                 } else if !checkmate && attacker != teban {
@@ -2174,8 +2170,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             if let Some(TTPartialEntry {
                             depth: d,
                             score: s,
-                            beta: _,
-                            alpha: _,
                             bound,
                             best_move: _
                         }) = r {
@@ -2196,7 +2190,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
         if Rule::in_check(gs.teban.opposite(),&gs.state) {
             if let Some(m) = prev_move.clone() {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,Bound::Exact,None);
 
                 let mut mvs = VecDeque::new();
 
@@ -2225,7 +2219,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                    gs.rng)?;
 
             if checkmate {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::NEGINFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::NEGINFINITE,Bound::Exact,None);
 
                 let mut mvs = VecDeque::new();
 
@@ -2249,7 +2243,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                    gs.rng)?;
 
             if checkmate {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,gs.beta,gs.alpha,Bound::Exact,None);
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,Bound::Exact,None);
 
                 let mut mvs = VecDeque::new();
 
@@ -2454,8 +2448,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         let tt_move = if let Some(TTPartialEntry {
                                   depth: d,
                                   score: _,
-                                  beta: _,
-                                  alpha: _,
                                   bound: _,
                                   best_move: m
                               }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
@@ -2576,7 +2568,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     };
 
                     if self.is_obtained_ou(m)? {
-                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::Exact,Some(m));
 
                         let mut mvs = VecDeque::new();
 
@@ -2612,9 +2604,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                 if scoreval >= beta {
                                     if Score::INFINITE == scoreval {
-                                        env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+                                        env.transposition_table.update(&gs.zh,depth as i8,scoreval,Bound::Exact,Some(m));
                                     } else {
-                                        env.transposition_table.update(&gs.zh,depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                        env.transposition_table.update(&gs.zh,depth as i8,scoreval,Bound::LowerBound,Some(m));
                                     }
 
                                     match m {
@@ -2689,9 +2681,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         }
 
         if scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::UpperBound, None);
+            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, Bound::UpperBound, None);
         } else {
-            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, beta, alpha, Bound::Exact, best_moves.front().map(|m| m.clone()));
+            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval, Bound::Exact, best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
@@ -2802,8 +2794,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
         let tt_move = if let Some(TTPartialEntry {
                         depth: d,
                         score: _,
-                        beta: _,
-                        alpha: _,
                         bound: _,
                         best_move: m
                     }) = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone()) {
@@ -2873,7 +2863,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                     };
 
                     if self.is_obtained_ou(m)? {
-                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,beta,alpha,Bound::Exact,Some(m));
+                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,Bound::Exact,Some(m));
 
                         let mut mvs = VecDeque::new();
 
@@ -2912,9 +2902,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                                 if scoreval >= beta {
                                     if Score::INFINITE == scoreval {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,Some(m));
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::Exact,Some(m));
                                     } else {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::LowerBound,Some(m));
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::LowerBound,Some(m));
                                     }
 
                                     match m {
@@ -2978,9 +2968,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
         }
 
         if gs.search_offset == 0 && scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
         } else {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,beta,alpha,Bound::Exact,best_moves.front().map(|m| m.clone()));
+            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::Exact,best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
