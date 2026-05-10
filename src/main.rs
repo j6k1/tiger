@@ -35,12 +35,17 @@ use std::{env};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+#[cfg(feature = "cuda")]
+use std::sync::{Mutex};
 use getopts::Options;
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{DeviceAlloc, MemoryPoolAllocator, MemoryPoolAllocatorInstantiation};
+#[cfg(feature = "cuda")]
 use usiagent::logger::FileLogger;
-use usiagent::{OnErrorHandler, UsiAgent};
+#[cfg(feature = "cuda")]
+use usiagent::{OnErrorHandler};
+use usiagent::{UsiAgent};
 use usiagent::output::USIStdErrorWriter;
 use crate::error::ApplicationError;
 use crate::nn::{EvalutorCreator};
@@ -65,26 +70,27 @@ pub mod kernel;
 pub mod evalutor;
 pub mod math;
 const LEAN_SFEN_READ_SIZE:usize = 1024 * 10000 * 10;
+#[cfg(feature = "cuda")]
 const LEAN_BATCH_SIZE:usize = 8192;
 const EVAL_TEST_MAX_THREADS:usize = 16;
 const EVAL_TEST_SAMPLES:usize = 10000;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
-    learn_sfen_read_size:Option<usize>,
-    learn_batch_size:Option<usize>,
-    batches_per_epoch:Option<usize>,
-    lambda:Option<f32>,
-    step_count:Option<usize>,
-    gamma:Option<f32>,
-    eta_min:Option<f32>,
-    warmup_steps:Option<usize>,
-    warmup_epochs:Option<usize>,
-    start_factor:Option<f32>,
-    save_batch_count:Option<usize>,
-    learning_rate:Option<f32>,
-    eval_test_max_threads:Option<usize>,
-    verbose:Option<bool>,
+    pub learn_sfen_read_size:Option<usize>,
+    pub learn_batch_size:Option<usize>,
+    pub batches_per_epoch:Option<usize>,
+    pub lambda:Option<f32>,
+    pub step_count:Option<usize>,
+    pub gamma:Option<f32>,
+    pub eta_min:Option<f32>,
+    pub warmup_steps:Option<usize>,
+    pub warmup_epochs:Option<usize>,
+    pub start_factor:Option<f32>,
+    pub save_batch_count:Option<usize>,
+    pub learning_rate:Option<f32>,
+    pub eval_test_max_threads:Option<usize>,
+    pub verbose:Option<bool>,
 }
 pub struct ConfigLoader {
     reader:BufReader<File>,
@@ -146,6 +152,7 @@ fn run() -> Result<(),ApplicationError> {
         }
     };
 
+    #[allow(unused_variables)]
     if let Some(kifudir) = matches.opt_str("kifudir") {
         #[cfg(feature = "cuda")]
         {

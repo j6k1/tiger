@@ -6,9 +6,12 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
-use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PersistProgress, PreTrain, UpdateWeight};
+#[cfg(feature = "cuda")]
+use nncombinator::layer::PersistProgress;
+use nncombinator::layer::{BackwardAll, BatchBackward, BatchDataType, BatchForward, BatchForwardBase, BatchLoss, BatchPreTrain, BatchPreTrainBase, BatchSize, Forward, ForwardAll, Loss, OnStep, PreTrain, UpdateWeight};
 use nncombinator::lossfunction::LossFunction;
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
+#[cfg(feature = "cuda")]
 use nncombinator::mem::AsRawSlice;
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;

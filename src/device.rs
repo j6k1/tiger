@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::simd::Simd;
+#[cfg(feature = "cuda")]
 use libc::{size_t};
 use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelIterator};
 
@@ -7,7 +8,9 @@ use nncombinator::arr::{SerializedVec};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::device::{DeviceCpu};
-use nncombinator::error::{EvaluateError, TrainingError, TypeConvertError};
+#[cfg(feature = "cuda")]
+use nncombinator::error::{TypeConvertError};
+use nncombinator::error::{EvaluateError, TrainingError};
 use nncombinator::layer::{BatchDataType, BatchSize};
 use nncombinator::ope::UnitValue;
 use crate::features::{HalfKP, HalfKPDiff, HalfKPListView, HalfKPView};

@@ -1,9 +1,12 @@
 use std::fmt::Debug;
 use std::path::{Path};
+#[cfg(feature = "cuda")]
 use std::{fs};
+#[cfg(feature = "cuda")]
 use std::marker::PhantomData;
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver};
+#[cfg(feature = "cuda")]
 use getopts::{Matches};
 use libc::{size_t};
 use rand::{prelude, Rng, SeedableRng};
@@ -14,20 +17,27 @@ use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
 use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, PartialForward, PersistProgress, PreTrain, Step, TryAddLayer};
-use nncombinator::layer::input::{DiffInputLayer, InputLayer};
+#[cfg(feature = "cuda")]
+use nncombinator::layer::input::{InputLayer};
+use nncombinator::layer::input::{DiffInputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
 use nncombinator::optimizer::{AdamWBuilder};
-use nncombinator::persistence::{BinFilePersistence, Linear, Persistence, PersistenceType, SaveToFile};
-use nncombinator::scheduler::{CosineAnnealingLR, LinearWarmupLR, Scheduler, StepLR};
+#[cfg(feature = "cuda")]
+use nncombinator::persistence::{Linear, SaveToFile};
+use nncombinator::persistence::{BinFilePersistence, Persistence, PersistenceType};
+#[cfg(feature = "cuda")]
+use nncombinator::scheduler::{Scheduler, CosineAnnealingLR, LinearWarmupLR};
+use nncombinator::scheduler::{StepLR};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
 use packedsfen::{hcpe, yaneuraou};
 use packedsfen::hcpe::haffman_code::GameResult;
 use packedsfen::yaneuraou::reader::PackedSfenReader;
+#[cfg(feature = "cuda")]
 use rayon::prelude::{ParallelIterator, IntoParallelIterator};
 use shogi_dataloader::dataloader::{DataLoader, DataLoaderBuilder, UnifiedDataLoader};
 use usiagent::event::{GameEndState};
@@ -43,6 +53,7 @@ use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::layer::diff_feature_transform::DiffFeatureTransformLayerBuilder;
+#[cfg(feature = "cuda")]
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
 use crate::math::{Sign, SignFloat};
 

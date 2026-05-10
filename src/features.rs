@@ -3,8 +3,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use libc::size_t;
 use nncombinator::arr::Arr;
+#[cfg(feature = "cuda")]
 use nncombinator::error::TypeConvertError;
 use nncombinator::layer::{BatchDataType, BatchSize};
+#[cfg(feature = "cuda")]
 use nncombinator::ope::UnitValue;
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::CudaAllocator;
