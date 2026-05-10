@@ -3,7 +3,7 @@ use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{Ordering};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
 use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
@@ -105,7 +105,6 @@ pub struct Tiger<M>
     zh:Option<ZobristHash<u64>>,
     hasher:Arc<KyokumenHash<u64>>,
     transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
-    search_id:Arc<AtomicUsize>,
     base_depth:u32,
     qsearch_max_depth:Option<u32>,
     threatmate_depth:u32,
@@ -140,7 +139,6 @@ impl<M> Tiger<M>
             zh:None,
             hasher:Arc::new(KyokumenHash::new()),
             transposition_table:Arc::new(TT::new()),
-            search_id:Arc::new(AtomicUsize::new(0)),
             base_depth:BASE_DEPTH,
             qsearch_max_depth:None,
             threatmate_depth:THREATMATE_DEPTH,
@@ -522,7 +520,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
-                Arc::clone(&self.search_id),
                 teban,
                 limit,
                 self.turn_limit,
@@ -568,7 +565,6 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
                 info_sender.clone(),
                 Arc::clone(&on_error_handler),
                 hasher,
-                Arc::clone(&self.search_id),
                 teban,
                 limit,
                 self.turn_limit,

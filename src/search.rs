@@ -62,7 +62,6 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub event_queue:Arc<Mutex<UserEventQueue>>,
     pub info_sender:S,
     pub on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
-    pub search_id:Arc<AtomicUsize>,
     pub hasher:Arc<KyokumenHash<u64>>,
     pub teban:Teban,
     pub limit:Option<UsiGoTimeLimit>,
@@ -88,7 +87,6 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             event_queue:Arc::clone(&self.event_queue),
             info_sender:self.info_sender.clone(),
             on_error_handler:Arc::clone(&self.on_error_handler),
-            search_id:Arc::clone(&self.search_id),
             hasher:Arc::clone(&self.hasher),
             teban:self.teban.clone(),
             limit:self.limit.clone(),
@@ -141,7 +139,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
                info_sender:S,
                on_error_handler:Arc<Mutex<OnErrorHandler<L>>>,
                hasher:Arc<KyokumenHash<u64>>,
-               search_id:Arc<AtomicUsize>,
                teban:Teban,
                limit:Option<UsiGoTimeLimit>,
                turn_limit:Option<u32>,
@@ -164,7 +161,6 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             info_sender:info_sender,
             on_error_handler:on_error_handler,
             hasher:hasher,
-            search_id:search_id,
             teban:teban,
             limit:limit,
             turn_limit:turn_limit,
@@ -1787,8 +1783,6 @@ impl<L,S,M> Root<L,S,M>
     pub fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>,move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>) -> Result<EvaluationResult,ApplicationError> {
-        env.search_id.fetch_add(1, Ordering::Release);
-
         let base_depth = gs.base_depth;
         let max_depth = base_depth as usize + 2;
         let mut pv_result = vec![None;max_depth+1];
@@ -1879,9 +1873,7 @@ impl<L,S,M> Root<L,S,M>
                         }
                     }
 
-                    self.send_message(env, format!("search_id = {}, pv_depth = {}, worker_depth = {}",
-                                                   env.search_id.load(Ordering::Acquire), pv_depth, worker_depth
-                    ).as_str())?;
+                    self.send_message(env, format!("pv_depth = {}, worker_depth = {}", pv_depth, worker_depth).as_str())?;
                 },
                 Ok(RootEvaluationResult::NodeLimits) => {
                     self.termination(env, busy_threads, move_orderers)?;
