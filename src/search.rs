@@ -340,134 +340,154 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         if in_check {
             Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
-        } else {
-            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
-        }
 
-        if in_check && picker.len() == 0 {
-            env.transposition_table.update(&zh,0,Score::NEGINFINITE,Bound::Exact,None);
-            return Ok(Score::NEGINFINITE);
-        }
-
-        if picker.len() == 0 {
-            let s = evalutor.evalute(&self_partial_output)?;
-
-            return Ok(Score::Value(s));
-        }
-
-        let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
-
-        if mvs.len() == 0 {
-            let s = evalutor.evalute(&self_partial_output)?;
-
-            return Ok(Score::Value(s));
-        }
-
-        history.insert((teban,mk,sk));
-
-        let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
-
-        if stand_pat >= beta {
-            return Ok(stand_pat);
-        }
-
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
-        
-        let mut bestscore = Score::NEGINFINITE;
-
-        /*
-        let mut opponent_surrounding_mask = BitBoard::from(OU_SURROUNDING_MASK);
-
-        {
-            let p = Rule::ou_square(teban.opposite(),state) as u32;
-
-            let (_,y) = p.square_to_point();
-
-            if y == 0 {
-                opponent_surrounding_mask &= OU_SURROUNDING_TOP_MASK;
-            } else if y == 8 {
-                opponent_surrounding_mask &= OU_SURROUNDING_BOTTOM_MASK;
+            if picker.len() == 0 {
+                env.transposition_table.update(&zh,0,Score::NEGINFINITE,Bound::Exact,None);
+                return Ok(Score::NEGINFINITE);
             }
 
-            if p >= 10 {
-                opponent_surrounding_mask = opponent_surrounding_mask << (p - 10) as u128;
-            } else {
-                opponent_surrounding_mask = opponent_surrounding_mask >> (10 - p) as u128;
-            }
+            let start_alpha = alpha;
 
-            opponent_surrounding_mask = opponent_surrounding_mask << 1;
-        }
-        */
+            let mut bestscore = Score::NEGINFINITE;
 
-        let mut best_move = None;
+            let mut best_move = None;
 
-        for m in mvs {
-            if !in_check && !m.is_nari() {
-                if let Some(o) = m.obtained() {
-                    if !prev_move.map(|pm| {
-                        pm.obtained().is_some() && m.dst() == pm.dst()
-                    }).unwrap_or(false) && !Rule::is_oute_move(state,teban,m) {
-                        if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
-                            continue;
-                        }
-                    }
+            history.insert((teban,mk,sk));
+
+            for m in picker {
+                if let Some(ObtainKind::Ou) = match m {
+                    LegalMove::To(m) => m.obtained(),
+                    _ => None
+                } {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh,0,Score::INFINITE,Bound::Exact,Some(m));
+
+                    return Ok(Score::INFINITE);
+                }
+
+                let o = match m {
+                    LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                    _ => None
+                };
+
+                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
+                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+
+                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+
+                let score = -self.qsearch(teban.opposite(),
+                                          &next,
+                                          &nmc,
+                                          env,
+                                          event_dispatcher,
+                                          &nzh,
+                                          history,
+                                          opponent_partial_output,
+                                          self_partial_output,
+                                          -beta,
+                                          -alpha,
+                                          depth+1,
+                                          0,
+                                          Some(m),
+                                          evalutor,
+                                          rng)?;
+
+                if score >= beta {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh, 0, score, Bound::LowerBound, Some(m));
+
+                    return Ok(score);
+                }
+
+                if score > bestscore {
+                    best_move = Some(m);
+
+                    bestscore = score;
+                }
+
+                if score > alpha {
+                    alpha = score;
+                }
+
+                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                    self.timelimit_reached(env)? {
+                    break;
                 }
             }
 
-            if let Some(ObtainKind::Ou) = match m {
-                LegalMove::To(m) => m.obtained(),
-                _ => None
-            } {
-                history.remove(&(teban,mk,sk));
+            history.remove(&(teban,mk,sk));
 
-                env.transposition_table.update(&zh,0,Score::INFINITE,Bound::Exact,Some(m));
-
-                return Ok(Score::INFINITE);
+            if alpha > start_alpha {
+                env.transposition_table.update(&zh, 0, bestscore, Bound::Exact, best_move);
+            } else {
+                env.transposition_table.update(&zh, 0, bestscore, Bound::UpperBound, best_move);
             }
 
-            let o = match m {
-                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
-                _ => None
-            };
+            Ok(bestscore)
+        } else {
+            let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
 
-            let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+            if stand_pat >= beta {
+                return Ok(stand_pat);
+            }
 
-            let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
 
-            //let expand = extend_depth > 0 && !Rule::in_check(teban.opposite(),&next) &&
-            //        m.obtained().is_some() && (opponent_surrounding_mask & (1 << (m.dst() + 1)) != 0);
-            /*
-            let expand = false;
+            let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
-            let extend_depth = if expand {
-                extend_depth - 1
-            } else {
-                extend_depth
-            };
-            */
-            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
-            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+            if mvs.len() == 0 {
+                return Ok(stand_pat);
+            }
 
-            let score = /* if expand {
-                -self.qsearch_threatmate(teban.opposite(),
-                              &next,
-                              &nmc,
-                              env,
-                              event_dispatcher,
-                              &zh,
-                              history,
-                              opponent_partial_output,
-                              self_partial_output,
-                              -beta,
-                              -alpha,
-                              depth+1,
-                              extend_depth,
-                              evalutor,
-                              rng)?
-            } else {
-                */-self.qsearch(teban.opposite(),
+            if stand_pat > alpha {
+                alpha = stand_pat;
+            }
+
+            let mut bestscore = stand_pat;
+
+            history.insert((teban,mk,sk));
+
+            for m in mvs {
+                if !m.is_nari() {
+                    if let Some(o) = m.obtained() {
+                        if !prev_move.map(|pm| {
+                            pm.obtained().is_some() && m.dst() == pm.dst()
+                        }).unwrap_or(false) && !Rule::is_oute_move(state,teban,m) {
+                            if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 2 / 3 {
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(ObtainKind::Ou) = match m {
+                    LegalMove::To(m) => m.obtained(),
+                    _ => None
+                } {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh,0,Score::INFINITE,Bound::Exact,Some(m));
+
+                    return Ok(Score::INFINITE);
+                }
+
+                let o = match m {
+                    LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                    _ => None
+                };
+
+                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+
+                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+
+                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
+                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+
+                let score = -self.qsearch(teban.opposite(),
                                 &next,
                                 &nmc,
                                 env,
@@ -483,36 +503,30 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                 Some(m),
                                 evalutor,
                                 rng)?;
-            //};
 
-            if score >= beta {
-                env.transposition_table.update(&zh, 0, score, Bound::LowerBound, Some(m));
+                if score >= beta {
+                    history.remove(&(teban,mk,sk));
 
-                return Ok(score);
+                    env.transposition_table.update(&zh, 0, score, Bound::LowerBound, Some(m));
+
+                    return Ok(score);
+                }
+
+                if score > bestscore {
+                    bestscore = score;
+                }
+
+                if score > alpha {
+                    alpha = score;
+                }
+
+                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                    self.timelimit_reached(env)? {
+                    break;
+                }
             }
 
-            if score > bestscore {
-                best_move = Some(m);
-
-                bestscore = score;
-            }
-
-            if score > alpha {
-                alpha = score;
-            }
-
-            if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-                self.timelimit_reached(env)? {
-                break;
-            }
-        }
-
-        history.remove(&(teban,mk,sk));
-
-        if bestscore == Score::NEGINFINITE {
-            Ok(stand_pat)
-        } else {
-            env.transposition_table.update(&zh, 0, bestscore, Bound::UpperBound, best_move);
+            history.remove(&(teban,mk,sk));
 
             Ok(bestscore)
         }
@@ -2164,6 +2178,20 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             return Ok(EvaluationResult::Timeout);
         }
 
+        let prev_move = gs.m.clone();
+
+        if Rule::in_check(gs.teban.opposite(),&gs.state) {
+            if let Some(m) = prev_move.clone() {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,Bound::Exact,None);
+
+                let mut mvs = VecDeque::new();
+
+                mvs.push_front(m);
+
+                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone(),gs.current_depth));
+            }
+        }
+
         if let Some(prev_move) = gs.m.clone() {
             let r = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone());
 
@@ -2183,20 +2211,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                     return Ok(EvaluationResult::Immediate(s,mvs,gs.zh.clone(),gs.current_depth));
                 }
-            }
-        }
-
-        let prev_move = gs.m.clone();
-
-        if Rule::in_check(gs.teban.opposite(),&gs.state) {
-            if let Some(m) = prev_move.clone() {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE,Bound::Exact,None);
-
-                let mut mvs = VecDeque::new();
-
-                mvs.push_front(m);
-
-                return Ok(EvaluationResult::Immediate(Score::INFINITE, mvs, gs.zh.clone(),gs.current_depth));
             }
         }
 
