@@ -23,7 +23,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, StaticEval, SendInfo, THREATMATE_DEPTH};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH};
 use crate::transposition_table::{TT, ZobristHash, Score};
 
 pub trait FromOption {
@@ -218,12 +218,12 @@ impl<M> Tiger<M>
                     teban: teban,
                     state: &Arc::new(state.clone()),
                     rng:&mut rng,
-                    alpha: Score::NEGINFINITE,
-                    beta: Score::INFINITE,
+                    alpha: Score::default(),
+                    beta: Score::INFINITE(0),
                     search_offset: 0,
-                    best_score: Score::NEGINFINITE,
+                    best_score: Score::default(),
                     m:None,
-                    static_eval:StaticEval::new(),
+                    static_eval: LazyEval::new(),
                     prev_kind: KomaKind::Blank,
                     self_partial_output:self_partial_output,
                     opponent_partial_output:opponent_partial_output,
@@ -290,16 +290,16 @@ impl<M> Tiger<M>
 
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(Score::NEGINFINITE,_,_,_)) => {
+                    Ok(EvaluationResult::Exact(Score::NEGINFINITE(_), _, _, _)) => {
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) if mvs.len() == 0 => {
+                    Ok(EvaluationResult::Exact(_, mvs, _, _)) if mvs.len() == 0 => {
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) if mvs.len() >= 2 => {
+                    Ok(EvaluationResult::Exact(_, mvs, _, _)) if mvs.len() >= 2 => {
                         BestMove::Move(mvs[0].to_move(),Some(mvs[1].to_move()))
                     },
-                    Ok(EvaluationResult::Immediate(_,mvs,_,_)) => {
+                    Ok(EvaluationResult::Exact(_, mvs, _, _)) => {
                         BestMove::Move(mvs[0].to_move(),None)
                     }
                 };

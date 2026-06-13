@@ -46,12 +46,17 @@ impl ToBucketIndex for u8 {
         self as usize
     }
 }
-
+pub trait NormalizeMate<T> {
+    fn normalize_mate(&self,ply: T) -> Self;
+}
+pub trait LocalizeMate<T> {
+    fn localize_mate(&self,ply: T) -> Self;
+}
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
-    NEGINFINITE,
+    NEGINFINITE(i32),
     Value(i32),
-    INFINITE,
+    INFINITE(i32),
 }
 impl Neg for Score {
     type Output = Score;
@@ -59,8 +64,8 @@ impl Neg for Score {
     fn neg(self) -> Score {
         match self {
             Score::Value(v) => Score::Value(-v),
-            Score::INFINITE => Score::NEGINFINITE,
-            Score::NEGINFINITE => Score::INFINITE
+            Score::INFINITE(depth) => Score::NEGINFINITE(-depth),
+            Score::NEGINFINITE(depth) => Score::INFINITE(-depth)
         }
     }
 }
@@ -70,8 +75,8 @@ impl Add<i32> for Score {
     fn add(self, other:i32) -> Self::Output {
         match self {
             Score::Value(v) => Score::Value(v + other),
-            Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE
+            Score::INFINITE(depth) => Score::INFINITE(depth),
+            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth)
         }
     }
 }
@@ -81,19 +86,43 @@ impl Sub<i32> for Score {
     fn sub(self, other:i32) -> Self::Output {
         match self {
             Score::Value(v) => Score::Value(v - other),
-            Score::INFINITE => Score::INFINITE,
-            Score::NEGINFINITE => Score::NEGINFINITE
+            Score::INFINITE(depth) => Score::INFINITE(depth),
+            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth)
         }
     }
 }
 impl Default for Score {
     fn default() -> Self {
-        Score::NEGINFINITE
+        Score::NEGINFINITE(0)
     }
 }
 impl ExactScoreBound for Score {
     fn exact_score_bound(&self) -> bool {
-        *self == Score::INFINITE
+        if let Score::INFINITE(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+impl NormalizeMate<i32> for Score {
+    #[inline]
+    fn normalize_mate(&self,ply:i32) -> Self {
+        match self {
+            Score::INFINITE(depth) => Score::INFINITE(depth - ply),
+            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth + ply),
+            Score::Value(_) => *self
+        }
+    }
+}
+impl LocalizeMate<i32> for Score {
+    #[inline]
+    fn localize_mate(&self,ply:i32) -> Self {
+        match self {
+            Score::INFINITE(depth) => Score::INFINITE(depth + ply),
+            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth - ply),
+            Score::Value(_) => *self
+        }
     }
 }
 #[derive(Debug,Clone)]
