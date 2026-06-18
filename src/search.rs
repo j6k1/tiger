@@ -2599,10 +2599,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                 if scoreval >= beta {
                                     match scoreval {
                                         Score::INFINITE(_) => {
-                                            env.transposition_table.update(&gs.zh,depth as i8,Score::INFINITE(-(gs.depth as i32)),Bound::Exact,Some(m));
+                                            env.transposition_table.update(&gs.zh,depth as i8,scoreval.localize_mate(gs.current_depth as i32),Bound::Exact,Some(m));
                                         },
                                         Score::NEGINFINITE(_) => {
-                                            env.transposition_table.update(&gs.zh,depth as i8,Score::NEGINFINITE(gs.depth as i32),Bound::Exact,Some(m));
+                                            env.transposition_table.update(&gs.zh,depth as i8,scoreval.localize_mate(gs.current_depth as i32),Bound::Exact,Some(m));
                                         },
                                         _ => {
                                             env.transposition_table.update(&gs.zh,depth as i8,scoreval,Bound::LowerBound,Some(m));
@@ -2904,10 +2904,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                             if scoreval >= beta {
                                 match scoreval {
                                     Score::INFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE(-(gs.depth as i32)),Bound::Exact,Some(m));
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.localize_mate(gs.current_depth as i32),Bound::Exact,Some(m));
                                     },
                                     Score::NEGINFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,Score::NEGINFINITE(gs.depth as i32),Bound::Exact,Some(m));
+                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.localize_mate(gs.current_depth as i32),Bound::Exact,Some(m));
                                     },
                                     _ => {
                                         env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval,Bound::LowerBound,Some(m));
