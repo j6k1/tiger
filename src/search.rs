@@ -39,9 +39,9 @@ pub const THREATMATE_DEPTH:u32 = 7;
 
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
 pub enum ThreatMateSearchResult {
-    Checkmate(i32),
+    Checkmated(i32),
     Unknown,
-    Checkmated(i32)
+    Checkmate(i32)
 }
 impl Neg for ThreatMateSearchResult {
     type Output = Self;
@@ -915,7 +915,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
     }
 
-    fn threatmate_search<'b,MP>(&self,
+    fn threatmate_search<'b>(&self,
                          attacker:Teban,
                          teban:Teban,
                          state:&State,
@@ -926,8 +926,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                          history:&mut HashSet<(Teban,u64,u64)>,
                          depth:usize,
                          current_depth:usize,
-                         mut picker:MP,
-                         rng:&mut ThreadRng) -> Result<ThreatMateSearchResult,ApplicationError> where MP: MovePicker<LegalMove> {
+                         rng:&mut ThreadRng) -> Result<ThreatMateSearchResult,ApplicationError> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -1008,14 +1007,12 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
 
+        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
+
         if attacker == teban {
-            if picker.len() == 0 {
-                Rule::generate_moves::<NonEvasions>(teban, state, mc, &mut picker)?;
-            }
+            Rule::generate_moves::<NonEvasions>(teban, state, mc, &mut picker)?;
         } else {
-            if picker.len() == 0 {
-                Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
-            }
+            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
 
             if picker.len() == 0 {
                 return Ok(ThreatMateSearchResult::Checkmated(current_depth as i32));
@@ -1026,7 +1023,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         history.insert((teban,mk,sk));
 
-        let mut checkmate = if attacker == teban {
+        let mut best_score = if attacker == teban {
             ThreatMateSearchResult::Unknown
         } else {
             ThreatMateSearchResult::Checkmated(0)
@@ -1057,9 +1054,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-            let picker = RandomPicker::new(Prng::new(rng.gen()));
-
-            let r = -self.threatmate_search(attacker,
+            let s = -self.threatmate_search(attacker,
                                                    teban.opposite(),
                                                    &next,
                                                    &nmc,
@@ -1069,10 +1064,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                    history,
                                                    depth - 1,
                                                    current_depth + 1,
-                                                   picker,
                                                    rng)?;
 
-            if let ThreatMateSearchResult::Checkmate(ply) = r {
+            if let ThreatMateSearchResult::Checkmate(ply) = s {
                 history.remove(&(teban, mk, sk));
 
                 env.transposition_table.update(&zh, depth as i8, Score::INFINITE(ply + (current_depth as i32)), Bound::Exact, Some(m));
@@ -1080,8 +1074,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 return Ok(ThreatMateSearchResult::Checkmate(ply));
             }
 
-            if r > checkmate {
-                checkmate = r;
+            if s > best_score {
+                best_score = s;
             }
 
             if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
@@ -1092,7 +1086,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         history.remove(&(teban,mk,sk));
 
-        Ok(checkmate)
+        Ok(best_score)
     }
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
         let mut reached;
@@ -2252,8 +2246,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         let in_check = Rule::in_check(gs.teban,&gs.state);
 
         if gs.depth == 0 && gs.current_depth >= 5 && !in_check {
-            let picker = RandomPicker::new(Prng::new(gs.rng.gen()));
-
             let checkmate = self.threatmate_search(gs.teban,
                                                    gs.teban,
                                                    gs.state,
@@ -2264,7 +2256,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                    &mut HashSet::new(),
                                                    env.threatmate_depth as usize,
                                                    gs.current_depth as usize,
-                                                   picker,
                                                    gs.rng)?;
 
             if let ThreatMateSearchResult::Checkmate(ply) = checkmate {
