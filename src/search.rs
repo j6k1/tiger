@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::ops::{Deref};
+use std::ops::{Deref, Neg};
 use std::sync::{Arc, atomic, mpsc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -38,9 +38,20 @@ pub const MAX_THREADS:u32 = 2;
 pub const THREATMATE_DEPTH:u32 = 7;
 
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
-pub enum MateDepth {
-    Mate(i32),
-    Nomate
+pub enum ThreatMateSearchResult {
+    Checkmate(i32),
+    Unknown,
+    Checkmated(i32)
+}
+impl Neg for ThreatMateSearchResult {
+    type Output = Self;
+    fn neg(self) -> Self {
+        match self {
+            ThreatMateSearchResult::Checkmate(ply) => ThreatMateSearchResult::Checkmated(-ply),
+            ThreatMateSearchResult::Unknown => ThreatMateSearchResult::Unknown,
+            ThreatMateSearchResult::Checkmated(ply) => ThreatMateSearchResult::Checkmate(-ply)
+        }
+    }
 }
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
 pub struct LazyEval {
@@ -916,14 +927,14 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                          depth:usize,
                          current_depth:usize,
                          mut picker:MP,
-                         rng:&mut ThreadRng) -> Result<MateDepth,ApplicationError> where MP: MovePicker<LegalMove> {
+                         rng:&mut ThreadRng) -> Result<ThreatMateSearchResult,ApplicationError> where MP: MovePicker<LegalMove> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
         if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
-            return Ok(MateDepth::Nomate);
+            return Ok(ThreatMateSearchResult::Unknown);
         }
 
         let ps = state.get_part();
@@ -944,7 +955,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if count >= 2 {
-            return Ok(MateDepth::Nomate);
+            return Ok(ThreatMateSearchResult::Unknown);
         }
 
         let p = Rule::ou_square(attacker.opposite(),state) as u32;
@@ -970,7 +981,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if count >= 2 {
-            return Ok(MateDepth::Nomate);
+            return Ok(ThreatMateSearchResult::Unknown);
         }
 
         {
@@ -985,14 +996,11 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                 if bound == Bound::Exact {
                     match s {
-                        Score::INFINITE(d) if attacker == teban => {
-                            return Ok(MateDepth::Mate(-d + current_depth as i32));
+                        Score::INFINITE(d) => {
+                            return Ok(ThreatMateSearchResult::Checkmate(d - current_depth as i32));
                         },
-                        Score::NEGINFINITE(d) if attacker != teban => {
-                            return Ok(MateDepth::Mate(d + current_depth as i32));
-                        },
-                        Score::NEGINFINITE(_) => {
-                            return Ok(MateDepth::Nomate);
+                        Score::NEGINFINITE(d) => {
+                            return Ok(ThreatMateSearchResult::Checkmated(d + current_depth as i32));
                         },
                         _ => {}
                     }
@@ -1000,35 +1008,35 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
 
-        let in_check = Rule::in_check(teban,state);
-
-        if in_check {
+        if attacker == teban {
+            if picker.len() == 0 {
+                Rule::generate_moves::<NonEvasions>(teban, state, mc, &mut picker)?;
+            }
+        } else {
             if picker.len() == 0 {
                 Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
             }
 
-            if teban != attacker && picker.len() >= 8 {
-                return Ok(MateDepth::Nomate);
-            }
-        } else {
             if picker.len() == 0 {
-                Rule::generate_moves::<NonEvasions>(teban, state, mc, &mut picker)?;
-            }
-        }
-
-        if picker.len() == 0 {
-            if teban != attacker {
-                return Ok(MateDepth::Nomate);
-            } else {
-                return Ok(MateDepth::Mate(current_depth as i32));
+                return Ok(ThreatMateSearchResult::Checkmated(current_depth as i32));
+            } else if picker.len() >= 8 {
+                return Ok(ThreatMateSearchResult::Unknown);
             }
         }
 
         history.insert((teban,mk,sk));
 
-        let mut checkmate = MateDepth::Mate(0);
+        let mut checkmate = if attacker == teban {
+            ThreatMateSearchResult::Unknown
+        } else {
+            ThreatMateSearchResult::Checkmated(0)
+        };
 
         for m in picker {
+            if attacker == teban && !Rule::is_oute_move(state,teban,m) {
+                continue;
+            }
+
             if let Some(ObtainKind::Ou) = match m {
                 LegalMove::To(m) => m.obtained(),
                 _ => None
@@ -1037,56 +1045,48 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                 env.transposition_table.update(&zh,depth as i8,Score::INFINITE(0),Bound::Exact,Some(m));
 
-                if attacker == teban {
-                    return Ok(MateDepth::Mate(current_depth as i32));
-                }
+                return Ok(ThreatMateSearchResult::Checkmate(-(current_depth as i32)));
             }
 
-            if in_check || Rule::is_oute_move(state,teban,m) {
-                let o = match m {
-                    LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
-                    _ => None
-                };
+            let o = match m {
+                LegalMove::To(m) => m.obtained().and_then(|o| MochigomaKind::try_from(o).ok()),
+                _ => None
+            };
 
-                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+            let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
 
-                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+            let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-                let picker = RandomPicker::new(Prng::new(rng.gen()));
+            let picker = RandomPicker::new(Prng::new(rng.gen()));
 
-                let mate_depth = self.threatmate_search(attacker,
-                                                       teban.opposite(),
-                                                       &next,
-                                                       &nmc,
-                                                       env,
-                                                       event_dispatcher,
-                                                       &nzh,
-                                                       history,
-                                                       depth - 1,
-                                                       current_depth + 1,
-                                                       picker,
-                                                       rng)?;
+            let r = -self.threatmate_search(attacker,
+                                                   teban.opposite(),
+                                                   &next,
+                                                   &nmc,
+                                                   env,
+                                                   event_dispatcher,
+                                                   &nzh,
+                                                   history,
+                                                   depth - 1,
+                                                   current_depth + 1,
+                                                   picker,
+                                                   rng)?;
 
-                if let MateDepth::Mate(_) = mate_depth {
-                    history.remove(&(teban, mk, sk));
+            if let ThreatMateSearchResult::Checkmate(ply) = r {
+                history.remove(&(teban, mk, sk));
 
-                    if attacker == teban {
-                        env.transposition_table.update(&zh, depth as i8, Score::INFINITE(-(depth as i32)), Bound::Exact, Some(m));
+                env.transposition_table.update(&zh, depth as i8, Score::INFINITE(ply + (current_depth as i32)), Bound::Exact, Some(m));
 
-                        return Ok(mate_depth);
-                    } else if mate_depth > checkmate {
-                        checkmate = mate_depth;
-                    }
-                } else if attacker != teban {
-                    history.remove(&(teban, mk, sk));
+                return Ok(ThreatMateSearchResult::Checkmate(ply));
+            }
 
-                    return Ok(MateDepth::Nomate);
-                }
+            if r > checkmate {
+                checkmate = r;
+            }
 
-                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-                    self.timelimit_reached(env)? {
-                    break;
-                }
+            if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+                self.timelimit_reached(env)? {
+                break;
             }
         }
 
@@ -2267,14 +2267,14 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                    picker,
                                                    gs.rng)?;
 
-            if let MateDepth::Mate(ply) = checkmate {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE(-(ply - gs.current_depth as i32)),Bound::Exact,None);
+            if let ThreatMateSearchResult::Checkmate(ply) = checkmate {
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE(ply - (gs.current_depth as i32)),Bound::Exact,None);
 
                 let mut mvs = VecDeque::new();
 
                 gs.m.map(|m| mvs.push_front(m));
 
-                return Ok(EvaluationResult::Exact(Score::INFINITE(-ply), mvs, gs.zh.clone(),gs.current_depth));
+                return Ok(EvaluationResult::Exact(Score::INFINITE(ply), mvs, gs.zh.clone(),gs.current_depth));
             }
         }
 
