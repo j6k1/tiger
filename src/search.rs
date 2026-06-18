@@ -2268,7 +2268,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                    gs.rng)?;
 
             if let ThreatMateSearchResult::Checkmate(ply) = checkmate {
-                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE(ply - (gs.current_depth as i32)),Bound::Exact,None);
+                env.transposition_table.update(&gs.zh,gs.depth as i8,Score::INFINITE(ply + (gs.current_depth as i32)),Bound::Exact,None);
 
                 let mut mvs = VecDeque::new();
 
