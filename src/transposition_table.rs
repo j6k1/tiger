@@ -98,7 +98,7 @@ impl Default for Score {
 }
 impl ExactScoreBound for Score {
     fn exact_score_bound(&self) -> bool {
-        if let Score::INFINITE(_) = self {
+        if let Score::INFINITE(_) | Score::NEGINFINITE(_) = self {
             true
         } else {
             false

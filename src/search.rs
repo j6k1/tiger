@@ -30,7 +30,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score, NormalizeMate, LocalizeMate};
+use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score, NormalizeMate, LocalizeMate, ExactScoreBound};
 
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
@@ -2231,7 +2231,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                             best_move: _
                         }) = r {
 
-                if (bound == Bound::Exact && d as u32 >= gs.depth) ||
+                if s.exact_score_bound() ||
+                   (bound == Bound::Exact && d as u32 >= gs.depth) ||
                    (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= gs.beta) ||
                    (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= gs.alpha) {
                     let mut mvs = VecDeque::new();
@@ -2245,7 +2246,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
         let in_check = Rule::in_check(gs.teban,&gs.state);
 
-        if gs.depth == 0 && gs.current_depth >= 5 && !in_check {
+        if gs.depth == 0 && !in_check {
             let checkmate = self.threatmate_search(gs.teban,
                                                    gs.teban,
                                                    gs.state,
