@@ -24,7 +24,7 @@ use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH};
-use crate::transposition_table::{TT, ZobristHash, Score};
+use crate::transposition_table::{TT, ZobristHash, Score, TTScore};
 
 pub trait FromOption {
     fn from_option(option:SysEventOption) -> Option<Self> where Self: Sized;
@@ -104,7 +104,7 @@ pub struct Tiger<M>
     kyokumen:Option<Kyokumen>,
     zh:Option<ZobristHash<u64>>,
     hasher:Arc<KyokumenHash<u64>>,
-    transposition_table:Arc<TT<u64,Score,{1<<20},4>>,
+    transposition_table:Arc<TT<u64,TTScore,{1<<20},4>>,
     base_depth:u32,
     qsearch_max_depth:Option<u32>,
     threatmate_depth:u32,

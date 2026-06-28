@@ -46,11 +46,11 @@ impl ToBucketIndex for u8 {
         self as usize
     }
 }
-pub trait NormalizeMate<T> {
-    fn normalize_mate(&self,ply: T) -> Self;
+pub trait LocalizeScore<T,D> {
+    fn localize_score(&self, ply: D) -> T;
 }
-pub trait LocalizeMate<T> {
-    fn localize_mate(&self,ply: T) -> Self;
+pub trait NormalizeScore<T,D> {
+    fn normalize_score(&self, ply: D) -> T;
 }
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Score {
@@ -105,23 +105,78 @@ impl ExactScoreBound for Score {
         }
     }
 }
-impl NormalizeMate<i32> for Score {
+impl NormalizeScore<TTScore,i32> for Score {
     #[inline]
-    fn normalize_mate(&self,ply:i32) -> Self {
+    fn normalize_score(&self, ply:i32) -> TTScore {
         match self {
-            Score::INFINITE(depth) => Score::INFINITE(depth - ply),
-            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth + ply),
-            Score::Value(_) => *self
+            &Score::INFINITE(0) => TTScore::INFINITE(0),
+            &Score::INFINITE(depth) => TTScore::INFINITE(depth + ply),
+            &Score::NEGINFINITE(0) => TTScore::NEGINFINITE(0),
+            &Score::NEGINFINITE(depth) => TTScore::NEGINFINITE(depth - ply),
+            &Score::Value(v) => TTScore::Value(v),
         }
     }
 }
-impl LocalizeMate<i32> for Score {
-    #[inline]
-    fn localize_mate(&self,ply:i32) -> Self {
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum TTScore {
+    NEGINFINITE(i32),
+    Value(i32),
+    INFINITE(i32),
+}
+impl Neg for TTScore {
+    type Output = TTScore;
+
+    fn neg(self) -> TTScore {
         match self {
-            Score::INFINITE(depth) => Score::INFINITE(depth + ply),
-            Score::NEGINFINITE(depth) => Score::NEGINFINITE(depth - ply),
-            Score::Value(_) => *self
+            TTScore::Value(v) => TTScore::Value(-v),
+            TTScore::INFINITE(depth) => TTScore::NEGINFINITE(-depth),
+            TTScore::NEGINFINITE(depth) => TTScore::INFINITE(-depth)
+        }
+    }
+}
+impl Add<i32> for TTScore {
+    type Output = Self;
+
+    fn add(self, other:i32) -> Self::Output {
+        match self {
+            TTScore::Value(v) => TTScore::Value(v + other),
+            TTScore::INFINITE(depth) => TTScore::INFINITE(depth),
+            TTScore::NEGINFINITE(depth) => TTScore::NEGINFINITE(depth)
+        }
+    }
+}
+impl Sub<i32> for TTScore {
+    type Output = Self;
+
+    fn sub(self, other:i32) -> Self::Output {
+        match self {
+            TTScore::Value(v) => TTScore::Value(v - other),
+            TTScore::INFINITE(depth) => TTScore::INFINITE(depth),
+            TTScore::NEGINFINITE(depth) => TTScore::NEGINFINITE(depth)
+        }
+    }
+}
+impl Default for TTScore {
+    fn default() -> Self {
+        TTScore::NEGINFINITE(0)
+    }
+}
+impl ExactScoreBound for TTScore {
+    fn exact_score_bound(&self) -> bool {
+        if let TTScore::INFINITE(_) | TTScore::NEGINFINITE(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+impl LocalizeScore<Score,i32> for TTScore {
+    #[inline]
+    fn localize_score(&self, ply:i32) -> Score {
+        match self {
+            &TTScore::INFINITE(depth) => Score::INFINITE(depth - ply),
+            &TTScore::NEGINFINITE(depth) => Score::NEGINFINITE(depth + ply),
+            &TTScore::Value(v) => Score::Value(v)
         }
     }
 }
