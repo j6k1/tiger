@@ -117,6 +117,20 @@ impl NormalizeScore<TTScore,i32> for Score {
         }
     }
 }
+impl Score {
+    pub fn is_infinite(&self) -> bool {
+        match self {
+            &Score::INFINITE(_) => true,
+            _ => false
+        }
+    }
+    pub fn is_neginfinite(&self) -> bool {
+        match self {
+            &Score::NEGINFINITE(_) => true,
+            _ => false
+        }
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum TTScore {
     NEGINFINITE(i32),

@@ -421,7 +421,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                           evalutor,
                                           rng)?;
 
-                if score >= beta {
+                if score.is_infinite() {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+
+                    return Ok(score);
+                } else if score >= beta {
                     history.remove(&(teban,mk,sk));
 
                     env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
@@ -449,7 +455,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            if alpha > start_alpha {
+            if alpha > start_alpha || bestscore.exact_score_bound() {
                 env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
             } else {
                 env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
@@ -534,7 +540,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                 evalutor,
                                 rng)?;
 
-                if score >= beta {
+                if score.is_infinite() {
+                    history.remove(&(teban,mk,sk));
+
+                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+
+                    return Ok(score);
+                } else if score >= beta {
                     history.remove(&(teban,mk,sk));
 
                     env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
@@ -561,7 +573,11 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
+            if bestscore.is_infinite() {
+                env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
+            } else {
+                env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
+            }
 
             Ok(bestscore)
         }
@@ -802,6 +818,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
      */
 
+    /*
     fn satisfy_threatmate_search(&self, attacker:Teban, state:&State, m:LegalMove, depth:u32, evasions_count:usize) -> bool {
         if evasions_count > 4 || depth < 4 || depth > 6 {
             return false;
@@ -920,7 +937,52 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
     }
+    */
+    fn satisfy_threatmate_search(&self, attacker:Teban, state:&State,  depth:u32) -> bool {
+        let mut score = 0;
 
+        let ps = state.get_part();
+
+        if (ps.sente_self_board | ps.sente_opponent_board).bitcount() <= 18 {
+            score += 1;
+        }
+
+        if (ps.sente_kaku_board | ps.sente_hisha_board | ps.gote_kaku_board | ps.gote_hisha_board).bitcount() <= 2 {
+            score += 1;
+        }
+
+        if (ps.sente_nari_board | ps.gote_nari_board).bitcount() >= 2 {
+            score += 1;
+        }
+
+        if score >= 2 {
+            return true;
+        }
+
+        let p = Rule::ou_square(attacker.opposite(), state) as u32;
+
+        let (_,y) = p.square_to_point();
+
+        let mut mask = OU_SURROUNDING_MASK;
+
+        if y == 0 {
+            mask = mask & OU_SURROUNDING_TOP_MASK;
+        } else if y == 8 {
+            mask = mask & OU_SURROUNDING_BOTTOM_MASK;
+        }
+
+        if p < 10 {
+            mask = mask >> (10 - p) as u128;
+        } else {
+            mask = mask << (p - 10) as u128;
+        }
+
+        if ((mask << 1) & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() <= 4 {
+            score += 1;
+        }
+
+        score >= 2
+    }
     fn threatmate_search<'b>(&self,
                          attacker:Teban,
                          teban:Teban,
@@ -993,7 +1055,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             let r = env.transposition_table.get(&zh).map(|tte| tte.deref().clone());
 
             if let Some(TTPartialEntry {
-                            depth: _,
+                            depth: d,
                             score: s,
                             bound,
                             best_move: _
@@ -1007,9 +1069,10 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                         TTScore::NEGINFINITE(d) => {
                             return Ok(ThreatMateSearchResult::Checkmated(d + current_depth as i32));
                         },
-                        _ => {
+                        _ if d as usize >= depth => {
                             return Ok(ThreatMateSearchResult::Unknown);
-                        }
+                        },
+                        _ => ()
                     }
                 }
             }
@@ -2295,7 +2358,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                 let s = s.localize_score(gs.current_depth as i32);
 
-                if s.exact_score_bound() ||
+                if (bound == Bound::Exact && s.exact_score_bound()) ||
                    (bound == Bound::Exact && d as u32 >= gs.depth) ||
                    (bound == Bound::LowerBound && d as u32 >= gs.depth && s >= gs.beta) ||
                    (bound == Bound::UpperBound && d as u32 >= gs.depth && s <= gs.alpha) {
@@ -2652,7 +2715,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                 best_moves = mvs;
 
-                                if scoreval >= beta {
+                                if scoreval >= beta || scoreval.is_infinite() {
                                     match scoreval {
                                         Score::INFINITE(_) => {
                                             env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
@@ -2738,10 +2801,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
         let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-        if scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
-        } else {
+        if scoreval > start_alpha || scoreval.exact_score_bound() {
             env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::Exact, best_moves.front().map(|m| m.clone()));
+        } else {
+            env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
@@ -2804,7 +2867,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                      PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
                      ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
-    fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
+    fn search<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
                       mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError> {
         let recur = Recursive::new();
@@ -2957,7 +3020,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                 recur.send_info(env, gs.depth, max_seldepth, &best_moves, &scoreval)?;
                             }
 
-                            if scoreval >= beta {
+                            if scoreval >= beta || scoreval.is_infinite() {
                                 match scoreval {
                                     Score::INFINITE(_) => {
                                         env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
@@ -3031,10 +3094,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
         let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-        if gs.search_offset != 0 || scoreval <= start_alpha {
-            env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
-        } else {
+        if scoreval.is_infinite() || (gs.search_offset == 0 && scoreval > start_alpha) {
             env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::Exact,best_moves.front().map(|m| m.clone()));
+        } else {
+            env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
         }
 
         env.history.remove(&(gs.teban,mk,sk));
