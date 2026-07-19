@@ -22,10 +22,10 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
-use usiagent::rule::{CaptureOrPawnPromotions, Checks, Evasions, LegalMove,  QuietsWithoutPawnPromotions, Rule, SquareToPoint, State, OU_SURROUNDING_BOTTOM_MASK, OU_SURROUNDING_MASK, OU_SURROUNDING_TOP_MASK};
+use usiagent::rule::{CaptureOrPawnPromotions, Checks, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
 use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
-use usiagent::shogi::KomaKind::Blank;
+use usiagent::shogi::KomaKind::{Blank, GHishaN, GKakuN, SHishaN, SKakuN};
 use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
@@ -225,6 +225,224 @@ pub struct GameState<'a> {
     pub extend_check:u32,
     pub extend_threatmate:u32
 
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ChecksMoveOrder {
+    Mate,
+    Promote,
+    Capture,
+    Major,
+    Seal,
+    Keep,
+    Block(u8)
+}
+pub struct CheckesMoveOrderer {
+
+}
+impl CheckesMoveOrderer {
+    pub fn new() -> CheckesMoveOrderer {
+        CheckesMoveOrderer {}
+    }
+
+    pub fn ordering<I: Iterator<Item=LegalMove>>(&self,teban:Teban,
+                                                 state:&State,
+                                                 it:I,
+                                                 mate_move:Option<LegalMove>) -> impl Iterator<Item=LegalMove> {
+        let mut mvs = Vec::new();
+
+        for m in it {
+            if Some(m) == mate_move {
+                mvs.push((ChecksMoveOrder::Mate,m));
+            } else if m.is_nari() {
+                mvs.push((ChecksMoveOrder::Promote,m));
+            } else if self.is_capture_order(teban,state,m) {
+                mvs.push((ChecksMoveOrder::Capture,m));
+            } else if self.is_major_order(teban,state,m) {
+                mvs.push((ChecksMoveOrder::Major,m));
+            } else if self.is_seal_order(teban,state,m) {
+                mvs.push((ChecksMoveOrder::Seal,m));
+            } else if let Some(c) = self.blocker_count(teban,state,m) {
+                mvs.push((ChecksMoveOrder::Block(c),m));
+            } else {
+                mvs.push((ChecksMoveOrder::Keep,m));
+            }
+        }
+        mvs.sort_by(|a,b| b.0.cmp(&a.0));
+
+        mvs.into_iter().map(|(_,m)| m)
+    }
+
+    fn is_capture_order(&self,teban:Teban,state:&State,m:LegalMove) -> bool {
+        if m.obtained().is_none() {
+            false
+        } else if let LegalMove::To(mv) = m {
+            let part = state.get_part();
+
+            let to_mask = 1 << (mv.dst() + 1);
+
+            if teban == Teban::Sente {
+                let surrounding_mask = Rule::gen_ou_surrounding_mask(teban.opposite(),part);
+
+                if to_mask & (part.gote_kyou_board & !part.gote_nari_board) != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_kyou(part.sente_opponent_board,part.sente_self_board,mv.dst()).reverse() != 0
+                } else if to_mask & part.gote_kaku_board != 0 && to_mask & part.gote_nari_board != 0 {
+                    surrounding_mask & (Rule::gen_control_bits_by_kaku(
+                        part.gote_self_board,part.gote_opponent_board,
+                        part.sente_opponent_board,part.sente_self_board,80 - mv.dst()) |
+                        Rule::gen_control_bits(80 - mv.dst(),GKakuN)).reverse() != 0
+                } else if to_mask & part.gote_kaku_board != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_kaku(
+                        part.gote_self_board,part.gote_opponent_board,
+                        part.sente_opponent_board,part.sente_self_board,80 - mv.dst()).reverse() != 0
+                } else if to_mask & part.gote_hisha_board != 0 && to_mask & part.gote_nari_board != 0 {
+                    surrounding_mask & (Rule::gen_control_bits_by_hisha(
+                        part.gote_self_board,part.gote_opponent_board,
+                        part.sente_opponent_board,part.sente_self_board,80 - mv.dst()) |
+                        Rule::gen_control_bits(80 - mv.dst(),GHishaN)).reverse() != 0
+                } else if to_mask & part.gote_hisha_board != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_hisha(
+                        part.gote_self_board,part.gote_opponent_board,
+                        part.sente_opponent_board,part.sente_self_board,80 - mv.dst()).reverse() != 0
+                } else {
+                    let (x,y) = mv.dst().square_to_point();
+
+                    surrounding_mask & Rule::gen_control_bits(
+                        80 - mv.dst(), state.get_banmen()[y as usize][x as usize]
+                    ).reverse() != 0
+                }
+            } else {
+                let surrounding_mask = Rule::gen_ou_surrounding_mask(teban.opposite(), part);
+
+                if to_mask & (part.sente_kyou_board & !part.sente_nari_board) != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_kyou(part.gote_opponent_board,part.gote_self_board,80 - mv.dst()) != 0
+                } else if to_mask & part.sente_kaku_board != 0 && to_mask & part.sente_nari_board != 0 {
+                    surrounding_mask & (Rule::gen_control_bits_by_kaku(
+                        part.sente_self_board, part.sente_opponent_board,
+                        part.gote_opponent_board, part.gote_self_board, mv.dst()) |
+                        Rule::gen_control_bits(mv.dst(), SKakuN)) != 0
+                } else if to_mask & part.sente_kaku_board != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_kaku(
+                        part.sente_self_board, part.sente_opponent_board,
+                        part.gote_opponent_board, part.gote_self_board, mv.dst()) != 0
+                } else if to_mask & part.gote_hisha_board != 0 && to_mask & part.sente_nari_board != 0 {
+                    surrounding_mask & (Rule::gen_control_bits_by_hisha(
+                        part.sente_self_board,part.sente_opponent_board,
+                        part.gote_opponent_board,part.gote_self_board,mv.dst()) |
+                        Rule::gen_control_bits(mv.dst(),SHishaN)) != 0
+                } else if to_mask & part.gote_hisha_board != 0 {
+                    surrounding_mask & Rule::gen_control_bits_by_hisha(
+                        part.sente_self_board,part.sente_opponent_board,
+                        part.gote_opponent_board,part.gote_self_board,mv.dst()) != 0
+                } else {
+                    let (x,y) = mv.dst().square_to_point();
+
+                    surrounding_mask & Rule::gen_control_bits(
+                        mv.dst(), state.get_banmen()[y as usize][x as usize]
+                    ) != 0
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    fn is_major_order(&self,teban:Teban,state:&State,m:LegalMove) -> bool {
+        match m {
+            LegalMove::Put(mv) if mv.kind() == MochigomaKind::Kyou ||
+                mv.kind() == MochigomaKind::Kaku ||
+                mv.kind() == MochigomaKind::Hisha=> true,
+            LegalMove::To(mv) if teban == Teban::Sente => {
+                let part = state.get_part();
+
+                let from_mask = 1 << (mv.src() + 1);
+
+                ((part.sente_kyou_board & !part.sente_nari_board) & from_mask) != 0 ||
+                 (part.sente_kaku_board & from_mask) != 0 ||
+                 (part.sente_hisha_board & from_mask) != 0
+            },
+            LegalMove::To(mv) => {
+                let part = state.get_part();
+
+                let from_mask = 1 << (mv.src() + 1);
+
+                ((part.gote_kyou_board & !part.gote_nari_board) & from_mask) != 0 ||
+                 (part.gote_kaku_board & from_mask) != 0 ||
+                 (part.gote_hisha_board & from_mask) != 0
+            },
+            _ => false
+        }
+    }
+
+    fn is_seal_order(&self,teban:Teban,state:&State,m:LegalMove) -> bool {
+        let p = Rule::ou_square(teban.opposite(),state);
+        let to = m.dst();
+
+        if p == -1 {
+            false
+        } else {
+            let (tx,ty) = to.square_to_point();
+            let (dx,dy) = p.square_to_point();
+
+            if tx == 4 && ty == 4 {
+                true
+            } else if tx >= 4 && ty >= 4 {
+                tx >= dx && ty >= dy
+            } else if tx >= 4 && ty <= 4 {
+                tx >= dx && ty <= dy
+            } else if tx <= 4 && ty <= 4 {
+                tx <= dx && ty <= dy
+            } else {
+                tx <= dx && ty >= dy
+            }
+        }
+    }
+
+    fn blocker_count(&self,teban:Teban,state:&State,m:LegalMove) -> Option<u8> {
+        None
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EvasionsMoveOrder {
+    Block,
+    Drop,
+    Capture,
+    Escape
+}
+pub struct EvasionsMoveOrderer {
+
+}
+impl EvasionsMoveOrderer {
+    pub fn new() -> Self {
+        EvasionsMoveOrderer {}
+    }
+    pub fn ordering<I: Iterator<Item=LegalMove>>(&self,teban:Teban,
+                                                 state:&State,
+                                                 it:I) -> impl Iterator<Item=LegalMove> {
+        let mut mvs = Vec::new();
+
+        for m in it {
+            if let LegalMove::Put(_) = m {
+                mvs.push((EvasionsMoveOrder::Drop,m));
+            } else if m.obtained().is_some() {
+                mvs.push((EvasionsMoveOrder::Capture,m));
+            } else if self.is_escape(teban,state,m) {
+                mvs.push((EvasionsMoveOrder::Escape,m));
+            } else {
+                mvs.push((EvasionsMoveOrder::Block,m));
+            }
+        }
+        mvs.sort_by(|a,b| b.0.cmp(&a.0));
+
+        mvs.into_iter().map(|(_,m)| m)
+    }
+
+    fn is_escape(&self,teban:Teban,state:&State,m:LegalMove) -> bool {
+        if let LegalMove::To(mv) = m {
+            Rule::ou_square(teban,state) == mv.src() as i32
+        } else {
+            false
+        }
+    }
 }
 pub struct Root<L,S,M>
     where L: Logger + Send + 'static,
@@ -938,7 +1156,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
     }
     */
-    fn satisfy_threatmate_search(&self, attacker:Teban, state:&State,  depth:u32) -> bool {
+    fn satisfy_threatmate_search(&self, attacker:Teban, state:&State) -> bool {
         let mut score = 0;
 
         let ps = state.get_part();
@@ -959,25 +1177,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return true;
         }
 
-        let p = Rule::ou_square(attacker.opposite(), state) as u32;
+        let mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), state.get_part());
 
-        let (_,y) = p.square_to_point();
-
-        let mut mask = OU_SURROUNDING_MASK;
-
-        if y == 0 {
-            mask = mask & OU_SURROUNDING_TOP_MASK;
-        } else if y == 8 {
-            mask = mask & OU_SURROUNDING_BOTTOM_MASK;
-        }
-
-        if p < 10 {
-            mask = mask >> (10 - p) as u128;
-        } else {
-            mask = mask << (p - 10) as u128;
-        }
-
-        if ((mask << 1) & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() <= 4 {
+        if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() <= 4 {
             score += 1;
         }
 
@@ -1025,25 +1227,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
-        let p = Rule::ou_square(attacker.opposite(),state) as u32;
+        let mut mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
 
-        let (_,y) = p.square_to_point();
-
-        let mut mask = OU_SURROUNDING_MASK;
-
-        if y == 0 {
-            mask = mask & OU_SURROUNDING_TOP_MASK;
-        } else if y == 8 {
-            mask = mask & OU_SURROUNDING_BOTTOM_MASK;
-        }
-
-        if p < 10 {
-            mask = mask >> (10 - p) as u128;
-        } else {
-            mask = mask << (p - 10) as u128;
-        }
-
-        if ((mask << 1) & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 4 {
+        if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 4 {
             count += 1;
         }
 
