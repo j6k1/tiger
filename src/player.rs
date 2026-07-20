@@ -7,12 +7,14 @@ use std::sync::atomic::{Ordering};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
 use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
+use rand::Rng;
 use rayon::ThreadPoolBuilder;
 use usiagent::command::{BestMove, CheckMate, UsiInfoSubCommand, UsiOptType};
 use usiagent::error::{PlayerError, UsiProtocolError};
 use usiagent::event::{GameEndState, SysEventOption, SysEventOptionKind, UserEvent, UserEventQueue, UsiGoMateTimeLimit, UsiGoTimeLimit};
 use usiagent::hash::{KyokumenHash};
 use usiagent::logger::Logger;
+use usiagent::math::Prng;
 use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::OnErrorHandler;
 use usiagent::output::USIOutputWriter;
@@ -210,6 +212,7 @@ impl<M> Tiger<M>
                 };
 
                 let mut rng = rand::thread_rng();
+                let mut rng = Prng::new(rng.gen());
 
                 let self_partial_output = Arc::new(evalutor.prepare_evalute(teban,&state,&mc)?);
                 let opponent_partial_output = Arc::new(evalutor.prepare_evalute(teban.opposite(),&state,&mc)?);

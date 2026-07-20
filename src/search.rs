@@ -9,7 +9,6 @@ use nncombinator::arr::Arr;
 use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
 use parking_lot::RwLock;
 use rand::Rng;
-use rand::rngs::ThreadRng;
 use rayon::ThreadPool;
 use usiagent::command::{UsiInfoSubCommand, UsiScore, UsiScoreMate};
 use usiagent::consts::{CAPTURED_SCORE_MAP, FU_SCORE};
@@ -200,7 +199,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
 pub struct GameState<'a> {
     pub teban:Teban,
     pub state:&'a Arc<State>,
-    pub rng:&'a mut ThreadRng,
+    pub rng:&'a mut Prng,
     pub alpha:Score,
     pub beta:Score,
     pub search_offset:usize,
@@ -246,6 +245,7 @@ impl CheckesMoveOrderer {
 
     pub fn ordering<I: Iterator<Item=LegalMove>>(&self,teban:Teban,
                                                  state:&State,
+                                                 mc:&MochigomaCollections,
                                                  it:I,
                                                  mate_move:Option<LegalMove>) -> impl Iterator<Item=LegalMove> {
         let mut mvs = Vec::new();
@@ -261,7 +261,7 @@ impl CheckesMoveOrderer {
                 mvs.push((ChecksMoveOrder::Major,m));
             } else if self.is_seal_order(teban,state,m) {
                 mvs.push((ChecksMoveOrder::Seal,m));
-            } else if let Some(c) = self.blocker_count(teban,state,m) {
+            } else if let Some(c) = self.blocker_count(teban,state,mc,m) {
                 mvs.push((ChecksMoveOrder::Block(c),m));
             } else {
                 mvs.push((ChecksMoveOrder::Keep,m));
@@ -397,8 +397,14 @@ impl CheckesMoveOrderer {
         }
     }
 
-    fn blocker_count(&self,teban:Teban,state:&State,m:LegalMove) -> Option<u8> {
-        None
+    fn blocker_count(&self,teban:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Option<u8> {
+        let blocking_count = Rule::can_blocking_count(teban,state,mc,m);
+
+        if blocking_count == 0 {
+            None
+        } else {
+            Some(blocking_count as u8)
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -544,7 +550,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                mut alpha:Score,beta:Score,
                depth:usize,current_depth:usize,
                prev_move:Option<LegalMove>,
-               evalutor: &Arc<Evalutor<M>>,rng:&mut ThreadRng)
+               evalutor: &Arc<Evalutor<M>>,rng:&mut Prng)
         -> Result<Score,ApplicationError> {
         let (mk,sk) = zh.keys();
 
@@ -578,7 +584,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
 
-        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
+        let mut picker = RandomPicker::new(Prng::new(rng.rnd64()));
 
         let in_check = Rule::in_check(teban,state);
 
@@ -1196,7 +1202,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                          history:&mut HashSet<(Teban,u64,u64)>,
                          depth:usize,
                          current_depth:usize,
-                         rng:&mut ThreadRng) -> Result<ThreatMateSearchResult,ApplicationError> {
+                         rng:&mut Prng) -> Result<ThreatMateSearchResult,ApplicationError> {
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -1227,7 +1233,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
-        let mut mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
+        let mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
 
         if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 4 {
             count += 1;
@@ -1264,7 +1270,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
         }
 
-        let mut picker = RandomPicker::new(Prng::new(rng.gen()));
+        let mut picker = RandomPicker::new(Prng::new(rng.rnd64()));
 
         if attacker == teban {
             Rule::generate_moves::<Checks>(teban, state, mc, &mut picker)?;
@@ -1826,6 +1832,8 @@ impl<L,S,M> Root<L,S,M>
             self.thread_pool.spawn(move || {
                 let mut pv = VecDeque::new();
                 let mut rng = rand::thread_rng();
+                let mut rng = Prng::new(rng.gen());
+
                 let search_offset = 0;
 
                 let mut prev_score = Score::default();
@@ -2003,6 +2011,7 @@ impl<L,S,M> Root<L,S,M>
 
             self.thread_pool.spawn(move || {
                 let mut rng = rand::thread_rng();
+                let mut rng = Prng::new(rng.gen());
 
                 let mut depth = shared_depth.load(Ordering::Acquire) as u32;
 
@@ -2012,7 +2021,7 @@ impl<L,S,M> Root<L,S,M>
                     let search_offset = if len == 0 {
                         0
                     } else {
-                        (thread_index * 7 + (rng.gen::<usize>() % len)) % len
+                        (thread_index * 7 + (rng.rnd64() as usize % len)) % len
                     };
 
                     let mut gs = GameState {
@@ -2146,7 +2155,7 @@ impl<L,S,M> Root<L,S,M>
 
         let shared_depth = Arc::new(AtomicUsize::new(1));
 
-        let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+        let mut picker = RandomPicker::new(Prng::new(gs.rng.rnd64()));
 
         let mut mvs = Vec::new();
 
@@ -2760,7 +2769,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         let mut scoreval = Score::default();
         let mut best_moves = VecDeque::new();
 
-        let mut picker = RandomPicker::new(Prng::new(gs.rng.gen()));
+        let mut picker = RandomPicker::new(Prng::new(gs.rng.rnd64()));
 
         let count = if Rule::in_check(gs.teban,&gs.state) {
             1
