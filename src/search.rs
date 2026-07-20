@@ -2668,6 +2668,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 //let r = 7 + gs.depth / 3;
                 let r = 3 + gs.depth / 3;
 
+                env.history.insert((gs.teban,mk,sk));
+
                 match self.search_null_move(env, gs, -gs.beta, -gs.beta + 1, gs.depth.saturating_sub(r), event_dispatcher, evalutor)? {
                     EvaluationResult::Exact(s, _, zh, _) => {
                         let s = -s;
@@ -2681,10 +2683,14 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         if s >= gs.beta {
                             if let Score::Value(_) = s {
                                 if gs.nmp_min_ply.unwrap_or(0) == 0 || gs.depth < 16 {
+                                    env.history.remove(&(gs.teban, mk, sk));
+
                                     return Ok(EvaluationResult::Exact(s, best_moves, zh, gs.current_depth));
                                 }
 
                                 let nmp_min_ply = (gs.current_depth as i32 + 3 * (gs.depth as i32 - r as i32) / 4).max(0) as u32;
+
+                                env.history.remove(&(gs.teban, mk, sk));
 
                                 let mut gs = GameState {
                                     teban: gs.teban,
@@ -2724,18 +2730,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         }
                                     },
                                     EvaluationResult::NodeLimits => {
-                                        env.history.remove(&(gs.teban, mk, sk));
-
                                         return Ok(EvaluationResult::NodeLimits);
                                     },
                                     EvaluationResult::Timeout => {
-                                        env.history.remove(&(gs.teban, mk, sk));
-
                                         return Ok(EvaluationResult::Timeout);
                                     },
                                     EvaluationResult::Stop => {
-                                        env.history.remove(&(gs.teban, mk, sk));
-
                                         return Ok(EvaluationResult::Stop);
                                     },
                                     EvaluationResult::Repetition | EvaluationResult::Cut => {}
@@ -2759,6 +2759,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         return Ok(EvaluationResult::Stop);
                     },
                     EvaluationResult::Repetition | EvaluationResult::Cut => {
+                        env.history.remove(&(gs.teban, mk, sk));
                     }
                 }
             }
