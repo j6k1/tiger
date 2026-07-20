@@ -2467,7 +2467,11 @@ impl<L,S,M> Recursive<L,S,M>
 
         let strategy = Recursive::new();
 
-        strategy.search(env, &mut gs, event_dispatcher, evalutor)
+        let r = strategy.search(env, &mut gs, event_dispatcher, evalutor);
+
+        gs.move_history.pop();
+
+        r
     }
 }
 impl<L,S,M> SendInfo<L,S,M> for Recursive<L,S,M>
