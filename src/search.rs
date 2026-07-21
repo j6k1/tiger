@@ -677,7 +677,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            if alpha > start_alpha {
+            if alpha > start_alpha || bestscore.exact_score_bound() {
                 env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
             } else {
                 env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
@@ -1400,6 +1400,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             }
 
             history.remove(&(teban,mk,sk));
+
+            match best_score {
+                ThreatMateSearchResult::Checkmated(d) => {
+                    env.transposition_table.update(&zh,depth as i8,TTScore::NEGINFINITE(d),Bound::Exact,None);
+                },
+                _ => ()
+            }
 
             Ok(best_score)
         }
@@ -3196,11 +3203,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
     }
 }
 pub struct Inter<L, S, M>
-where
-    L: Logger + Send + 'static,
-    S: InfoSender,
-    M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-    PreTrain<f32> + Send + Sync + 'static,
+    where L: Logger + Send + 'static,
+          S: InfoSender,
+          M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
+             PreTrain<f32> + Send + Sync + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
