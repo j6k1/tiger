@@ -19,7 +19,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::OnErrorHandler;
 use usiagent::output::USIOutputWriter;
 use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
-use usiagent::rule::{AppliedMove, Kyokumen, State};
+use usiagent::rule::{AppliedMove, Kyokumen, Rule, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, Teban};
 use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
@@ -114,6 +114,8 @@ pub struct Tiger<M>
     max_threads:u32,
     turn_limit:Option<u32>,
     timelimit_margin:u64,
+    gives_check_us:bool,
+    gives_check_them:bool,
     model_name:String,
     move_orderers:Vec<MoveOrderer<UnusedQuietSee>>
 }
@@ -148,6 +150,8 @@ impl<M> Tiger<M>
             max_threads:MAX_THREADS,
             turn_limit:None,
             timelimit_margin:TIMELIMIT_MARGIN,
+            gives_check_us:false,
+            gives_check_them:false,
             model_name: String::from("nn.bin"),
             move_orderers:Vec::new(),
         }
@@ -227,6 +231,8 @@ impl<M> Tiger<M>
                     best_score: Score::default(),
                     m:None,
                     static_eval: LazyEval::new(),
+                    gives_check_us:self.gives_check_us,
+                    gives_check_them:self.gives_check_them,
                     prev_kind: KomaKind::Blank,
                     self_partial_output:self_partial_output,
                     opponent_partial_output:opponent_partial_output,
@@ -470,11 +476,19 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
 
         let mc = MochigomaCollections::new(ms,mg);
 
+        let mut gives_check_us = false;
+        let mut gives_check_them = false;
+
         let (t,state,mc,r) = self.apply_moves(state,teban, mc,&m.into_iter()
             .map(|m| m.to_applied_move())
             .collect::<Vec<AppliedMove>>(),
                                               zh,
                                               |_,t,banmen,mc,m,o,r| {
+                                                  let state = State::new(banmen.clone());
+
+                                                  gives_check_us = gives_check_them;
+                                                  gives_check_them = Rule::in_check(teban,&state);
+
                                                   let mut zh = r;
 
                                                   let zh = match m {
@@ -497,6 +511,9 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
             teban:t
         });
         self.zh = Some(zh);
+        self.gives_check_us = gives_check_us;
+        self.gives_check_them = gives_check_them;
+
         Ok(())
     }
 

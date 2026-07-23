@@ -206,6 +206,8 @@ pub struct GameState<'a> {
     pub best_score:Score,
     pub m:Option<LegalMove>,
     pub static_eval: LazyEval,
+    pub gives_check_us:bool,
+    pub gives_check_them:bool,
     pub prev_kind:KomaKind,
     pub move_history:&'a mut Vec<Option<(u8,u8)>>,
     pub self_partial_output: Arc<Arr<f32,{256*2}>>,
@@ -257,13 +259,13 @@ impl ChecksMoveOrderer {
                 mvs.push((ChecksMoveOrder::Major,m));
             } else if self.is_seal_order(teban,state,m) {
                 mvs.push((ChecksMoveOrder::Seal,m));
-            } else if let Some(c) = self.blocker_count(teban,state,mc,m) {
-                mvs.push((ChecksMoveOrder::Block(c),m));
+            //} else if let Some(c) = self.blocker_count(teban,state,mc,m) {
+            //    mvs.push((ChecksMoveOrder::Block(c),m));
             } else {
                 mvs.push((ChecksMoveOrder::Keep,m));
             }
         }
-        mvs.sort_by(|a,b| b.0.cmp(&a.0));
+        mvs.sort_by(|a,b| a.0.cmp(&b.0));
 
         mvs.into_iter().map(|(_,m)| m)
     }
@@ -433,7 +435,7 @@ impl EvasionsMoveOrderer {
                 mvs.push((EvasionsMoveOrder::Block,m));
             }
         }
-        mvs.sort_by(|a,b| b.0.cmp(&a.0));
+        mvs.sort_by(|a,b| a.0.cmp(&b.0));
 
         mvs.into_iter().map(|(_,m)| m)
     }
@@ -491,13 +493,9 @@ pub trait SendInfo<L,S,M>: Sized
         match score {
             &Score::INFINITE(depth) => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Num(-(depth as i64)))))
-//                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Plus)));
-//                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Num(depth as i64))));
             },
             &Score::NEGINFINITE(depth) => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Num(-(depth as i64)))))
-//                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Minus)));
-//                commands.push(UsiInfoSubCommand::Score(UsiScore::Mate(UsiScoreMate::Num(depth as i64))));
             },
             &Score::Value(s) => {
                 commands.push(UsiInfoSubCommand::Score(UsiScore::Cp(s as i64)))
@@ -677,7 +675,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            if alpha > start_alpha || bestscore.exact_score_bound() {
+            if alpha > start_alpha {
                 env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
             } else {
                 env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
@@ -685,6 +683,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             Ok(bestscore)
         } else {
+            let start_alpha = alpha;
+
             let stand_pat = Score::Value(evalutor.evalute(&self_partial_output)?);
 
             if stand_pat >= beta {
@@ -795,7 +795,11 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
+            if bestscore > start_alpha {
+                env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
+            } else {
+                env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
+            }
 
             Ok(bestscore)
         }
@@ -1277,10 +1281,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let mut best_score = ThreatMateSearchResult::Unknown;
 
-            //let move_orderer = ChecksMoveOrderer::new();
+            let move_orderer = ChecksMoveOrderer::new();
 
-            //for m in move_orderer.ordering(teban,state,mc,&mut picker) {
-            for m in &mut picker {
+            for m in move_orderer.ordering(teban,state,mc,&mut picker) {
                 if let Some(ObtainKind::Ou) = match m {
                     LegalMove::To(m) => m.obtained(),
                     _ => None
@@ -1403,7 +1406,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             match best_score {
                 ThreatMateSearchResult::Checkmated(d) => {
-                    env.transposition_table.update(&zh,depth as i8,TTScore::NEGINFINITE(d),Bound::Exact,None);
+                    env.transposition_table.update(&zh,depth as i8,TTScore::NEGINFINITE(d - current_depth as i32),Bound::Exact,None);
                 },
                 _ => ()
             }
@@ -1823,6 +1826,10 @@ impl<L,S,M> Root<L,S,M>
         let evalutor = Arc::clone(&evalutor);
         let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
+
+        let gives_check_us = gs.gives_check_us;
+        let gives_check_them = gs.gives_check_them;
+
         let current_depth = 0;
         let base_depth = gs.base_depth;
         let extend_depth = gs.extend_depth;
@@ -1847,7 +1854,6 @@ impl<L,S,M> Root<L,S,M>
                 'ounter: for depth in 1..=base_depth {
                     if let Score::Value(ps) = prev_score {
                         let delta = Self::compute_aspiration_window_delta(depth);
-                        //let delta = FU_SCORE * 2;
 
                         let mut alpha = Score::Value(ps - delta);
                         let mut beta = Score::Value(ps + delta);
@@ -1864,6 +1870,8 @@ impl<L,S,M> Root<L,S,M>
                                 best_score: best_score,
                                 m: None,
                                 static_eval: LazyEval::new(),
+                                gives_check_us:gives_check_us,
+                                gives_check_them:gives_check_them,
                                 prev_kind: KomaKind::Blank,
                                 move_history: &mut Vec::new(),
                                 self_partial_output:Arc::clone(&self_partial_output),
@@ -1939,6 +1947,8 @@ impl<L,S,M> Root<L,S,M>
                             best_score: best_score,
                             m: None,
                             static_eval: LazyEval::new(),
+                            gives_check_us:gives_check_us,
+                            gives_check_them:gives_check_them,
                             prev_kind: KomaKind::Blank,
                             move_history: &mut Vec::new(),
                             self_partial_output: Arc::clone(&self_partial_output),
@@ -2015,6 +2025,9 @@ impl<L,S,M> Root<L,S,M>
             let self_partial_output = gs.self_partial_output.clone();
             let opponent_partial_output = gs.opponent_partial_output.clone();
 
+            let gives_check_us = gs.gives_check_us;
+            let gives_check_them = gs.gives_check_them;
+
             self.thread_pool.spawn(move || {
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
@@ -2039,6 +2052,8 @@ impl<L,S,M> Root<L,S,M>
                         best_score: best_score,
                         m: None,
                         static_eval: LazyEval::new(),
+                        gives_check_us:gives_check_us,
+                        gives_check_them:gives_check_them,
                         prev_kind: KomaKind::Blank,
                         move_history: &mut Vec::new(),
                         self_partial_output:Arc::clone(&self_partial_output),
@@ -2399,6 +2414,8 @@ impl<L,S,M> Recursive<L,S,M>
                     best_score: gs.best_score,
                     m: Some(m),
                     static_eval:static_eval,
+                    gives_check_us:gs.gives_check_them,
+                    gives_check_them:Rule::in_check(gs.teban.opposite(),&state),
                     prev_kind: prev_kind,
                     thread_index:gs.thread_index,
                     pv:pv,
@@ -2452,6 +2469,8 @@ impl<L,S,M> Recursive<L,S,M>
             best_score: gs.best_score,
             m: None,
             static_eval: LazyEval::new(),
+            gives_check_us:gs.gives_check_them,
+            gives_check_them:false,
             prev_kind: Blank,
             thread_index:gs.thread_index,
             pv:&VecDeque::new(),
@@ -2780,9 +2799,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             Ok(EvaluationResult::Exact(scoreval, best_moves, gs.zh.clone(), max_seldepth))
         } else {
-            if gs.depth == 0 && static_eval.get_or_insert_with(|| {
+            if gs.depth == 0 && gs.current_depth <= 2 && gs.gives_check_us && static_eval.get_or_insert_with(|| {
                 evalutor.evalute(&gs.self_partial_output)
-            })? >= 700 {
+            })? >= 900 {
                 let checkmate = self.threatmate_search(gs.teban,
                                                        gs.teban,
                                                        gs.state,
@@ -2857,7 +2876,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                          evalutor,
                                          gs.rng)?;
 
-                    if s <= gs.alpha {
+                    if s < gs.alpha {
                         let mut mvs = VecDeque::new();
 
                         prev_move.map(|m| mvs.push_front(m));
@@ -2912,6 +2931,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         best_score: gs.best_score,
                                         m: gs.m,
                                         static_eval: static_eval.clone(),
+                                        gives_check_us:gs.gives_check_us,
+                                        gives_check_them:gs.gives_check_them,
                                         prev_kind: gs.prev_kind,
                                         thread_index: gs.thread_index,
                                         pv: &VecDeque::new(),
