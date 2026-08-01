@@ -2867,7 +2867,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             Ok(EvaluationResult::Exact(scoreval, best_moves, gs.zh.clone(), max_seldepth))
         } else {
-            if gs.depth == 0 && gs.current_depth <= 2 && gs.gives_check_us && env.threatmate_depth > 0 &&
+            if gs.depth == 0 && gs.current_depth >= 5 && gs.current_depth <= 10 && gs.gives_check_us && env.threatmate_depth > 0 &&
                 static_eval.get_or_insert_with(|| {
                     evalutor.evalute(&gs.self_partial_output)
                 })? >= 780 {
