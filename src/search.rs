@@ -1362,6 +1362,18 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             history.remove(&(teban,mk,sk));
 
+            match best_score {
+                ThreatMateSearchResult::Checkmate(d) => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(d + current_depth as i32),depth as u32));
+                },
+                ThreatMateSearchResult::Checkmated(d) => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(d - current_depth as i32),depth as u32));
+                },
+                ThreatMateSearchResult::Unknown => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
+                }
+            }
+
             Ok(best_score)
         } else {
             Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
@@ -1439,6 +1451,18 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     env.transposition_table.update(&zh,depth as i8,TTScore::NEGINFINITE(d - current_depth as i32),Bound::Exact,None);
                 },
                 _ => ()
+            }
+
+            match best_score {
+                ThreatMateSearchResult::Checkmate(d) => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(d + current_depth as i32),depth as u32));
+                },
+                ThreatMateSearchResult::Checkmated(d) => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(d - current_depth as i32),depth as u32));
+                },
+                ThreatMateSearchResult::Unknown => {
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
+                }
             }
 
             Ok(best_score)
