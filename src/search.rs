@@ -1457,25 +1457,17 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             Ok(0)
         } else {
             let move_index = *index + 1;
-            let r = (((depth as f32 - 1.) * move_index as f32).sqrt() * 0.6) as i32;
+            let r = (((depth as f32 - 1.) * move_index as f32).sqrt() * 0.58) as i32;
             let mut r = r.clamp(0, depth as i32 - 1) as u32;
 
             let h = env.move_orderer.look_up_history(teban,state,m)?;
 
             *index += 1;
 
-            if h > 2000 {
+            if h > 4000 {
                 r = r.saturating_sub(1);
-            } else if h < -2000 {
+            } else if h < -4000 {
                 r = r.saturating_add(1).min(depth - 1);
-            }
-
-            if env.move_orderer.is_killer(current_depth,m)? {
-                r = r.saturating_sub(1);
-            }
-
-            if m.obtained().is_some() && see < -FU_SCORE * 3 / 2 {
-                r = r.saturating_add(1);
             }
 
             Ok(r)
