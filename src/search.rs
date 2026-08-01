@@ -1223,7 +1223,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             },
             _ => {}
         }
-        
+
         if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             return Ok(ThreatMateSearchResult::Unknown);
@@ -1367,7 +1367,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
 
             if picker.len() == 0 {
-                threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(current_depth as i32),depth as u32));
+                threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(0),depth as u32));
                 return Ok(ThreatMateSearchResult::Checkmated(current_depth as i32));
             }
 
@@ -1476,7 +1476,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                        teban: Teban,
                        state: &State,
                        m:LegalMove,
-                       see:i32,
+                       _:i32,
                        tt_move:Option<&LegalMove>,
                        pv:Option<&LegalMove>) -> Result<u32,ApplicationError> {
         if depth < 3 ||
