@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::{fmt, fs};
 use std::fs::DirEntry;
 use std::path::Path;
@@ -239,6 +239,7 @@ impl<M> Tiger<M>
                     thread_index:0,
                     pv:&VecDeque::new(),
                     move_history:&mut Vec::new(),
+                    threatmate_cache: &mut HashMap::new(),
                     mc: &Arc::new(mc.clone()),
                     zh:zh,
                     depth:base_depth,

@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::ops::{Deref, Neg};
 use std::sync::{Arc, atomic, mpsc, Mutex};
@@ -38,6 +38,12 @@ pub const THREATMATE_DEPTH:u32 = 7;
 
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
 pub enum ThreatMateSearchResult {
+    Checkmated(i32),
+    Unknown,
+    Checkmate(i32)
+}
+#[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
+pub enum ThreatMateSearchResultRelative {
     Checkmated(i32),
     Unknown,
     Checkmate(i32)
@@ -210,6 +216,7 @@ pub struct GameState<'a> {
     pub gives_check_them:bool,
     pub prev_kind:KomaKind,
     pub move_history:&'a mut Vec<Option<(u8,u8)>>,
+    pub threatmate_cache:&'a mut HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>,
     pub self_partial_output: Arc<Arr<f32,{256*2}>>,
     pub opponent_partial_output: Arc<Arr<f32,{256*2}>>,
     pub thread_index:usize,
@@ -1198,6 +1205,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                          event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                          zh: &ZobristHash<u64>,
                          history:&mut HashSet<(Teban,u64,u64)>,
+                         threatmate_cache: &mut HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>,
                          depth:usize,
                          current_depth:usize,
                          rng:&mut Prng) -> Result<ThreatMateSearchResult,ApplicationError> {
@@ -1205,6 +1213,17 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
 
+        match threatmate_cache.get(&(teban,mk,sk)) {
+            Some(&(r,d)) if d >= depth as u32 => {
+                match r {
+                    ThreatMateSearchResultRelative::Unknown => return Ok(ThreatMateSearchResult::Unknown),
+                    ThreatMateSearchResultRelative::Checkmate(d) => return Ok(ThreatMateSearchResult::Checkmate(d - current_depth as i32)),
+                    ThreatMateSearchResultRelative::Checkmated(d) => return Ok(ThreatMateSearchResult::Checkmated(d + current_depth as i32)),
+                }
+            },
+            _ => {}
+        }
+        
         if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
             return Ok(ThreatMateSearchResult::Unknown);
@@ -1228,6 +1247,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if count >= 2 {
+            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
@@ -1238,6 +1258,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if count >= 2 {
+            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
@@ -1254,12 +1275,15 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 if bound == Bound::Exact {
                     match s {
                         TTScore::INFINITE(d) => {
+                            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(d),depth as u32));
                             return Ok(ThreatMateSearchResult::Checkmate(d - current_depth as i32));
                         },
                         TTScore::NEGINFINITE(d) => {
+                            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(d),depth as u32));
                             return Ok(ThreatMateSearchResult::Checkmated(d + current_depth as i32));
                         },
                         _ if d as usize >= depth => {
+                            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
                             return Ok(ThreatMateSearchResult::Unknown);
                         },
                         _ => ()
@@ -1274,6 +1298,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             Rule::generate_moves::<Checks>(teban, state, mc, &mut picker)?;
 
             if picker.len() == 0 {
+                threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
                 return Ok(ThreatMateSearchResult::Unknown);
             }
 
@@ -1290,6 +1315,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                     env.transposition_table.update(&zh,depth as i8,TTScore::INFINITE(0),Bound::Exact,Some(m));
 
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(0),depth as u32));
                     return Ok(ThreatMateSearchResult::Checkmate(-(current_depth as i32)));
                 }
 
@@ -1310,6 +1336,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                 event_dispatcher,
                                                 &nzh,
                                                 history,
+                                                threatmate_cache,
                                                 depth - 1,
                                                 current_depth + 1,
                                                 rng)?;
@@ -1319,6 +1346,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                     env.transposition_table.update(&zh, depth as i8, TTScore::INFINITE(ply + (current_depth as i32)), Bound::Exact, Some(m));
 
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(ply + current_depth as i32),depth as u32));
                     return Ok(ThreatMateSearchResult::Checkmate(ply));
                 }
 
@@ -1339,6 +1367,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
 
             if picker.len() == 0 {
+                threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(current_depth as i32),depth as u32));
                 return Ok(ThreatMateSearchResult::Checkmated(current_depth as i32));
             }
 
@@ -1354,6 +1383,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     history.remove(&(teban,mk,sk));
 
                     env.transposition_table.update(&zh,depth as i8,TTScore::INFINITE(0),Bound::Exact,Some(m));
+
+                    threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(0),depth as u32));
 
                     return Ok(ThreatMateSearchResult::Checkmate(-(current_depth as i32)));
                 }
@@ -1375,6 +1406,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                 event_dispatcher,
                                                 &nzh,
                                                 history,
+                                                threatmate_cache,
                                                 depth - 1,
                                                 current_depth + 1,
                                                 rng)?;
@@ -1382,6 +1414,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 match s {
                     ThreatMateSearchResult::Unknown | ThreatMateSearchResult::Checkmate(_) => {
                         history.remove(&(teban, mk, sk));
+
+                        threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
 
                         return Ok(ThreatMateSearchResult::Unknown);
                     },
@@ -1848,6 +1882,8 @@ impl<L,S,M> Root<L,S,M>
 
                 let mut prev_score = Score::default();
 
+                let mut threatmate_cache = HashMap::new();
+
                 'ounter: for depth in 1..=base_depth {
                     if let Score::Value(ps) = prev_score {
                         let delta = Self::compute_aspiration_window_delta(depth);
@@ -1871,6 +1907,7 @@ impl<L,S,M> Root<L,S,M>
                                 gives_check_them:gives_check_them,
                                 prev_kind: KomaKind::Blank,
                                 move_history: &mut Vec::new(),
+                                threatmate_cache:&mut threatmate_cache,
                                 self_partial_output:Arc::clone(&self_partial_output),
                                 opponent_partial_output:Arc::clone(&opponent_partial_output),
                                 thread_index:thread_index,
@@ -1948,6 +1985,7 @@ impl<L,S,M> Root<L,S,M>
                             gives_check_them:gives_check_them,
                             prev_kind: KomaKind::Blank,
                             move_history: &mut Vec::new(),
+                            threatmate_cache:&mut threatmate_cache,
                             self_partial_output: Arc::clone(&self_partial_output),
                             opponent_partial_output: Arc::clone(&opponent_partial_output),
                             thread_index: thread_index,
@@ -2029,6 +2067,8 @@ impl<L,S,M> Root<L,S,M>
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
 
+                let mut threatmate_cache = HashMap::new();
+
                 let mut depth = shared_depth.load(Ordering::Acquire) as u32;
 
                 while depth <= base_depth {
@@ -2053,6 +2093,7 @@ impl<L,S,M> Root<L,S,M>
                         gives_check_them:gives_check_them,
                         prev_kind: KomaKind::Blank,
                         move_history: &mut Vec::new(),
+                        threatmate_cache:&mut threatmate_cache,
                         self_partial_output:Arc::clone(&self_partial_output),
                         opponent_partial_output:Arc::clone(&opponent_partial_output),
                         thread_index:thread_index,
@@ -2417,6 +2458,7 @@ impl<L,S,M> Recursive<L,S,M>
                     thread_index:gs.thread_index,
                     pv:pv,
                     move_history: gs.move_history,
+                    threatmate_cache: gs.threatmate_cache,
                     self_partial_output:Arc::clone(&opponent_partial_output),
                     opponent_partial_output:Arc::clone(&self_partial_output),
                     mc: &mc,
@@ -2472,6 +2514,7 @@ impl<L,S,M> Recursive<L,S,M>
             thread_index:gs.thread_index,
             pv:&VecDeque::new(),
             move_history: gs.move_history,
+            threatmate_cache: gs.threatmate_cache,
             self_partial_output:Arc::clone(&gs.opponent_partial_output),
             opponent_partial_output:Arc::clone(&gs.self_partial_output),
             mc: &mc,
@@ -2812,6 +2855,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                        event_dispatcher,
                                                        &gs.zh,
                                                        &mut HashSet::new(),
+                                                       gs.threatmate_cache,
                                                        env.threatmate_depth as usize,
                                                        gs.current_depth as usize,
                                                        gs.rng)?;
@@ -2939,6 +2983,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         thread_index: gs.thread_index,
                                         pv: &VecDeque::new(),
                                         move_history: gs.move_history,
+                                        threatmate_cache: gs.threatmate_cache,
                                         self_partial_output: Arc::clone(&gs.self_partial_output),
                                         opponent_partial_output: Arc::clone(&gs.opponent_partial_output),
                                         mc: gs.mc,
