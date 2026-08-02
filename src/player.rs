@@ -294,7 +294,7 @@ impl<M> Tiger<M>
                         let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                         BestMove::Resign
                     },
-                    Ok(EvaluationResult::Repetition) => {
+                    Ok(EvaluationResult::Repetition(_,_,_,_)) => {
                         strategy.send_message(&mut env,"repetition!")?;
                         env.info_sender.flush()?;
 

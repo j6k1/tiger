@@ -40,6 +40,7 @@ pub const THREATMATE_DEPTH:u32 = 7;
 pub enum ThreatMateSearchResult {
     Checkmated(i32),
     Unknown,
+    Repetition,
     Checkmate(i32)
 }
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
@@ -54,6 +55,7 @@ impl Neg for ThreatMateSearchResult {
         match self {
             ThreatMateSearchResult::Checkmate(ply) => ThreatMateSearchResult::Checkmated(-ply),
             ThreatMateSearchResult::Unknown => ThreatMateSearchResult::Unknown,
+            ThreatMateSearchResult::Repetition => ThreatMateSearchResult::Repetition,
             ThreatMateSearchResult::Checkmated(ply) => ThreatMateSearchResult::Checkmate(-ply)
         }
     }
@@ -136,7 +138,7 @@ pub enum EvaluationResult {
     NodeLimits,
     Timeout,
     Stop,
-    Repetition
+    Repetition(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32)
 }
 impl EvaluationResult {
     pub fn best_score(&self) -> Option<Score> {
@@ -1225,39 +1227,43 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
 
         if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-            self.timelimit_reached(env)? || history.contains(&(teban,mk,sk)) {
+            self.timelimit_reached(env)? {
             return Ok(ThreatMateSearchResult::Unknown);
+        }
+
+        if history.contains(&(teban,mk,sk)) {
+            return Ok(ThreatMateSearchResult::Repetition);
         }
 
         let ps = state.get_part();
 
         let mut count = 0;
 
-        if (ps.sente_self_board | ps.sente_opponent_board).bitcount() > 18 {
+        if (ps.sente_self_board | ps.sente_opponent_board).bitcount() > 24 {
             count += 1;
         }
 
         if (ps.sente_kaku_board | ps.sente_hisha_board |
-            ps.gote_kaku_board | ps.gote_hisha_board).bitcount() > 2 {
+            ps.gote_kaku_board | ps.gote_hisha_board).bitcount() > 3 {
             count += 1;
         }
 
-        if (ps.sente_nari_board | ps.gote_nari_board).bitcount() < 2 {
+        if (ps.sente_nari_board | ps.gote_nari_board).bitcount() < 1 {
             count += 1;
         }
 
-        if count >= 2 {
+        if count >= 3 {
             threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
         let mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
 
-        if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 4 {
+        if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 5 {
             count += 1;
         }
 
-        if count >= 2 {
+        if count >= 3 {
             threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
             return Ok(ThreatMateSearchResult::Unknown);
         }
@@ -1350,13 +1356,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     return Ok(ThreatMateSearchResult::Checkmate(ply));
                 }
 
-                if s > best_score {
-                    best_score = s;
-                }
-
                 if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
                     self.timelimit_reached(env)? {
                     break;
+                }
+
+                if s > best_score {
+                    best_score = s;
                 }
             }
 
@@ -1371,7 +1377,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 },
                 ThreatMateSearchResult::Unknown => {
                     threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
-                }
+                },
+                _ => ()
             }
 
             Ok(best_score)
@@ -1431,16 +1438,16 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
                         return Ok(ThreatMateSearchResult::Unknown);
                     },
+                    ThreatMateSearchResult::Repetition => {
+                        history.remove(&(teban, mk, sk));
+
+                        return Ok(ThreatMateSearchResult::Repetition);
+                    }
                     _ => ()
                 }
 
                 if s > best_score {
                     best_score = s;
-                }
-
-                if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-                    self.timelimit_reached(env)? {
-                    break;
                 }
             }
 
@@ -1462,7 +1469,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 },
                 ThreatMateSearchResult::Unknown => {
                     threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
-                }
+                },
+                _ => ()
             }
 
             Ok(best_score)
@@ -1502,7 +1510,10 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                        m:LegalMove,
                        _:i32,
                        tt_move:Option<&LegalMove>,
-                       pv:Option<&LegalMove>) -> Result<u32,ApplicationError> {
+                       pv:Option<&LegalMove>,
+                       _: &mut LazyEval,
+                       _: &Arc<Arr<f32,{256*2}>>,
+                       _: &Arc<Evalutor<M>>) -> Result<u32,ApplicationError> {
         if depth < 3 ||
             Rule::in_check(teban,state) ||
             tt_move.map(|&tm| tm == m).unwrap_or(false) ||
@@ -1977,7 +1988,7 @@ impl<L,S,M> Root<L,S,M>
                                     let _ = sender.send(Ok(RootEvaluationResult::Timeout));
                                     break 'ounter;
                                 },
-                                Ok(EvaluationResult::Repetition) => {
+                                Ok(EvaluationResult::Repetition(_,_,_,_)) => {
                                     let _ = sender.send(Ok(RootEvaluationResult::Repetition));
                                     break 'ounter;
                                 },
@@ -2048,7 +2059,7 @@ impl<L,S,M> Root<L,S,M>
                                 let _ = sender.send(Ok(RootEvaluationResult::Timeout));
                                 break;
                             },
-                            Ok(EvaluationResult::Repetition) => {
+                            Ok(EvaluationResult::Repetition(_,_,_,_)) => {
                                 let _ = sender.send(Ok(RootEvaluationResult::Repetition));
                                 break;
                             },
@@ -2154,7 +2165,7 @@ impl<L,S,M> Root<L,S,M>
                         Ok(EvaluationResult::Timeout) => {
                             let _ = sender.send(Ok(RootEvaluationResult::Timeout));
                         },
-                        Ok(EvaluationResult::Repetition) => {
+                        Ok(EvaluationResult::Repetition(_,_,_,_)) => {
                             let _ = sender.send(Ok(RootEvaluationResult::Repetition));
                         },
                         Ok(EvaluationResult::Stop) => {
@@ -2607,7 +2618,11 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         }
 
         if env.history.contains(&(gs.teban,mk,sk)) {
-            return Ok(EvaluationResult::Repetition);
+            let mut mvs = VecDeque::new();
+
+            gs.m.map(|m| mvs.push_front(m));
+
+            return Ok(EvaluationResult::Repetition(Score::Value(400),mvs,gs.zh.clone(),gs.current_depth));
         }
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
@@ -2759,7 +2774,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 assert!(gs.depth > 0);
 
                 match self.search_child_node(env,gs,m,pv,alpha,gs.depth,gs.cut_node,gs.already_reduced_lmr,gs.nmp_min_ply,event_dispatcher,evalutor)? {
-                    EvaluationResult::Exact(s, mvs, _, seldepth) => {
+                    EvaluationResult::Exact(s, mvs, _, seldepth) |
+                    EvaluationResult::Repetition(s, mvs, _, seldepth) => {
                         let s = -s;
 
                         max_seldepth = max_seldepth.max(seldepth);
@@ -2842,7 +2858,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     },
                     EvaluationResult::Cut => {
                     },
-                    EvaluationResult::Repetition => {
+                    EvaluationResult::Repetition(_,_,_,_) => {
                     }
                 }
             }
@@ -2867,10 +2883,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             Ok(EvaluationResult::Exact(scoreval, best_moves, gs.zh.clone(), max_seldepth))
         } else {
-            if gs.depth == 0 && gs.current_depth >= 5 && gs.current_depth <= 10 && gs.gives_check_us && env.threatmate_depth > 0 &&
-                static_eval.get_or_insert_with(|| {
-                    evalutor.evalute(&gs.self_partial_output)
-                })? >= 780 {
+            if env.threatmate_depth > 0 && gs.depth >= 4 && gs.gives_check_us {
                 let checkmate = self.threatmate_search(gs.teban,
                                                        gs.teban,
                                                        gs.state,
@@ -2970,7 +2983,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     env.history.insert((gs.teban, mk, sk));
 
                     match self.search_null_move(env, gs, -gs.beta, -gs.beta + 1, gs.depth.saturating_sub(r), event_dispatcher, evalutor)? {
-                        EvaluationResult::Exact(s, _, zh, _) => {
+                        EvaluationResult::Exact(s, _, zh, _) | EvaluationResult::Repetition(s, _, zh, _) => {
                             let s = -s;
 
                             let null_value = s;
@@ -3026,7 +3039,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                     let strategy = Recursive::new();
 
                                     match strategy.search(env, &mut gs, event_dispatcher, evalutor)? {
-                                        EvaluationResult::Exact(s, _, _, _) => {
+                                        EvaluationResult::Exact(s, _, _, _) | EvaluationResult::Repetition(s, _, _, _) => {
                                             if s >= gs.beta {
                                                 return Ok(EvaluationResult::Exact(null_value, best_moves, gs.zh, gs.current_depth));
                                             }
@@ -3040,7 +3053,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         EvaluationResult::Stop => {
                                             return Ok(EvaluationResult::Stop);
                                         },
-                                        EvaluationResult::Repetition | EvaluationResult::Cut => {}
+                                        EvaluationResult::Cut => {}
                                     }
                                 }
                             }
@@ -3060,7 +3073,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                             return Ok(EvaluationResult::Stop);
                         },
-                        EvaluationResult::Repetition | EvaluationResult::Cut => {
+                        EvaluationResult::Cut => {
                             env.history.remove(&(gs.teban, mk, sk));
                         }
                     }
@@ -3145,7 +3158,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                               m,
                                               see,
                                               tt_move.as_ref(),
-                                              pv_move.as_ref())?;
+                                              pv_move.as_ref(),
+                                              &mut gs.static_eval,
+                                              &gs.self_partial_output,
+                                              evalutor)?;
 
                     if gs.already_reduced_lmr {
                         r = r.saturating_sub(1);
@@ -3181,7 +3197,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         assert!(depth > 0);
 
                         match self.search_child_node(env, gs, m, pv, alpha, depth, gs.cut_node, lmr_reduced, gs.nmp_min_ply, event_dispatcher, evalutor)? {
-                            EvaluationResult::Exact(s, mvs, _, seldepth) => {
+                            EvaluationResult::Exact(s, mvs, _, seldepth) |
+                            EvaluationResult::Repetition(s, mvs, _, seldepth) => {
                                 let s = -s;
 
                                 if r > 0 && s > alpha {
@@ -3270,8 +3287,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                 return Ok(EvaluationResult::Stop);
                             },
-                            EvaluationResult::Cut => {},
-                            EvaluationResult::Repetition => {}
+                            EvaluationResult::Cut => {}
                         }
                     }
                 }
@@ -3454,7 +3470,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                 assert!(gs.depth > 0);
 
                 match recur.search_child_node(env,gs,m,pv,alpha,gs.depth,gs.cut_node,gs.already_reduced_lmr,gs.nmp_min_ply,&mut event_dispatcher,evalutor)? {
-                    EvaluationResult::Exact(s, mvs, _, seldepth) => {
+                    EvaluationResult::Exact(s, mvs, _, seldepth) |
+                    EvaluationResult::Repetition(s, mvs, _, seldepth) => {
                         let s = -s;
 
                         max_seldepth = max_seldepth.max(seldepth);
@@ -3530,8 +3547,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                         return Ok(EvaluationResult::Stop);
                     },
                     EvaluationResult::Cut => {
-                    },
-                    EvaluationResult::Repetition => {
                     }
                 }
             }
@@ -3570,7 +3585,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                            m,
                                            see,
                                            tt_move.as_ref(),
-                                           pv_move.as_ref())?;
+                                           pv_move.as_ref(),
+                                           &mut gs.static_eval,
+                                           &gs.self_partial_output,
+                                           evalutor)?;
 
                 if gs.already_reduced_lmr {
                     r = r.saturating_sub(1);
@@ -3605,7 +3623,8 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                     assert!(depth > 0);
 
                     match recur.search_child_node(env,gs,m,pv,alpha,depth,gs.cut_node,lmr_reduced,gs.nmp_min_ply,&mut event_dispatcher,evalutor)? {
-                        EvaluationResult::Exact(s, mvs, _, seldepth) => {
+                        EvaluationResult::Exact(s, mvs, _, seldepth) |
+                        EvaluationResult::Repetition(s, mvs, _, seldepth) => {
                             let s = -s;
 
                             if r > 0 && s > alpha {
@@ -3690,8 +3709,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                             return Ok(EvaluationResult::Stop);
                         },
                         EvaluationResult::Cut => {
-                        },
-                        EvaluationResult::Repetition => {
                         }
                     }
                 }
