@@ -1526,7 +1526,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             Ok(0)
         } else {
             let move_index = *index + 1;
-            let r = (((depth as f32 - 1.) * move_index as f32).sqrt() * 0.58) as i32;
+            let r = (((depth as f32 - 1.) * move_index as f32).sqrt() * 0.63) as i32;
             let mut r = r.clamp(0, depth as i32 - 1) as u32;
 
             let h = env.move_orderer.look_up_history(teban,state,m)?;
