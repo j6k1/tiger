@@ -1521,23 +1521,24 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             self.is_important_move(env,current_depth,
                                    teban,state,m)? {
             Ok(0)
-        } else if *index < 1 {
+        } else if *index == 0 {
             *index += 1;
             Ok(0)
         } else {
-            let move_index = *index + 1;
-            let r = (((depth as f32 - 1.) * move_index as f32).sqrt() * 0.63) as i32;
-            let mut r = r.clamp(0, depth as i32 - 1) as u32;
+            let mut r = 0.;
+
+            let d = depth as f32;
+            let i = *index as f32 + 1.;
+
+            r += 0.8 * d.ln();
+            r += 0.6 * i.ln();
 
             let h = env.move_orderer.look_up_history(teban,state,m)?;
+            let h = (h as f32 / 16384.).clamp(0.0,1.0);
 
-            *index += 1;
+            r -= 0.7 * h;
 
-            if h > 4000 {
-                r = r.saturating_sub(1);
-            } else if h < -4000 {
-                r = r.saturating_add(1).min(depth - 1);
-            }
+            let r = (r as u32).clamp(0,depth - 1);
 
             Ok(r)
         }
