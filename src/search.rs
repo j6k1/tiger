@@ -1514,7 +1514,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                        _: &mut LazyEval,
                        _: &Arc<Arr<f32,{256*2}>>,
                        _: &Arc<Evalutor<M>>) -> Result<u32,ApplicationError> {
-        if depth < 3 ||
+        if depth <= 1 ||
             Rule::in_check(teban,state) ||
             tt_move.map(|&tm| tm == m).unwrap_or(false) ||
             pv.map(|pm| pm == &m).unwrap_or(false) ||
@@ -1525,20 +1525,22 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             *index += 1;
             Ok(0)
         } else {
-            let mut r = 0.;
-
-            let d = depth as f32;
-            let i = *index as f32 + 1.;
-
-            r += 0.8 * d.ln();
-            r += 0.6 * i.ln();
+            let move_index = *index + 1;
+            let mut r = 1.05 * (depth as f32 + 1.).ln() * 0.85 *(move_index as f32).ln() / 2.35;
 
             let h = env.move_orderer.look_up_history(teban,state,m)?;
-            let h = (h as f32 / 16384.).clamp(0.0,1.0);
 
-            r -= 0.7 * h;
+            *index += 1;
 
-            let r = (r as u32).clamp(0,depth - 1);
+            let threshold = (depth as i32 + 1) * 5 * 256;
+
+            if h > threshold {
+                r -= 0.6;
+            } else if h < -threshold {
+                r += 0.6;
+            }
+
+            let r = r.clamp(0., depth as f32 - 1.) as u32;
 
             Ok(r)
         }
@@ -1910,6 +1912,8 @@ impl<L,S,M> Root<L,S,M>
 
         if thread_index == 0 {
             self.thread_pool.spawn(move || {
+                env.move_orderer.startup();
+
                 let mut pv = VecDeque::new();
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
@@ -2100,6 +2104,8 @@ impl<L,S,M> Root<L,S,M>
             let gives_check_them = gs.gives_check_them;
 
             self.thread_pool.spawn(move || {
+                env.move_orderer.startup();
+
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
 
@@ -3152,7 +3158,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                     let mut r = self.calc_lmr(env,
                                               &mut lmr_index,
-                                              gs.depth,
+                                              gs.depth - 1,
                                               gs.current_depth,
                                               gs.teban,
                                               gs.state,
@@ -3579,7 +3585,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                 let mut r = recur.calc_lmr(env,
                                            &mut quiet_index,
-                                           gs.depth,
+                                           gs.depth - 1,
                                            gs.current_depth,
                                            gs.teban,
                                            gs.state,
