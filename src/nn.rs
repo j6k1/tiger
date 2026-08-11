@@ -248,31 +248,19 @@ impl<M> Evalutor<M>
         Ok(r)
     }
 
-    pub fn prepare_evalute_by_diff<'a>(&self, active_player: Teban, t:Teban, state:&State, mc:&MochigomaCollections,
-                                       next:&State, nmc:&MochigomaCollections, m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
+    pub fn prepare_evalute_by_diff<'a>(&self, active_player: Teban, t:Teban,
+                                              state:&State, mc:&MochigomaCollections,
+                                              m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
-        let ou_position = Rule::ou_square(active_player, state) as u32;
+        let input = HalfKPDiff::new(
+            InputCreator::make_diff_input(active_player, t, state, mc, m)?,
+            InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?,
+            partial_output
+        );
 
-        match m {
-            LegalMove::To(m) if m.src() == ou_position => {
-                let input = HalfKP::new(InputCreator::make_input(t, next, nmc), InputCreator::make_input(t.opposite(), next, nmc));
+        let r = self.nn.partial_forward_by_diff(input)?;
 
-                let r = self.nn.partial_forward(input)?;
-
-                Ok(r)
-            },
-            m => {
-                let input = HalfKPDiff::new(
-                    InputCreator::make_diff_input(active_player, t, state, mc, m)?,
-                    InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?,
-                    partial_output
-                );
-
-                let r = self.nn.partial_forward_by_diff(input)?;
-
-                Ok(r)
-            }
-        }
+        Ok(r)
     }
     pub fn evalute(&self, partial_output: &Arr<f32,{256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;

@@ -21,6 +21,7 @@ use usiagent::move_orderer::{MoveOrderer, UnusedQuietSee};
 use usiagent::movepick::{MovePicker, RandomPicker};
 use usiagent::OnErrorHandler;
 use usiagent::player::InfoSender;
+use usiagent::position::Position;
 use usiagent::rule::{CaptureOrPawnPromotions, Checks, Evasions, LegalMove, QuietsWithoutPawnPromotions, Rule, SquareToPoint, State};
 use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
@@ -204,9 +205,11 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
         }
     }
 }
+pub const UNDO_BUFFER_SIZE:usize = 200;
+
 pub struct GameState<'a> {
     pub teban:Teban,
-    pub state:&'a Arc<State>,
+    pub pos:&'a mut Position<UNDO_BUFFER_SIZE>,
     pub rng:&'a mut Prng,
     pub alpha:Score,
     pub beta:Score,
@@ -223,7 +226,6 @@ pub struct GameState<'a> {
     pub opponent_partial_output: Arc<Arr<f32,{256*2}>>,
     pub thread_index:usize,
     pub pv:&'a VecDeque<LegalMove>,
-    pub mc:&'a Arc<MochigomaCollections>,
     pub zh:ZobristHash<u64>,
     pub depth:u32,
     pub current_depth:u32,
@@ -543,7 +545,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError>;
-    fn qsearch<'b>(&self,teban:Teban,state:&State,mc:&MochigomaCollections,
+    fn qsearch<'b>(&self,teban:Teban,
+               pos:&mut Position<UNDO_BUFFER_SIZE>,
                env:&mut Environment<L,S>,
                event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                zh: &ZobristHash<u64>,
@@ -589,10 +592,10 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         let mut picker = RandomPicker::new(Prng::new(rng.rnd64()));
 
-        let in_check = Rule::in_check(teban,state);
+        let in_check = Rule::in_check(teban,pos.get_state());
 
         if in_check {
-            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+            Rule::generate_moves::<Evasions>(teban, pos.get_state(), pos.get_mc(), &mut picker)?;
 
             if picker.len() == 0 {
                 env.transposition_table.update(&zh,0,TTScore::NEGINFINITE(0),Bound::Exact,None);
@@ -609,7 +612,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             history.insert((teban,mk,sk));
 
-            for m in move_orderer.ordering(teban,state,&mut picker) {
+            for m in move_orderer.ordering(teban,pos.get_state(),&mut picker) {
                 if let Some(ObtainKind::Ou) = match m {
                     LegalMove::To(m) => m.obtained(),
                     _ => None
@@ -626,16 +629,31 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     _ => None
                 };
 
-                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+                let nzh = zh.updated(&env.hasher, teban, pos.get_state().get_banmen(), pos.get_mc(), m.to_applied_move(), &o);
 
-                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+                let use_diff = match m {
+                    LegalMove::To(m) => m.src() != Rule::ou_square(teban,pos.get_state()) as u32,
+                    _ => false
+                };
 
-                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
-                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+                let (self_partial_output,opponent_partial_output) = if use_diff {
+                    let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,pos.get_state(),pos.get_mc(),m,Arc::clone(&self_partial_output))?);
+                    let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),pos.get_state(),pos.get_mc(),m,Arc::clone(&opponent_partial_output))?);
+
+                    pos.apply_move(teban,m)?;
+
+                    (self_partial_output,opponent_partial_output)
+                } else {
+                    pos.apply_move(teban,m)?;
+
+                    let self_partial_output = Arc::new(evalutor.prepare_evalute(teban,pos.get_state(),pos.get_mc())?);
+                    let opponent_partial_output = Arc::new(evalutor.prepare_evalute(teban.opposite(),pos.get_state(),pos.get_mc())?);
+
+                    (self_partial_output,opponent_partial_output)
+                };
 
                 let score = -self.qsearch(teban.opposite(),
-                                          &next,
-                                          &nmc,
+                                          pos,
                                           env,
                                           event_dispatcher,
                                           &nzh,
@@ -649,6 +667,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                           Some(m),
                                           evalutor,
                                           rng)?;
+
+                pos.undo_move()?;
 
                 if score.is_infinite() {
                     history.remove(&(teban,mk,sk));
@@ -700,7 +720,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 return Ok(stand_pat);
             }
 
-            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,state,&mut picker)?;
+            Rule::generate_moves_by_banmen::<CaptureOrPawnPromotions>(teban,pos.get_state(),&mut picker)?;
 
             let mvs = picker.filter(|m| m.obtained().is_some()).collect::<Vec<_>>();
 
@@ -723,8 +743,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     if let Some(o) = m.obtained() {
                         if !prev_move.map(|pm| {
                             pm.obtained().is_some() && m.dst() == pm.dst()
-                        }).unwrap_or(false) && !Rule::is_oute_move(state,teban,m) {
-                            if calc_see(teban,state,m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
+                        }).unwrap_or(false) && !Rule::is_oute_move(pos.get_state(),teban,m) {
+                            if calc_see(teban,pos.get_state(),m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
                                 continue;
                             }
                         }
@@ -747,16 +767,32 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     _ => None
                 };
 
-                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+                let nzh = zh.updated(&env.hasher, teban, pos.get_state().get_banmen(), pos.get_mc(), m.to_applied_move(), &o);
 
-                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
 
-                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,&state,&mc,&next,&nmc,m,Arc::clone(&self_partial_output))?);
-                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),&state,&mc,&next,&nmc,m,Arc::clone(&opponent_partial_output))?);
+                let use_diff = match m {
+                    LegalMove::To(m) => m.src() != Rule::ou_square(teban,pos.get_state()) as u32,
+                    _ => false
+                };
+
+                let (self_partial_output,opponent_partial_output) = if use_diff {
+                    let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban,pos.get_state(),pos.get_mc(),m,Arc::clone(&self_partial_output))?);
+                    let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(teban, teban.opposite(),pos.get_state(),pos.get_mc(),m,Arc::clone(&opponent_partial_output))?);
+
+                    pos.apply_move(teban,m)?;
+
+                    (self_partial_output,opponent_partial_output)
+                } else {
+                    pos.apply_move(teban,m)?;
+
+                    let self_partial_output = Arc::new(evalutor.prepare_evalute(teban,pos.get_state(),pos.get_mc())?);
+                    let opponent_partial_output = Arc::new(evalutor.prepare_evalute(teban.opposite(),pos.get_state(),pos.get_mc())?);
+
+                    (self_partial_output,opponent_partial_output)
+                };
 
                 let score = -self.qsearch(teban.opposite(),
-                                &next,
-                                &nmc,
+                                pos,
                                 env,
                                 event_dispatcher,
                                 &nzh,
@@ -770,6 +806,8 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                 Some(m),
                                 evalutor,
                                 rng)?;
+
+                pos.undo_move()?;
 
                 if score.is_infinite() {
                     history.remove(&(teban,mk,sk));
@@ -1201,8 +1239,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
     fn threatmate_search<'b>(&self,
                          attacker:Teban,
                          teban:Teban,
-                         state:&State,
-                         mc:&MochigomaCollections,
+                         pos:&mut Position<UNDO_BUFFER_SIZE>,
                          env:&mut Environment<L,S>,
                          event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                          zh: &ZobristHash<u64>,
@@ -1235,37 +1272,39 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             return Ok(ThreatMateSearchResult::Repetition);
         }
 
-        let ps = state.get_part();
+        {
+            let ps = pos.get_state().get_part();
 
-        let mut count = 0;
+            let mut count = 0;
 
-        if (ps.sente_self_board | ps.sente_opponent_board).bitcount() > 24 {
-            count += 1;
-        }
+            if (ps.sente_self_board | ps.sente_opponent_board).bitcount() > 24 {
+                count += 1;
+            }
 
-        if (ps.sente_kaku_board | ps.sente_hisha_board |
-            ps.gote_kaku_board | ps.gote_hisha_board).bitcount() > 3 {
-            count += 1;
-        }
+            if (ps.sente_kaku_board | ps.sente_hisha_board |
+                ps.gote_kaku_board | ps.gote_hisha_board).bitcount() > 3 {
+                count += 1;
+            }
 
-        if (ps.sente_nari_board | ps.gote_nari_board).bitcount() < 1 {
-            count += 1;
-        }
+            if (ps.sente_nari_board | ps.gote_nari_board).bitcount() < 1 {
+                count += 1;
+            }
 
-        if count >= 3 {
-            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
-            return Ok(ThreatMateSearchResult::Unknown);
-        }
+            if count >= 3 {
+                threatmate_cache.insert((teban, mk, sk), (ThreatMateSearchResultRelative::Unknown, depth as u32));
+                return Ok(ThreatMateSearchResult::Unknown);
+            }
 
-        let mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
+            let mask = Rule::gen_ou_surrounding_mask(attacker.opposite(), ps);
 
-        if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 5 {
-            count += 1;
-        }
+            if (mask & (ps.sente_opponent_board | ps.sente_self_board)).bitcount() > 5 {
+                count += 1;
+            }
 
-        if count >= 3 {
-            threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
-            return Ok(ThreatMateSearchResult::Unknown);
+            if count >= 3 {
+                threatmate_cache.insert((teban, mk, sk), (ThreatMateSearchResultRelative::Unknown, depth as u32));
+                return Ok(ThreatMateSearchResult::Unknown);
+            }
         }
 
         {
@@ -1301,7 +1340,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         let mut picker = RandomPicker::new(Prng::new(rng.rnd64()));
 
         if attacker == teban {
-            Rule::generate_moves::<Checks>(teban, state, mc, &mut picker)?;
+            Rule::generate_moves::<Checks>(teban, pos.get_state(), pos.get_mc(), &mut picker)?;
 
             if picker.len() == 0 {
                 threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Unknown,depth as u32));
@@ -1330,14 +1369,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     _ => None
                 };
 
-                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+                let nzh = zh.updated(&env.hasher, teban, pos.get_state().get_banmen(), pos.get_mc(), m.to_applied_move(), &o);
 
-                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+                pos.apply_move(teban,m)?;
 
                 let s = -self.threatmate_search(attacker,
                                                 teban.opposite(),
-                                                &next,
-                                                &nmc,
+                                                pos,
                                                 env,
                                                 event_dispatcher,
                                                 &nzh,
@@ -1346,6 +1384,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                 depth - 1,
                                                 current_depth + 1,
                                                 rng)?;
+                pos.undo_move()?;
 
                 if let ThreatMateSearchResult::Checkmate(ply) = s {
                     history.remove(&(teban, mk, sk));
@@ -1383,7 +1422,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             Ok(best_score)
         } else {
-            Rule::generate_moves::<Evasions>(teban, state, mc, &mut picker)?;
+            Rule::generate_moves::<Evasions>(teban, pos.get_state(), pos.get_mc(), &mut picker)?;
 
             if picker.len() == 0 {
                 threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmated(0),depth as u32));
@@ -1413,14 +1452,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                     _ => None
                 };
 
-                let nzh = zh.updated(&env.hasher, teban, state.get_banmen(), mc, m.to_applied_move(), &o);
+                let nzh = zh.updated(&env.hasher, teban, pos.get_state().get_banmen(), pos.get_mc(), m.to_applied_move(), &o);
 
-                let (next,nmc,_) = Rule::apply_move_none_check(state,teban,mc,m.to_applied_move());
+                pos.apply_move(teban,m)?;
 
                 let s = -self.threatmate_search(attacker,
                                                 teban.opposite(),
-                                                &next,
-                                                &nmc,
+                                                pos,
                                                 env,
                                                 event_dispatcher,
                                                 &nzh,
@@ -1429,6 +1467,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                                                 depth - 1,
                                                 current_depth + 1,
                                                 rng)?;
+                pos.undo_move()?;
 
                 match s {
                     ThreatMateSearchResult::Unknown | ThreatMateSearchResult::Checkmate(_) => {
@@ -1887,13 +1926,11 @@ impl<L,S,M> Root<L,S,M>
                            move_orderer: MoveOrderer<UnusedQuietSee>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
-        let state = Arc::clone(&gs.state);
         let mut env = env.clone();
 
         env.move_orderer = move_orderer;
 
         let evalutor = Arc::clone(&evalutor);
-        let mc = Arc::clone(&gs.mc);
         let zh = gs.zh.clone();
 
         let gives_check_us = gs.gives_check_us;
@@ -1909,6 +1946,8 @@ impl<L,S,M> Root<L,S,M>
         let opponent_partial_output = Arc::clone(&gs.opponent_partial_output);
 
         let shared_depth = Arc::clone(shared_depth);
+
+        let mut pos = gs.pos.clone();
 
         if thread_index == 0 {
             self.thread_pool.spawn(move || {
@@ -1936,7 +1975,7 @@ impl<L,S,M> Root<L,S,M>
                         for i in 0..2 {
                             let mut gs = GameState {
                                 teban: teban,
-                                state: &state,
+                                pos: &mut pos,
                                 alpha: alpha,
                                 beta: beta,
                                 search_offset: search_offset,
@@ -1952,7 +1991,6 @@ impl<L,S,M> Root<L,S,M>
                                 opponent_partial_output:Arc::clone(&opponent_partial_output),
                                 thread_index:thread_index,
                                 pv:&pv,
-                                mc: &mc,
                                 zh: zh.clone(),
                                 depth: depth,
                                 current_depth: current_depth,
@@ -2014,7 +2052,7 @@ impl<L,S,M> Root<L,S,M>
                     } else {
                         let mut gs = GameState {
                             teban: teban,
-                            state: &state,
+                            pos: &mut pos,
                             alpha: Score::default(),
                             beta: Score::INFINITE(0),
                             search_offset: search_offset,
@@ -2030,7 +2068,6 @@ impl<L,S,M> Root<L,S,M>
                             opponent_partial_output: Arc::clone(&opponent_partial_output),
                             thread_index: thread_index,
                             pv: &pv,
-                            mc: &mc,
                             zh: zh.clone(),
                             depth: depth,
                             current_depth: current_depth,
@@ -2124,7 +2161,7 @@ impl<L,S,M> Root<L,S,M>
 
                     let mut gs = GameState {
                         teban: teban,
-                        state: &state,
+                        pos: &mut pos,
                         alpha: Score::default(),
                         beta: Score::INFINITE(0),
                         search_offset: search_offset,
@@ -2140,7 +2177,6 @@ impl<L,S,M> Root<L,S,M>
                         opponent_partial_output:Arc::clone(&opponent_partial_output),
                         thread_index:thread_index,
                         pv:&pv,
-                        mc: &mc,
                         zh: zh.clone(),
                         depth: depth,
                         current_depth: current_depth,
@@ -2260,18 +2296,18 @@ impl<L,S,M> Root<L,S,M>
 
         let mut mvs = Vec::new();
 
-        if Rule::in_check(gs.teban,&gs.state) {
-            Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+        if Rule::in_check(gs.teban,gs.pos.get_state()) {
+            Rule::generate_moves::<Evasions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
             mvs = picker.collect::<Vec<LegalMove>>();
         } else {
             {
-                Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
                 let mut v = (&mut picker).collect::<Vec<LegalMove>>();
                 mvs.append(&mut v);
             }
 
             {
-                Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
                 let mut v = (&mut picker).collect::<Vec<LegalMove>>();
                 mvs.append(&mut v);
             }
@@ -2443,88 +2479,94 @@ impl<L,S,M> Recursive<L,S,M>
         let mut extend_check = gs.extend_check;
         let extend_threatmate = gs.extend_threatmate;
 
-        let piece_index = env.move_orderer.calc_piece_us_index(gs.teban,env.move_orderer.calc_piece_index(gs.teban,gs.state,m)?)?;
+        let piece_index = env.move_orderer.calc_piece_us_index(gs.teban,env.move_orderer.calc_piece_index(gs.teban,gs.pos.get_state(),m)?)?;
 
-        let zh = gs.zh.updated(&env.hasher, gs.teban, gs.state.get_banmen(), gs.mc, m.to_applied_move(), &o);
+        let zh = gs.zh.updated(&env.hasher, gs.teban, gs.pos.get_state().get_banmen(), gs.pos.get_mc(), m.to_applied_move(), &o);
 
-        let next = Rule::apply_move_none_check(&gs.state, gs.teban, gs.mc, m.to_applied_move());
+        let use_diff = match m {
+            LegalMove::To(m) => m.src() == Rule::ou_square(gs.teban,gs.pos.get_state()) as u32,
+            _ => false
+        };
 
-        match next {
-            (state, mc, _) => {
-                let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban,&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.self_partial_output))?);
-                let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban.opposite(),&gs.state,gs.mc,&state,&mc,m,Arc::clone(&gs.opponent_partial_output))?);
+        let prev_kind = match m {
+            LegalMove::To(mv) => {
+                let (x,y) = mv.src().square_to_point();
 
-                let static_eval = LazyEval::new();
+                gs.pos.get_state().get_banmen().0[y as usize][x as usize]
+            },
+            _ => KomaKind::Blank
+        };
 
-                if extend_depth > 0 {
-                    if extend_check > 0 && Rule::in_check(gs.teban.opposite(),&state) {
-                        depth += 1;
-                        extend_depth -= 1;
-                        extend_check -= 1;
-                    }/* else if extend_threatmate > 0 &&
-                        (self.in_danger(gs.teban.opposite(),&state, m) || self.is_threat(gs.teban,&state,m)) {
-                        depth += 1;
-                        extend_depth -= 1;
-                        extend_threatmate -= 1;
-                    }*/
-                }
+        let (self_partial_output,opponent_partial_output) = if use_diff {
+            let self_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban,gs.pos.get_state(),gs.pos.get_mc(),m,Arc::clone(&gs.self_partial_output))?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute_by_diff(gs.teban, gs.teban.opposite(),gs.pos.get_state(),gs.pos.get_mc(),m,Arc::clone(&gs.opponent_partial_output))?);
 
-                let state = Arc::new(state);
+            gs.pos.apply_move(gs.teban, m)?;
 
-                let mc = Arc::new(mc);
+            (self_partial_output,opponent_partial_output)
+        } else {
+            gs.pos.apply_move(gs.teban, m)?;
 
-                let prev_kind = match m {
-                    LegalMove::To(mv) => {
-                        let (x,y) = mv.src().square_to_point();
+            let self_partial_output = Arc::new(evalutor.prepare_evalute(gs.teban,gs.pos.get_state(),gs.pos.get_mc())?);
+            let opponent_partial_output = Arc::new(evalutor.prepare_evalute(gs.teban.opposite(),gs.pos.get_state(),gs.pos.get_mc())?);
 
-                        gs.state.get_banmen().0[y as usize][x as usize]
-                    },
-                    _ => KomaKind::Blank
-                };
+            (self_partial_output,opponent_partial_output)
+        };
 
-                gs.move_history.push(Some((piece_index as u8,m.dst() as u8)));
+        let static_eval = LazyEval::new();
 
-                let mut gs = GameState {
-                    teban: gs.teban.opposite(),
-                    state: &state,
-                    rng: gs.rng,
-                    alpha: -gs.beta,
-                    beta: -alpha,
-                    search_offset: 0,
-                    best_score: gs.best_score,
-                    m: Some(m),
-                    static_eval:static_eval,
-                    gives_check_us:gs.gives_check_them,
-                    gives_check_them:Rule::in_check(gs.teban.opposite(),&state),
-                    prev_kind: prev_kind,
-                    thread_index:gs.thread_index,
-                    pv:pv,
-                    move_history: gs.move_history,
-                    threatmate_cache: gs.threatmate_cache,
-                    self_partial_output:Arc::clone(&opponent_partial_output),
-                    opponent_partial_output:Arc::clone(&self_partial_output),
-                    mc: &mc,
-                    zh: zh.clone(),
-                    depth: depth - 1,
-                    current_depth: gs.current_depth + 1,
-                    cut_node: cut_node,
-                    already_reduced_lmr: lmr_reduced,
-                    nmp_min_ply: nmp_min_ply,
-                    base_depth: gs.base_depth,
-                    extend_depth: extend_depth,
-                    extend_check: extend_check,
-                    extend_threatmate: extend_threatmate,
-                };
-
-                let strategy = Recursive::new();
-
-                let r = strategy.search(env, &mut gs, event_dispatcher, evalutor);
-
-                gs.move_history.pop();
-
-                r
+        if extend_depth > 0 {
+            if extend_check > 0 && Rule::in_check(gs.teban.opposite(),gs.pos.get_state()) {
+                depth += 1;
+                extend_depth -= 1;
+                extend_check -= 1;
             }
         }
+
+        gs.move_history.push(Some((piece_index as u8,m.dst() as u8)));
+
+        let in_check = Rule::in_check(gs.teban.opposite(),gs.pos.get_state());
+
+        let mut gs = GameState {
+            teban: gs.teban.opposite(),
+            rng: gs.rng,
+            pos: gs.pos,
+            alpha: -gs.beta,
+            beta: -alpha,
+            search_offset: 0,
+            best_score: gs.best_score,
+            m: Some(m),
+            static_eval:static_eval,
+            gives_check_us:gs.gives_check_them,
+            gives_check_them:in_check,
+            prev_kind: prev_kind,
+            thread_index:gs.thread_index,
+            pv:pv,
+            move_history: gs.move_history,
+            threatmate_cache: gs.threatmate_cache,
+            self_partial_output:Arc::clone(&opponent_partial_output),
+            opponent_partial_output:Arc::clone(&self_partial_output),
+            zh: zh.clone(),
+            depth: depth - 1,
+            current_depth: gs.current_depth + 1,
+            cut_node: cut_node,
+            already_reduced_lmr: lmr_reduced,
+            nmp_min_ply: nmp_min_ply,
+            base_depth: gs.base_depth,
+            extend_depth: extend_depth,
+            extend_check: extend_check,
+            extend_threatmate: extend_threatmate,
+        };
+
+        let strategy = Recursive::new();
+
+        let r = strategy.search(env, &mut gs, event_dispatcher, evalutor);
+
+        gs.move_history.pop();
+
+        gs.pos.undo_move()?;
+
+        r
     }
 
     pub fn search_null_move<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
@@ -2534,15 +2576,13 @@ impl<L,S,M> Recursive<L,S,M>
                                    event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                                    evalutor: &Arc<Evalutor<M>>)
         -> Result<EvaluationResult, ApplicationError> {
-        let state = gs.state;
-        let mc = gs.mc;
         let zh = gs.zh.teban_fliped();
 
         gs.move_history.push(None);
 
         let mut gs = GameState {
             teban: gs.teban.opposite(),
-            state: state,
+            pos: gs.pos,
             rng: gs.rng,
             alpha: alpha,
             beta: beta,
@@ -2559,7 +2599,6 @@ impl<L,S,M> Recursive<L,S,M>
             threatmate_cache: gs.threatmate_cache,
             self_partial_output:Arc::clone(&gs.opponent_partial_output),
             opponent_partial_output:Arc::clone(&gs.self_partial_output),
-            mc: &mc,
             zh: zh.clone(),
             depth: depth,
             current_depth: gs.current_depth + 1,
@@ -2644,7 +2683,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
         let prev_move = gs.m.clone();
 
-        if Rule::in_check(gs.teban.opposite(),&gs.state) {
+        if Rule::in_check(gs.teban.opposite(),gs.pos.get_state()) {
             if let Some(m) = prev_move.clone() {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,TTScore::INFINITE(0),Bound::Exact,None);
 
@@ -2681,13 +2720,12 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             }
         }
 
-        let in_check = Rule::in_check(gs.teban,&gs.state);
+        let in_check = Rule::in_check(gs.teban,gs.pos.get_state());
 
         if in_check {
             if gs.depth == 0 {
                 let s = self.qsearch(gs.teban,
-                                     &gs.state,
-                                     &gs.mc,
+                                     gs.pos,
                                      env,
                                      event_dispatcher,
                                      &gs.zh,
@@ -2753,10 +2791,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 None
             };
 
-            Rule::generate_moves::<Evasions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+            Rule::generate_moves::<Evasions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
 
             for (m, _) in env.move_orderer.ordering(
-                &mut picker, gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {                if m.obtained().is_none() {
+                &mut picker, gs.current_depth, gs.teban, gs.pos.get_state(), tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {                if m.obtained().is_none() {
                     quiet_moves.push(m);
                 }
 
@@ -2816,7 +2854,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         }
 
                                         if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                         }
                                     },
                                     LegalMove::Put(_) => {
@@ -2827,7 +2865,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         }).unwrap_or(Ok(()))?;
 
                                         if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                         }
                                     },
                                     _ => ()
@@ -2864,15 +2902,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         return Ok(EvaluationResult::Stop);
                     },
                     EvaluationResult::Cut => {
-                    },
-                    EvaluationResult::Repetition(_,_,_,_) => {
                     }
                 }
             }
 
             if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
                 for m in quiet_moves {
-                    env.move_orderer.update_degrade_history(gs.teban,&gs.state,m,gs.depth)?;
+                    env.move_orderer.update_degrade_history(gs.teban,gs.pos.get_state(),m,gs.depth)?;
                 }
             }
 
@@ -2893,8 +2929,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
             if env.threatmate_depth > 0 && gs.depth >= 4 && gs.gives_check_us {
                 let checkmate = self.threatmate_search(gs.teban,
                                                        gs.teban,
-                                                       gs.state,
-                                                       &gs.mc,
+                                                       gs.pos,
                                                        env,
                                                        event_dispatcher,
                                                        &gs.zh,
@@ -2917,8 +2952,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             if gs.depth == 0 {
                 let s = self.qsearch(gs.teban,
-                                     &gs.state,
-                                     &gs.mc,
+                                     gs.pos,
                                      env,
                                      event_dispatcher,
                                      &gs.zh,
@@ -2950,8 +2984,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     evalutor.evalute(&gs.self_partial_output)
                 })?) < gs.alpha - 514 - 294 * gs.depth as i32 * gs.depth as i32 {
                     let s = self.qsearch(gs.teban,
-                                         &gs.state,
-                                         &gs.mc,
+                                         gs.pos,
                                          env,
                                          event_dispatcher,
                                          &gs.zh,
@@ -3013,7 +3046,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                     let mut gs = GameState {
                                         teban: gs.teban,
-                                        state: &gs.state,
+                                        pos: gs.pos,
                                         rng: gs.rng,
                                         alpha: Score::Value(beta - 1),
                                         beta: Score::Value(beta),
@@ -3030,7 +3063,6 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                         threatmate_cache: gs.threatmate_cache,
                                         self_partial_output: Arc::clone(&gs.self_partial_output),
                                         opponent_partial_output: Arc::clone(&gs.opponent_partial_output),
-                                        mc: gs.mc,
                                         zh: gs.zh.clone(),
                                         depth: gs.depth.saturating_sub(r),
                                         current_depth: gs.current_depth,
@@ -3133,13 +3165,13 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             for i in 0..count {
                 if i == 0 {
-                    Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                    Rule::generate_moves::<CaptureOrPawnPromotions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
                 } else {
-                    Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, &gs.state, &gs.mc, &mut picker)?;
+                    Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
                 }
 
                 for (m, see) in env.move_orderer.ordering(
-                    &mut picker, gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {
+                    &mut picker, gs.current_depth, gs.teban, gs.pos.get_state(), tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {
                     if m.obtained().is_none() {
                         quiet_moves.push(m);
                     }
@@ -3148,8 +3180,8 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     if !gs.cut_node && gs.depth >= 2 && gs.depth <= 4 &&
                         m.obtained().is_none() &&
                         !pv_move.map(|pm| pm == m).unwrap_or(false) &&
-                        !Rule::in_check(gs.teban, &gs.state) &&
-                        !Rule::is_oute_move(&gs.state, gs.teban, m) &&
+                        !Rule::in_check(gs.teban, gs.pos.get_state()) &&
+                        !Rule::is_oute_move(gs.pos.get_state(), gs.teban, m) &&
                         Score::Value(gs.static_eval.get_or_insert_with(|| {
                             evalutor.evalute(&gs.self_partial_output)
                         })? + self.futility_margin(gs.depth, m)) <= alpha {
@@ -3161,7 +3193,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                               gs.depth - 1,
                                               gs.current_depth,
                                               gs.teban,
-                                              gs.state,
+                                              gs.pos.get_state(),
                                               m,
                                               see,
                                               tt_move.as_ref(),
@@ -3245,7 +3277,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                 }
 
                                                 if !lmr_reduced {
-                                                    env.move_orderer.update_improve_history(gs.teban, &gs.state, m, gs.depth, gs.current_depth, gs.move_history)?;
+                                                    env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
                                                 }
                                             },
                                             LegalMove::Put(_) => {
@@ -3256,7 +3288,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                 }).unwrap_or(Ok(()))?;
 
                                                 if !lmr_reduced {
-                                                    env.move_orderer.update_improve_history(gs.teban, &gs.state, m, gs.depth, gs.current_depth, gs.move_history)?;
+                                                    env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
                                                 }
                                             },
                                             _ => ()
@@ -3302,7 +3334,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
                 for m in quiet_moves {
-                    env.move_orderer.update_degrade_history(gs.teban, &gs.state, m, gs.depth)?;
+                    env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
             }
 
@@ -3449,9 +3481,11 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
         let mut max_seldepth = 0;
 
-        if Rule::in_check(gs.teban, &gs.state) {
+        let in_check = Rule::in_check(gs.teban, gs.pos.get_state());
+
+        if in_check {
             for (m,_) in env.move_orderer.ordering(
-                mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
+                mvs.iter().cloned(), gs.current_depth, gs.teban, gs.pos.get_state(), tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
             )?.skip(gs.search_offset) {
                 if m.obtained().is_none() {
                     quiet_moves.push(m);
@@ -3512,13 +3546,13 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                         }
 
                                         if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                         }
                                     },
                                     LegalMove::Put(_) => {
                                         env.move_orderer.update_killer(gs.current_depth, m)?;
                                         if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                         }
                                     },
                                     _ => ()
@@ -3560,7 +3594,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
             if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
                 for m in quiet_moves {
-                    env.move_orderer.update_degrade_history(gs.teban, &gs.state, m, gs.depth)?;
+                    env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
             }
 
@@ -3577,7 +3611,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
             Ok(EvaluationResult::Exact(scoreval, best_moves, gs.zh.clone(), max_seldepth))
         } else {
             for (m,see) in env.move_orderer.ordering(
-                mvs.iter().cloned(), gs.current_depth, gs.teban, &gs.state, tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
+                mvs.iter().cloned(), gs.current_depth, gs.teban, gs.pos.get_state(), tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history
             )?.skip(gs.search_offset) {
                 if m.obtained().is_none() {
                     quiet_moves.push(m);
@@ -3588,7 +3622,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                            gs.depth - 1,
                                            gs.current_depth,
                                            gs.teban,
-                                           gs.state,
+                                           gs.pos.get_state(),
                                            m,
                                            see,
                                            tt_move.as_ref(),
@@ -3671,14 +3705,14 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                             }
 
                                             if !lmr_reduced {
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                             }
                                         },
                                         LegalMove::Put(_) => {
                                             env.move_orderer.update_killer(gs.current_depth, m)?;
 
                                             if !lmr_reduced {
-                                                env.move_orderer.update_improve_history(gs.teban,&gs.state,m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
                                             }
                                         },
                                         _ => ()
@@ -3723,7 +3757,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
             if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
                 for m in quiet_moves {
-                    env.move_orderer.update_degrade_history(gs.teban, &gs.state, m, gs.depth)?;
+                    env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
             }
 

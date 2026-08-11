@@ -8,7 +8,7 @@ use nncombinator::error::{ModelLoadError, DeviceError, EvaluateError, LayerInsta
 use packedsfen::error::ReadError;
 use rayon::ThreadPoolBuildError;
 use shogi_dataloader::error::DataLoadError;
-use usiagent::error::{EventDispatchError, InfoSendError, InvalidInputError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
+use usiagent::error::{EventDispatchError, InfoSendError, InvalidInputError, InvalidStateError, LimitSizeError, PlayerError, SfenStringConvertError, UsiProtocolError};
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{CudaError};
@@ -311,5 +311,10 @@ impl From<DataLoadError> for ApplicationError {
 impl From<InvalidInputError> for ApplicationError {
     fn from(err: InvalidInputError) -> ApplicationError {
         ApplicationError::InvalidInputError(err)
+    }
+}
+impl From<InvalidStateError> for ApplicationError {
+    fn from(err: InvalidStateError) -> Self {
+        ApplicationError::InvalidStateError(err.0)
     }
 }

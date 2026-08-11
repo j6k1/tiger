@@ -12,6 +12,7 @@ use rayon::ThreadPoolBuilder;
 use usiagent::command::{BestMove, CheckMate, UsiInfoSubCommand, UsiOptType};
 use usiagent::error::{PlayerError, UsiProtocolError};
 use usiagent::event::{GameEndState, SysEventOption, SysEventOptionKind, UserEvent, UserEventQueue, UsiGoMateTimeLimit, UsiGoTimeLimit};
+use usiagent::position::Position;
 use usiagent::hash::{KyokumenHash};
 use usiagent::logger::Logger;
 use usiagent::math::Prng;
@@ -25,7 +26,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH, UNDO_BUFFER_SIZE};
 use crate::transposition_table::{TT, ZobristHash, Score, TTScore};
 
 pub trait FromOption {
@@ -223,7 +224,7 @@ impl<M> Tiger<M>
 
                 let mut gs = GameState {
                     teban: teban,
-                    state: &Arc::new(state.clone()),
+                    pos: &mut Position::<UNDO_BUFFER_SIZE>::new(state.clone(),mc.clone()),
                     rng:&mut rng,
                     alpha: Score::default(),
                     beta: Score::INFINITE(0),
@@ -240,7 +241,6 @@ impl<M> Tiger<M>
                     pv:&VecDeque::new(),
                     move_history:&mut Vec::new(),
                     threatmate_cache: &mut HashMap::new(),
-                    mc: &Arc::new(mc.clone()),
                     zh:zh,
                     depth:base_depth,
                     current_depth:0,
