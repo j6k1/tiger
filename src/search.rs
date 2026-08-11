@@ -2484,7 +2484,7 @@ impl<L,S,M> Recursive<L,S,M>
         let zh = gs.zh.updated(&env.hasher, gs.teban, gs.pos.get_state().get_banmen(), gs.pos.get_mc(), m.to_applied_move(), &o);
 
         let use_diff = match m {
-            LegalMove::To(m) => m.src() == Rule::ou_square(gs.teban,gs.pos.get_state()) as u32,
+            LegalMove::To(m) => m.src() != Rule::ou_square(gs.teban,gs.pos.get_state()) as u32,
             _ => false
         };
 
