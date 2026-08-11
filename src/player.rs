@@ -375,7 +375,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
-        options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0,100,Some(0)));
+        options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0,100,Some(64)));
         options.insert(String::from("ThreatmateDepth"),UsiOptType::Spin(0,100,Some(THREATMATE_DEPTH as i64)));
         options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));

@@ -2044,6 +2044,10 @@ impl<L,S,M> Root<L,S,M>
                                     break 'ounter;
                                 },
                                 Err(e) => {
+                                    if let Err(e) = pos.rewind() {
+                                        let _ = sender.send(Err(ApplicationError::from(e)));
+                                    }
+
                                     let _ = sender.send(Err(e));
                                     break 'ounter;
                                 }
@@ -2114,7 +2118,12 @@ impl<L,S,M> Root<L,S,M>
                                 break;
                             }
                             Err(e) => {
+                                if let Err(e) = pos.rewind() {
+                                    let _ = sender.send(Err(ApplicationError::from(e)));
+                                }
+
                                 let _ = sender.send(Err(e));
+
                                 break;
                             }
                         }
@@ -2218,7 +2227,13 @@ impl<L,S,M> Root<L,S,M>
                             let _ = sender.send(Err(ApplicationError::LogicError(String::from("The root node has been pruned."))));
                         },
                         Err(e) => {
+                            if let Err(e) = pos.rewind() {
+                                let _ = sender.send(Err(ApplicationError::from(e)));
+                            }
+
                             let _ = sender.send(Err(e));
+
+                            break;
                         }
                     }
 
@@ -2244,6 +2259,7 @@ impl<L,S,M> Root<L,S,M>
         while busy_threads > 0 {
             match self.receiver.recv().map_err(|e| ApplicationError::from(e))? {
                 Err(e) => {
+                    let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                     last_error = Some(e);
                 },
                 Ok(RootEvaluationResult::Quit(move_orderer,thread_index)) => {
@@ -2398,6 +2414,8 @@ impl<L,S,M> Root<L,S,M>
                     move_orderers[thread_index] = move_orderer;
                 },
                 Err(e) => {
+                    let _ = env.on_error_handler.lock().map(|h| h.call(&e));
+
                     self.termination(env, busy_threads, move_orderers)?;
 
                     return Err(e);
@@ -2492,7 +2510,7 @@ impl<L,S,M> Recursive<L,S,M>
             LegalMove::To(mv) => {
                 let (x,y) = mv.src().square_to_point();
 
-                gs.pos.get_state().get_banmen().0[y as usize][x as usize]
+                gs.pos.get_state().get_banmen()[y as usize][x as usize]
             },
             _ => KomaKind::Blank
         };
