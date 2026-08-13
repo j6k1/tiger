@@ -1527,7 +1527,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         }
     }
     fn timelimit_reached(&self,env:&mut Environment<L,S>) -> Result<bool,ApplicationError> {
-        let mut reached;
+        let reached;
         let timelimit_margin = env.timelimit_margin;
 
         match *env.current_limit.read() {
@@ -2421,7 +2421,7 @@ impl<L,S,M> Root<L,S,M>
 
                     self.send_message(env, format!("pv_depth = {}, worker_depth = {}", pv_depth, worker_depth).as_str())?;
                 },
-                Ok(RootEvaluationResult::LazyAbort(s, mvs, zh, depth, seldepth, thread_index)) => {
+                Ok(RootEvaluationResult::LazyAbort(s, mvs, zh, _, seldepth, thread_index)) => {
                     if let Err(e) = env.info_sender.flush() {
                         let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                     }
