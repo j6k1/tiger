@@ -2036,9 +2036,9 @@ impl<L,S,M> Root<L,S,M>
                                         }
 
                                         if env.lazy_abort.load(atomic::Ordering::Acquire) {
-                                            let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
-                                        } else {
                                             let _ = sender.send(Ok(RootEvaluationResult::LazyAbort(score, mvs, zh, depth, seldepth, thread_index)));
+                                        } else {
+                                            let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
                                         }
 
                                         break;
