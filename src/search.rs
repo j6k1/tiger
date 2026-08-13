@@ -100,6 +100,7 @@ pub struct Environment<L,S> where L: Logger, S: InfoSender {
     pub abort:Arc<AtomicBool>,
     pub stop:Arc<AtomicBool>,
     pub quited:Arc<AtomicBool>,
+    pub lazy_abort:Arc<AtomicBool>,
     pub history:HashSet<(Teban,u64,u64)>,
     pub transposition_table:Arc<TT<u64,TTScore,{1<<20},4>>,
     pub move_orderer:MoveOrderer<UnusedQuietSee>,
@@ -125,6 +126,7 @@ impl<L,S> Clone for Environment<L,S> where L: Logger, S: InfoSender {
             abort:Arc::clone(&self.abort),
             stop:Arc::clone(&self.stop),
             quited:Arc::clone(&self.quited),
+            lazy_abort:Arc::clone(&self.lazy_abort),
             history:self.history.clone(),
             transposition_table:self.transposition_table.clone(),
             move_orderer:self.move_orderer.clone(),
@@ -179,6 +181,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
         let abort = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let quited = Arc::new(AtomicBool::new(false));
+        let lazy_abort = Arc::new(AtomicBool::new(false));
 
         Environment {
             event_queue:event_queue,
@@ -198,6 +201,7 @@ impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
             abort:abort,
             stop:stop,
             quited:quited,
+            lazy_abort:lazy_abort,
             history:history,
             transposition_table:Arc::clone(transposition_table),
             move_orderer:MoveOrderer::<UnusedQuietSee>::new(base_depth as usize + 2),
@@ -561,6 +565,11 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
         let (mk,sk) = zh.keys();
 
         event_dispatcher.dispatch_events(&self,&env.event_queue)?;
+
+        if env.lazy_abort.load(Ordering::Acquire) {
+            let score = Score::Value(evalutor.evalute(&self_partial_output)?);
+            return Ok(score);
+        }
 
         if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
             env.qsearch_max_depth.map(|d| depth >= d as usize).unwrap_or(false) ||
@@ -1263,8 +1272,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             _ => {}
         }
 
-        if depth == 0 || env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
-            self.timelimit_reached(env)? {
+        if depth == 0 ||
+            env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) ||
+            env.lazy_abort.load(Ordering::Acquire) || self.timelimit_reached(env)? {
             return Ok(ThreatMateSearchResult::Unknown);
         }
 
@@ -1521,8 +1531,13 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
         match *env.current_limit.read() {
             (current_turn_lmit,current_limit) => {
-                reached = current_turn_lmit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
-                reached = reached || current_limit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
+                let reached_lazy_abort = current_turn_lmit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
+
+                if reached_lazy_abort {
+                    env.lazy_abort.store(true,Ordering::Release);
+                }
+
+                reached = current_limit.map(|l| l - Instant::now() <= Duration::from_millis(timelimit_margin)).unwrap_or(false);
             }
         }
 
@@ -1963,7 +1978,7 @@ impl<L,S,M> Root<L,S,M>
 
                 let mut threatmate_cache = HashMap::new();
 
-                'ounter: for depth in 1..=base_depth {
+                'outer: for depth in 1..=base_depth {
                     if let Score::Value(ps) = prev_score {
                         let delta = Self::compute_aspiration_window_delta(depth);
 
@@ -2025,23 +2040,23 @@ impl<L,S,M> Root<L,S,M>
                                 },
                                 Ok(EvaluationResult::NodeLimits) => {
                                     let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
-                                    break 'ounter;
+                                    break 'outer;
                                 },
                                 Ok(EvaluationResult::Timeout) => {
                                     let _ = sender.send(Ok(RootEvaluationResult::Timeout));
-                                    break 'ounter;
+                                    break 'outer;
                                 },
                                 Ok(EvaluationResult::Repetition(_,_,_,_)) => {
                                     let _ = sender.send(Ok(RootEvaluationResult::Repetition));
-                                    break 'ounter;
+                                    break 'outer;
                                 },
                                 Ok(EvaluationResult::Stop) => {
                                     let _ = sender.send(Ok(RootEvaluationResult::Stop));
-                                    break 'ounter;
+                                    break 'outer;
                                 },
                                 Ok(EvaluationResult::Cut) => {
                                     let _ = sender.send(Err(ApplicationError::LogicError(String::from("The root node has been pruned."))));
-                                    break 'ounter;
+                                    break 'outer;
                                 },
                                 Err(e) => {
                                     if let Err(e) = pos.rewind() {
@@ -2049,7 +2064,7 @@ impl<L,S,M> Root<L,S,M>
                                     }
 
                                     let _ = sender.send(Err(e));
-                                    break 'ounter;
+                                    break 'outer;
                                 }
                             };
                         }
@@ -2129,7 +2144,9 @@ impl<L,S,M> Root<L,S,M>
                         }
                     }
 
-                    if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+                    if env.abort.load(Ordering::Acquire) ||
+                        env.stop.load(Ordering::Acquire) ||
+                        env.lazy_abort.load(Ordering::Acquire) {
                         break;
                     }
 
@@ -2237,7 +2254,10 @@ impl<L,S,M> Root<L,S,M>
                         }
                     }
 
-                    if env.abort.load(Ordering::Acquire) || env.stop.load(Ordering::Acquire) {
+
+                    if env.abort.load(Ordering::Acquire) ||
+                        env.stop.load(Ordering::Acquire) ||
+                        env.lazy_abort.load(Ordering::Acquire) {
                         break;
                     }
 
@@ -2332,6 +2352,7 @@ impl<L,S,M> Root<L,S,M>
         let mvs = Arc::new(mvs);
 
         env.abort.store(false,Ordering::Release);
+        env.lazy_abort.store(false,Ordering::Release);
 
         for i in 0..env.max_threads {
             let mvs = Arc::clone(&mvs);
@@ -2903,6 +2924,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                         if alpha < s {
                             alpha = s;
                         }
+
+                        if env.lazy_abort.load(Ordering::Acquire) && !scoreval.is_neginfinite() {
+                            break;
+                        }
                     },
                     EvaluationResult::NodeLimits => {
                         env.history.remove(&(gs.teban,mk,sk));
@@ -3188,7 +3213,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                     Rule::generate_moves::<QuietsWithoutPawnPromotions>(gs.teban, gs.pos.get_state(), gs.pos.get_mc(), &mut picker)?;
                 }
 
-                for (m, see) in env.move_orderer.ordering(
+                'outer: for (m, see) in env.move_orderer.ordering(
                     &mut picker, gs.current_depth, gs.teban, gs.pos.get_state(), tt_move, pv_move, gs.m, gs.prev_kind, gs.move_history)? {
                     if m.obtained().is_none() {
                         quiet_moves.push(m);
@@ -3327,6 +3352,10 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                     alpha = s;
                                 }
 
+                                if env.lazy_abort.load(Ordering::Acquire) && !scoreval.is_neginfinite() {
+                                    break 'outer;
+                                }
+
                                 break;
                             },
                             EvaluationResult::NodeLimits => {
@@ -3437,10 +3466,6 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
         if env.stop.load(Ordering::Acquire) {
             return Ok(EvaluationResult::Stop);
-        }
-
-        if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
-            return Ok(EvaluationResult::Timeout);
         }
 
         if recur.timelimit_reached(env)? || env.abort.load(Ordering::Acquire) {
@@ -3589,6 +3614,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                         if alpha < s {
                             alpha = s;
                         }
+
+                        if env.lazy_abort.load(Ordering::Acquire) && !scoreval.is_neginfinite(){
+                            break;
+                        }
                     },
                     EvaluationResult::NodeLimits => {
                         env.history.remove(&(gs.teban,mk,sk));
@@ -3655,7 +3684,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                 let mut lmr_reduced = gs.already_reduced_lmr || r > 0;
 
-                for j in 0..2 {
+                'outer: for j in 0..2 {
                     let depth = if j == 0 {
                         gs.depth - r
                     } else {
@@ -3748,6 +3777,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                             if alpha < s {
                                 alpha = s;
+                            }
+
+                            if env.lazy_abort.load(Ordering::Acquire) && !scoreval.is_neginfinite() {
+                                break 'outer;
                             }
 
                             break;
