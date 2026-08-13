@@ -155,6 +155,7 @@ impl EvaluationResult {
 pub enum RootEvaluationResult {
     Exact(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, u32, usize),
     NodeLimits,
+    LazyAbort(Score, VecDeque<LegalMove>, ZobristHash<u64>, u32, u32, usize),
     Timeout,
     Stop,
     Repetition,
@@ -2034,7 +2035,12 @@ impl<L,S,M> Root<L,S,M>
                                             best_score = score;
                                         }
 
-                                        let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                                        if env.lazy_abort.load(atomic::Ordering::Acquire) {
+                                            let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                                        } else {
+                                            let _ = sender.send(Ok(RootEvaluationResult::LazyAbort(score, mvs, zh, depth, seldepth, thread_index)));
+                                        }
+
                                         break;
                                     }
                                 },
@@ -2110,7 +2116,11 @@ impl<L,S,M> Root<L,S,M>
                                     best_score = score;
                                 }
 
-                                let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                                if env.lazy_abort.load(atomic::Ordering::Acquire) {
+                                    let _ = sender.send(Ok(RootEvaluationResult::LazyAbort(score, mvs, zh, depth, seldepth, thread_index)));
+                                } else {
+                                    let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                                }
                             },
                             Ok(EvaluationResult::NodeLimits) => {
                                 let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
@@ -2226,7 +2236,11 @@ impl<L,S,M> Root<L,S,M>
                                 best_score = score;
                             }
 
-                            let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                            if env.lazy_abort.load(atomic::Ordering::Acquire) {
+                                let _ = sender.send(Ok(RootEvaluationResult::LazyAbort(score, mvs, zh, depth, seldepth, thread_index)));
+                            } else {
+                                let _ = sender.send(Ok(RootEvaluationResult::Exact(score, mvs, zh, depth, seldepth, thread_index)));
+                            }
                         },
                         Ok(EvaluationResult::NodeLimits) => {
                             let _ = sender.send(Ok(RootEvaluationResult::NodeLimits));
@@ -2253,7 +2267,6 @@ impl<L,S,M> Root<L,S,M>
                             break;
                         }
                     }
-
 
                     if env.abort.load(Ordering::Acquire) ||
                         env.stop.load(Ordering::Acquire) ||
@@ -2407,6 +2420,19 @@ impl<L,S,M> Root<L,S,M>
                     }
 
                     self.send_message(env, format!("pv_depth = {}, worker_depth = {}", pv_depth, worker_depth).as_str())?;
+                },
+                Ok(RootEvaluationResult::LazyAbort(s, mvs, zh, depth, seldepth, thread_index)) => {
+                    if let Err(e) = env.info_sender.flush() {
+                        let _ = env.on_error_handler.lock().map(|h| h.call(&e));
+                    }
+
+                    if thread_index == 0 {
+                        let r = EvaluationResult::Exact(s, mvs, zh, seldepth);
+
+                        self.termination(env, busy_threads, move_orderers)?;
+
+                        return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(r));
+                    }
                 },
                 Ok(RootEvaluationResult::NodeLimits) => {
                     self.termination(env, busy_threads, move_orderers)?;
