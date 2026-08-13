@@ -99,8 +99,8 @@ impl FromOption for String {
 pub struct Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
     evalutor: Option<Arc<Evalutor<M>>>,
@@ -123,8 +123,8 @@ pub struct Tiger<M>
 impl<M> fmt::Debug for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tiger")
@@ -133,8 +133,8 @@ impl<M> fmt::Debug for Tiger<M>
 impl<M> Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
         Tiger {
@@ -219,8 +219,8 @@ impl<M> Tiger<M>
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
 
-                let self_partial_output = Arc::new(evalutor.prepare_evalute(teban,&state,&mc)?);
-                let opponent_partial_output = Arc::new(evalutor.prepare_evalute(teban.opposite(),&state,&mc)?);
+                let self_partial_output = evalutor.prepare_evalute(teban,&state,&mc)?;
+                let opponent_partial_output = evalutor.prepare_evalute(teban.opposite(),&state,&mc)?;
 
                 let mut gs = GameState {
                     teban: teban,
@@ -235,8 +235,8 @@ impl<M> Tiger<M>
                     gives_check_us:self.gives_check_us,
                     gives_check_them:self.gives_check_them,
                     prev_kind: KomaKind::Blank,
-                    self_partial_output:self_partial_output,
-                    opponent_partial_output:opponent_partial_output,
+                    self_partial_output:&self_partial_output,
+                    opponent_partial_output:&opponent_partial_output,
                     thread_index:0,
                     pv:&VecDeque::new(),
                     move_history:&mut Vec::new(),
@@ -325,8 +325,8 @@ impl<M> Tiger<M>
 impl<M> USIPlayer<ApplicationError> for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     const ID: &'static str = "tiger";
     const AUTHOR: &'static str = "j6k1";

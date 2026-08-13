@@ -165,7 +165,7 @@ impl<U,P,D,I,PI,const N:usize> UpdateWeight<U> for AccumulatorLayer<U,P,D,I,PI,N
 }
 
 impl<U,P,D,I,PI,const N:usize> PartialForward for AccumulatorLayer<U,P,D,I,PI,N>
-    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffOutput=PI> +
+    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffInput=PI> +
             BackwardAll<U,LossInput=PI> + PreTrain<U,PreOutput=PI> + Loss<U>,
           D: Device<U> + DeviceAccumulator<U,PI,N>,
           U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -173,22 +173,21 @@ impl<U,P,D,I,PI,const N:usize> PartialForward for AccumulatorLayer<U,P,D,I,PI,N>
           PI: Debug + BatchDataType + 'static,
           <PI as BatchDataType>::Type: Debug + BatchSize + 'static,
           Self: ForwardAll<Input=I,Output=PI> + PreTrain<U> {
+    type PartialInput =  <P as PartialForward>::PartialInput;
     type PartialOutput = <P as PartialForward>::PartialOutput;
-    type PartialOutputByDiff = <P as PartialForward>::PartialOutputByDiff;
     type DiffInput = <P as PartialForward>::DiffInput;
-    type DiffOutput = PI;
 
     fn partial_forward(&self, input: Self::Input) -> Result<Self::PartialOutput,EvaluateError> {
         self.parent.partial_forward(input)
     }
 
-    fn partial_forward_by_diff(&self, input: Self::DiffInput) -> Result<Self::PartialOutputByDiff,EvaluateError> {
-        self.parent.partial_forward_by_diff(input)
+    fn partial_forward_by_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::PartialOutput,EvaluateError> {
+        self.parent.partial_forward_by_diff(input,partial_input)
     }
 }
 
 impl<U,P,D,I,PI,const N:usize> ForwardDiff for AccumulatorLayer<U,P,D,I,PI,N>
-    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffOutput=PI> + ForwardDiff +
+    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffInput=PI> + ForwardDiff +
             BackwardAll<U,LossInput=PI> + PreTrain<U,PreOutput=PI> + Loss<U>,
           D: Device<U> + DeviceAccumulator<U,PI,N>,
           U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -196,14 +195,14 @@ impl<U,P,D,I,PI,const N:usize> ForwardDiff for AccumulatorLayer<U,P,D,I,PI,N>
           PI: Debug + BatchDataType + 'static,
           <PI as BatchDataType>::Type: Debug + BatchSize + 'static,
           Self: ForwardAll<Input=I,Output=PI> + PreTrain<U> {
-    fn forward_diff(&self, input: Self::DiffInput) -> Result<Self::DiffOutput,EvaluateError> {
-        let input = self.parent.forward_diff(input)?;
+    fn forward_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::Output,EvaluateError> {
+        let input = self.parent.forward_diff(input,partial_input)?;
         self.forward(&input)
     }
 }
 
 impl<U,P,D,I,PI,const N:usize> ContinueForward for AccumulatorLayer<U,P,D,I,PI,N>
-    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffOutput=PI> + ContinueForward<ConinueOutput=PI> +
+    where P: ForwardAll<Input=I,Output=PI> + PartialForward<DiffInput=PI> + ContinueForward +
             BackwardAll<U,LossInput=PI> + PreTrain<U,PreOutput=PI> + Loss<U>,
           D: Device<U> + DeviceAccumulator<U,PI,N>,
           U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -211,8 +210,7 @@ impl<U,P,D,I,PI,const N:usize> ContinueForward for AccumulatorLayer<U,P,D,I,PI,N
           PI: Debug + BatchDataType + 'static,
           <PI as BatchDataType>::Type: Debug + BatchSize + 'static,
           Self: ForwardAll<Input=I,Output=PI> + PreTrain<U> {
-    type ConinueOutput = Self::Output;
-    fn continue_forward(&self, input: &Self::PartialOutput) -> Result<Self::ConinueOutput,EvaluateError> {
+    fn continue_forward(&self, input: &Self::PartialInput) -> Result<Self::Output,EvaluateError> {
         let input = self.parent.continue_forward(input)?;
         self.forward(&input)
     }

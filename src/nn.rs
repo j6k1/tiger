@@ -147,8 +147,8 @@ pub struct EvalutorCreator {
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                                PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                                ContinueForward<ConinueOutput=Arr<f32,1>> +
+                                PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                                ContinueForward +
                                 PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
@@ -180,7 +180,7 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<f32,SignFloat<f32>,256>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
+        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<SignFloat<f32>>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
             DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device,
@@ -228,8 +228,8 @@ impl EvalutorCreator {
 pub struct Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32, 1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
           <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
@@ -237,8 +237,8 @@ pub struct Evalutor<M>
 impl<M> Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                      PreTrain<f32> + Send + Sync +
-                     PartialForward<DiffInput=HalfKPDiff<f32,SignFloat<f32>,256>,PartialOutput=Arr<f32,{256*2}>,PartialOutputByDiff=Arr<f32,{256*2}>> +
-                     ContinueForward<ConinueOutput=Arr<f32,1>> + 'static,
+                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                     ContinueForward + 'static,
                   <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
@@ -250,15 +250,14 @@ impl<M> Evalutor<M>
 
     pub fn prepare_evalute_by_diff<'a>(&self, active_player: Teban, t:Teban,
                                               state:&State, mc:&MochigomaCollections,
-                                              m:LegalMove, partial_output:Arc<Arr<f32,{256*2}>>)
+                                              m:LegalMove, partial_input: &Arr<f32,{256*2}>)
         -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKPDiff::new(
             InputCreator::make_diff_input(active_player, t, state, mc, m)?,
-            InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?,
-            partial_output
+            InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?
         );
 
-        let r = self.nn.partial_forward_by_diff(input)?;
+        let r = self.nn.partial_forward_by_diff(input,partial_input)?;
 
         Ok(r)
     }

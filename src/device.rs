@@ -40,7 +40,7 @@ pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
 pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: DeviceFeatureTransform<U,T,B,NI,NO>
     where U: UnitValue<U>,
           [(); NO*2]: {
-    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: &I) -> Result<Self::Output, EvaluateError>;
+    fn forward_diff_feature_transform(&self, bias: &B, units: &T, input: &I, partial_input: &Self::Output) -> Result<Self::Output, EvaluateError>;
 }
 #[cfg(target_feature = "avx512f")]
 pub const LANES_F32: usize = 16;
@@ -629,16 +629,18 @@ impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for 
         Ok(args.output)
     }
 }
-impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<f32,SignFloat<f32>,NO>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<SignFloat<f32>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
     where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           [(); NO*2]: {
-    fn forward_diff_feature_transform(&self, _: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>, input: &HalfKPDiff<f32,SignFloat<f32>,NO>)
+    fn forward_diff_feature_transform(&self, _: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>,
+                                      input: &HalfKPDiff<SignFloat<f32>>, partial_input:&Arr<f32,{NO*2}>)
         -> Result<Self::Output, EvaluateError> {
         let mut result = [0.0;NO*2];
 
         let (rs,ro) = result.split_at_mut(NO);
+        let (pos,poo) = partial_input.split_at(NO);
 
-        for ((indexes,po),r) in input.iter().zip([rs,ro]) {
+        for ((indexes,r),po) in input.iter().zip([rs,ro]).zip([pos,poo]) {
             let mut oi = 0;
 
             assert_eq!(po.len(),NO,"po.len() != NO, po.len() = {}",po.len());

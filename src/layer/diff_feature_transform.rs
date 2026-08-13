@@ -143,7 +143,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeature
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> +
+             PartialForward<DiffInput=DI> +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
           C: 'static,
@@ -154,27 +154,24 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
           OP: Optimizer<U,D> + 'static,
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-          Self: ForwardAll<Input=I>,
+          Self: ForwardAll<Input=<P as ForwardAll>::Output>,
           Self: PreTrain<U>,
           [(); NO * 2]: {
+    type PartialInput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
     type PartialOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type PartialOutputByDiff = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
     type DiffInput = DI;
-    type DiffOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
 
     fn partial_forward(&self, input: Self::Input) -> Result<Self::PartialOutput, EvaluateError> {
-        let input = self.parent.partial_forward(input)?;
-
         Ok(self.forward(&input)?)
     }
 
-    fn partial_forward_by_diff(&self, input: Self::DiffInput) -> Result<Self::PartialOutputByDiff, EvaluateError> {
-        Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input)?)
+    fn partial_forward_by_diff(&self, input: Self::DiffInput, partial_inpput: &Self::PartialInput) -> Result<Self::PartialOutput, EvaluateError> {
+        Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_inpput)?)
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> + ForwardDiff +
+             PartialForward<DiffInput=DI> +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
           C: 'static,
@@ -185,15 +182,15 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
           OP: Optimizer<U,D> + 'static,
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-          Self: ForwardAll<Input=I> + PreTrain<U>,
+          Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output> + PreTrain<U>,
           [(); NO * 2]: {
-    fn forward_diff(&self, input: Self::DiffInput) -> Result<Self::DiffOutput, EvaluateError> {
-        Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input)?)
+    fn forward_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
+        Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_input)?)
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> + ForwardDiff +
+             PartialForward<DiffInput=DI> +
              BackwardAll<U,LossInput=()> +
              PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
       C: 'static,
@@ -204,13 +201,12 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
       OP: Optimizer<U,D>,
       for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
                  DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-      Self: PartialForward<PartialOutput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
+      Self: PartialForward<PartialInput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,PartialOutput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
       <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Clone,
-      Self: ForwardAll<Input=I>,
+      Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
       Self: PreTrain<U>,
       [(); NO * 2]: {
-    type ConinueOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    fn continue_forward(&self, input: &Self::PartialOutput) -> Result<Self::ConinueOutput, EvaluateError> {
+    fn continue_forward(&self, input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
         Ok(input.clone())
     }
 }
@@ -396,7 +392,7 @@ impl<const NI:usize,const NO:usize> DiffFeatureTransformLayerBuilder<NI,NO> {
     /// * [`LayerInstantiationError`]
     pub fn build<U,C,B,P,D,I,DI,OP,OB>(&self,parent: P, device:&D, ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
         -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>,LayerInstantiationError>
-        where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffOutput=DI,PartialOutput=HalfKP<NI>> +
+        where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffInput=DI> +
                  BackwardAll<U,LossInput=()> +
                  PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
               U: Clone + Copy + UnitValue<U>,
