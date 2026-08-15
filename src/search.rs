@@ -609,6 +609,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             if picker.len() == 0 {
                 env.transposition_table.update(&zh,0,TTScore::NEGINFINITE(0),Bound::Exact,None);
+
                 return Ok(Score::NEGINFINITE(current_depth as i32));
             }
 
@@ -683,13 +684,17 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 if score.is_infinite() {
                     history.remove(&(teban,mk,sk));
 
-                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+                    }
 
                     return Ok(score);
                 } else if score >= beta {
                     history.remove(&(teban,mk,sk));
 
-                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
+                    }
 
                     return Ok(score);
                 }
@@ -714,9 +719,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            if alpha > start_alpha {
+            if alpha > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
-            } else {
+            } else if !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
             }
 
@@ -822,13 +827,17 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 if score.is_infinite() {
                     history.remove(&(teban,mk,sk));
 
-                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::Exact, Some(m));
+                    }
 
                     return Ok(score);
                 } else if score >= beta {
                     history.remove(&(teban,mk,sk));
 
-                    env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&zh, 0, score.normalize_score(current_depth as i32), Bound::LowerBound, Some(m));
+                    }
 
                     return Ok(score);
                 }
@@ -852,9 +861,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
 
             let bs = bestscore.normalize_score(current_depth as i32);
 
-            if bestscore > start_alpha {
+            if bestscore > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&zh, 0, bs, Bound::Exact, best_move);
-            } else {
+            } else if !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&zh, 0, bs, Bound::UpperBound, best_move);
             }
 
@@ -1400,7 +1409,9 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                 if let ThreatMateSearchResult::Checkmate(ply) = s {
                     history.remove(&(teban, mk, sk));
 
-                    env.transposition_table.update(&zh, depth as i8, TTScore::INFINITE(ply + (current_depth as i32)), Bound::Exact, Some(m));
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&zh, depth as i8, TTScore::INFINITE(ply + (current_depth as i32)), Bound::Exact, Some(m));
+                    }
 
                     threatmate_cache.insert((teban,mk,sk),(ThreatMateSearchResultRelative::Checkmate(ply + current_depth as i32),depth as u32));
                     return Ok(ThreatMateSearchResult::Checkmate(ply));
@@ -1504,7 +1515,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
             history.remove(&(teban,mk,sk));
 
             match best_score {
-                ThreatMateSearchResult::Checkmated(d) => {
+                ThreatMateSearchResult::Checkmated(d) if !env.lazy_abort.load(Ordering::Acquire) => {
                     env.transposition_table.update(&zh,depth as i8,TTScore::NEGINFINITE(d - current_depth as i32),Bound::Exact,None);
                 },
                 _ => ()
@@ -2896,15 +2907,17 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                             best_moves = mvs;
 
                             if scoreval >= beta || scoreval.is_infinite() {
-                                match scoreval {
-                                    Score::INFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                    },
-                                    Score::NEGINFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                    },
-                                    _ => {
-                                        env.transposition_table.update(&gs.zh, gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                if !env.lazy_abort.load(Ordering::Acquire) {
+                                    match scoreval {
+                                        Score::INFINITE(_) => {
+                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                        },
+                                        Score::NEGINFINITE(_) => {
+                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                        },
+                                        _ => {
+                                            env.transposition_table.update(&gs.zh, gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                        }
                                     }
                                 }
 
@@ -2983,9 +2996,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-            if scoreval > start_alpha {
+            if scoreval > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::Exact, best_moves.front().map(|m| m.clone()));
-            } else {
+            } else if !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
             }
 
@@ -3009,7 +3022,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                                        gs.rng)?;
 
                 if let ThreatMateSearchResult::Checkmate(ply) = checkmate {
-                    env.transposition_table.update(&gs.zh, gs.depth as i8, TTScore::INFINITE(ply + (gs.current_depth as i32)), Bound::Exact, None);
+                    if !env.lazy_abort.load(Ordering::Acquire) {
+                        env.transposition_table.update(&gs.zh, gs.depth as i8, TTScore::INFINITE(ply + (gs.current_depth as i32)), Bound::Exact, None);
+                    }
 
                     let mut mvs = VecDeque::new();
 
@@ -3323,15 +3338,17 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                                     best_moves = mvs;
 
                                     if scoreval >= beta || scoreval.is_infinite() {
-                                        match scoreval {
-                                            Score::INFINITE(_) => {
-                                                env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                            },
-                                            Score::NEGINFINITE(_) => {
-                                                env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                            },
-                                            _ => {
-                                                env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::LowerBound, Some(m));
+                                        if !env.lazy_abort.load(Ordering::Acquire) {
+                                            match scoreval {
+                                                Score::INFINITE(_) => {
+                                                    env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                                },
+                                                Score::NEGINFINITE(_) => {
+                                                    env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                                },
+                                                _ => {
+                                                    env.transposition_table.update(&gs.zh, depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::LowerBound, Some(m));
+                                                }
                                             }
                                         }
 
@@ -3413,9 +3430,9 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
             let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-            if scoreval > start_alpha {
+            if scoreval > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::Exact, best_moves.front().map(|m| m.clone()));
-            } else {
+            } else if !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh, gs.depth as i8, bs, Bound::UpperBound, best_moves.front().map(|m| m.clone()));
             }
 
@@ -3596,15 +3613,17 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                             }
 
                             if scoreval >= beta || scoreval.is_infinite() {
-                                match scoreval {
-                                    Score::INFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                    },
-                                    Score::NEGINFINITE(_) => {
-                                        env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                    },
-                                    _ => {
-                                        env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                if !env.lazy_abort.load(Ordering::Acquire) {
+                                    match scoreval {
+                                        Score::INFINITE(_) => {
+                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                        },
+                                        Score::NEGINFINITE(_) => {
+                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                        },
+                                        _ => {
+                                            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                        }
                                     }
                                 }
 
@@ -3673,9 +3692,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
             let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-            if gs.search_offset == 0 && scoreval > start_alpha {
+            if gs.search_offset == 0 && scoreval > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::Exact,best_moves.front().map(|m| m.clone()));
-            } else if gs.search_offset == 0 {
+            } else if gs.search_offset == 0 && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
             }
 
@@ -3759,15 +3778,17 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                                 }
 
                                 if scoreval >= beta || scoreval.is_infinite() {
-                                    match scoreval {
-                                        Score::INFINITE(_) => {
-                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                        },
-                                        Score::NEGINFINITE(_) => {
-                                            env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
-                                        },
-                                        _ => {
-                                            env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                    if !env.lazy_abort.load(Ordering::Acquire) {
+                                        match scoreval {
+                                            Score::INFINITE(_) => {
+                                                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                            },
+                                            Score::NEGINFINITE(_) => {
+                                                env.transposition_table.update(&gs.zh, gs.depth as i8, scoreval.normalize_score(gs.current_depth as i32), Bound::Exact, Some(m));
+                                            },
+                                            _ => {
+                                                env.transposition_table.update(&gs.zh,gs.depth as i8,scoreval.normalize_score(gs.current_depth as i32),Bound::LowerBound,Some(m));
+                                            }
                                         }
                                     }
 
@@ -3840,9 +3861,9 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
             let bs = scoreval.normalize_score(gs.current_depth as i32);
 
-            if gs.search_offset == 0 && scoreval > start_alpha {
+            if gs.search_offset == 0 && scoreval > start_alpha && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::Exact,best_moves.front().map(|m| m.clone()));
-            } else if gs.search_offset == 0 {
+            } else if gs.search_offset == 0 && !env.lazy_abort.load(Ordering::Acquire) {
                 env.transposition_table.update(&gs.zh,gs.depth as i8,bs,Bound::UpperBound,best_moves.front().map(|m| m.clone()));
             }
 
