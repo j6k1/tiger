@@ -2772,6 +2772,24 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
         }
 
         if let Some(prev_move) = gs.m.clone() {
+            match gs.threatmate_cache.get(&(gs.teban,mk,sk)) {
+                Some((ThreatMateSearchResultRelative::Checkmate(d),_)) => {
+                    let mut mvs = VecDeque::new();
+
+                    mvs.push_front(prev_move);
+
+                    return Ok(EvaluationResult::Exact(Score::INFINITE(d - (gs.current_depth as i32)), mvs, gs.zh.clone(), gs.current_depth));
+                },
+                Some((ThreatMateSearchResultRelative::Checkmated(d),_)) => {
+                    let mut mvs = VecDeque::new();
+
+                    mvs.push_front(prev_move);
+
+                    return Ok(EvaluationResult::Exact(Score::NEGINFINITE(d + (gs.current_depth as i32)), mvs, gs.zh.clone(), gs.current_depth));
+                },
+                _ => {}
+            }
+
             let r = env.transposition_table.get(&gs.zh).map(|tte| tte.deref().clone());
 
             if let Some(TTPartialEntry {
