@@ -2923,27 +2923,31 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        if !mv.is_nari() {
-                                            env.move_orderer.update_killer(gs.current_depth, m)?;
+                                        if !env.lazy_abort.load(Ordering::Acquire) {
+                                            if !mv.is_nari() {
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
 
-                                            let _ = prev_move.map(|prev_move| {
-                                                env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
-                                            }).unwrap_or(Ok(()))?;
-                                        }
+                                                let _ = prev_move.map(|prev_move| {
+                                                    env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                                }).unwrap_or(Ok(()))?;
+                                            }
 
-                                        if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            if !gs.already_reduced_lmr {
+                                                env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
+                                            }
                                         }
                                     },
                                     LegalMove::Put(_) => {
-                                        env.move_orderer.update_killer(gs.current_depth, m)?;
+                                        if !env.lazy_abort.load(Ordering::Acquire) {
+                                            env.move_orderer.update_killer(gs.current_depth, m)?;
 
-                                        let _ = prev_move.map(|prev_move| {
-                                            env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
-                                        }).unwrap_or(Ok(()))?;
+                                            let _ = prev_move.map(|prev_move| {
+                                                env.move_orderer.update_counter_move(m,gs.teban,prev_move,gs.prev_kind)
+                                            }).unwrap_or(Ok(()))?;
 
-                                        if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            if !gs.already_reduced_lmr {
+                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            }
                                         }
                                     },
                                     _ => ()
@@ -2988,7 +2992,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 }
             }
 
-            if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
+            if quiet_alpha == start_alpha && !gs.already_reduced_lmr && !env.lazy_abort.load(Ordering::Acquire) {
                 for m in quiet_moves {
                     env.move_orderer.update_degrade_history(gs.teban,gs.pos.get_state(),m,gs.depth)?;
                 }
@@ -3354,27 +3358,31 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
 
                                         match m {
                                             LegalMove::To(mv) if mv.obtained().is_none() => {
-                                                if !mv.is_nari() {
+                                                if !env.lazy_abort.load(Ordering::Acquire) {
+                                                    if !mv.is_nari() {
+                                                        env.move_orderer.update_killer(gs.current_depth, m)?;
+
+                                                        let _ = prev_move.map(|prev_move| {
+                                                            env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
+                                                        }).unwrap_or(Ok(()))?;
+                                                    }
+
+                                                    if !lmr_reduced {
+                                                        env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
+                                                    }
+                                                }
+                                            },
+                                            LegalMove::Put(_) => {
+                                                if !env.lazy_abort.load(Ordering::Acquire) {
                                                     env.move_orderer.update_killer(gs.current_depth, m)?;
 
                                                     let _ = prev_move.map(|prev_move| {
                                                         env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
                                                     }).unwrap_or(Ok(()))?;
-                                                }
 
-                                                if !lmr_reduced {
-                                                    env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
-                                                }
-                                            },
-                                            LegalMove::Put(_) => {
-                                                env.move_orderer.update_killer(gs.current_depth, m)?;
-
-                                                let _ = prev_move.map(|prev_move| {
-                                                    env.move_orderer.update_counter_move(m, gs.teban, prev_move, gs.prev_kind)
-                                                }).unwrap_or(Ok(()))?;
-
-                                                if !lmr_reduced {
-                                                    env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
+                                                    if !lmr_reduced {
+                                                        env.move_orderer.update_improve_history(gs.teban, gs.pos.get_state(), m, gs.depth, gs.current_depth, gs.move_history)?;
+                                                    }
                                                 }
                                             },
                                             _ => ()
@@ -3422,7 +3430,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
                 }
             }
 
-            if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
+            if quiet_alpha == start_alpha && !gs.already_reduced_lmr && !env.lazy_abort.load(Ordering::Acquire) {
                 for m in quiet_moves {
                     env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
@@ -3629,18 +3637,23 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                                 match m {
                                     LegalMove::To(mv) if mv.obtained().is_none() => {
-                                        if !mv.is_nari() {
-                                            env.move_orderer.update_killer(gs.current_depth, m)?;
-                                        }
+                                        if !env.lazy_abort.load(Ordering::Acquire) {
+                                            if !mv.is_nari() {
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
+                                            }
 
-                                        if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            if !gs.already_reduced_lmr {
+                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            }
                                         }
                                     },
                                     LegalMove::Put(_) => {
-                                        env.move_orderer.update_killer(gs.current_depth, m)?;
-                                        if !gs.already_reduced_lmr {
-                                            env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                        if !env.lazy_abort.load(Ordering::Acquire) {
+                                            env.move_orderer.update_killer(gs.current_depth, m)?;
+
+                                            if !gs.already_reduced_lmr {
+                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                            }
                                         }
                                     },
                                     _ => ()
@@ -3684,7 +3697,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                 }
             }
 
-            if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
+            if quiet_alpha == start_alpha && !gs.already_reduced_lmr && !env.lazy_abort.load(Ordering::Acquire) {
                 for m in quiet_moves {
                     env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
@@ -3794,19 +3807,23 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
 
                                     match m {
                                         LegalMove::To(mv) if mv.obtained().is_none() => {
-                                            if !mv.is_nari() {
-                                                env.move_orderer.update_killer(gs.current_depth, m)?;
-                                            }
+                                            if !env.lazy_abort.load(Ordering::Acquire) {
+                                                if !mv.is_nari() {
+                                                    env.move_orderer.update_killer(gs.current_depth, m)?;
+                                                }
 
-                                            if !lmr_reduced {
-                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                if !lmr_reduced {
+                                                    env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                }
                                             }
                                         },
                                         LegalMove::Put(_) => {
-                                            env.move_orderer.update_killer(gs.current_depth, m)?;
+                                            if !env.lazy_abort.load(Ordering::Acquire) {
+                                                env.move_orderer.update_killer(gs.current_depth, m)?;
 
-                                            if !lmr_reduced {
-                                                env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                if !lmr_reduced {
+                                                    env.move_orderer.update_improve_history(gs.teban,gs.pos.get_state(),m,gs.depth,gs.current_depth,gs.move_history)?;
+                                                }
                                             }
                                         },
                                         _ => ()
@@ -3853,7 +3870,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
                 }
             }
 
-            if quiet_alpha == start_alpha && !gs.already_reduced_lmr {
+            if quiet_alpha == start_alpha && !gs.already_reduced_lmr && !env.lazy_abort.load(Ordering::Acquire) {
                 for m in quiet_moves {
                     env.move_orderer.update_degrade_history(gs.teban, gs.pos.get_state(), m, gs.depth)?;
                 }
