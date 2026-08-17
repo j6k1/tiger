@@ -35,6 +35,7 @@ use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score, 
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
 pub const MAX_THREADS:u32 = 2;
+pub const QSEARCH_MAX_DEPTH:u32 = 2000;
 pub const THREATMATE_DEPTH:u32 = 7;
 
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
