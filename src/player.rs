@@ -26,7 +26,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH, UNDO_BUFFER_SIZE, QSEARCH_MAX_DEPTH};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH, UNDO_BUFFER_SIZE, QSEARCH_MAX_LIMIT_DEPTH, QSEARCH_MAX_DEPTH};
 use crate::transposition_table::{TT, ZobristHash, Score, TTScore};
 
 pub trait FromOption {
@@ -145,7 +145,7 @@ impl<M> Tiger<M>
             hasher:Arc::new(KyokumenHash::new()),
             transposition_table:Arc::new(TT::new()),
             base_depth:BASE_DEPTH,
-            qsearch_max_depth:None,
+            qsearch_max_depth:Some(QSEARCH_MAX_DEPTH),
             threatmate_depth:THREATMATE_DEPTH,
             max_nodes:None,
             max_threads:MAX_THREADS,
@@ -375,7 +375,7 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
         }).filter(|f| !f.is_empty()).collect::<Vec<String>>();
 
         options.insert(String::from("BaseDepth"),UsiOptType::Spin(1,100,Some(BASE_DEPTH as i64)));
-        options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0,QSEARCH_MAX_DEPTH as i64,Some(64)));
+        options.insert(String::from("QSearchMaxDepth"),UsiOptType::Spin(0, QSEARCH_MAX_LIMIT_DEPTH as i64, Some(64)));
         options.insert(String::from("ThreatmateDepth"),UsiOptType::Spin(0,100,Some(THREATMATE_DEPTH as i64)));
         options.insert(String::from("MaxNodes"),UsiOptType::Spin(0,i64::MAX,Some(0)));
         options.insert(String::from("Threads"),UsiOptType::Spin(1,1024,Some(MAX_THREADS as i64)));

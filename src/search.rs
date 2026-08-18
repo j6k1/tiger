@@ -35,7 +35,8 @@ use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score, 
 pub const TURN_LIMIT:u32 = 1000;
 pub const BASE_DEPTH:u32 = 20;
 pub const MAX_THREADS:u32 = 2;
-pub const QSEARCH_MAX_DEPTH:u32 = 2000;
+pub const QSEARCH_MAX_LIMIT_DEPTH:u32 = 2000;
+pub const QSEARCH_MAX_DEPTH:u32 = 64;
 pub const THREATMATE_DEPTH:u32 = 7;
 
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd)]
@@ -760,7 +761,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
                         if !prev_move.map(|pm| {
                             pm.obtained().is_some() && m.dst() == pm.dst()
                         }).unwrap_or(false) && !Rule::is_oute_move(pos.get_state(),teban,m) {
-                            if calc_see(teban,pos.get_state(),m) < -CAPTURED_SCORE_MAP[o as usize] * 4 / 3 {
+                            if calc_see(teban,pos.get_state(),m) < -CAPTURED_SCORE_MAP[o as usize] * 12 / 10 {
                                 continue;
                             }
                         }
