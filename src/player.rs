@@ -26,7 +26,7 @@ use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
-use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH, UNDO_BUFFER_SIZE, QSEARCH_MAX_LIMIT_DEPTH, QSEARCH_MAX_DEPTH};
+use crate::search::{BASE_DEPTH, Environment, EvaluationResult, GameState, MAX_THREADS, Root, TURN_LIMIT, TIMELIMIT_MARGIN, LazyEval, SendInfo, THREATMATE_DEPTH, UNDO_BUFFER_SIZE, QSEARCH_MAX_LIMIT_DEPTH, QSEARCH_MAX_DEPTH, ThreatMateSearchResultRelative};
 use crate::transposition_table::{TT, ZobristHash, Score, TTScore};
 
 pub trait FromOption {
@@ -118,7 +118,8 @@ pub struct Tiger<M>
     gives_check_us:bool,
     gives_check_them:bool,
     model_name:String,
-    move_orderers:Vec<MoveOrderer<UnusedQuietSee>>
+    move_orderers:Vec<MoveOrderer<UnusedQuietSee>>,
+    threatmate_caches:Vec<HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>>,
 }
 impl<M> fmt::Debug for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
@@ -155,6 +156,7 @@ impl<M> Tiger<M>
             gives_check_them:false,
             model_name: String::from("nn.bin"),
             move_orderers:Vec::new(),
+            threatmate_caches:Vec::new(),
         }
     }
 
@@ -257,7 +259,12 @@ impl<M> Tiger<M>
                     .num_threads(self.max_threads as usize)
                     .stack_size(1024 * 1024 * 200).build()?);
 
-                let result = strategy.search(&mut env,&mut gs, &mut event_dispatcher, &evalutor, &mut self.move_orderers);
+                let result = strategy.search(&mut env,
+                                                                            &mut gs,
+                                                                            &mut event_dispatcher,
+                                                                            &evalutor,
+                                                                            &mut self.move_orderers,
+                                                                            &mut self.threatmate_caches);
 
                 let bestmove = match result {
                     Err(ref e) => {
@@ -398,6 +405,10 @@ impl<M> USIPlayer<ApplicationError> for Tiger<M>
 
         if self.move_orderers.len() == 0 {
             self.move_orderers = (0..(self.max_threads)).map(|_| MoveOrderer::new(self.base_depth as usize + 2)).collect();
+        }
+
+        if self.threatmate_caches.len() == 0 {
+            self.threatmate_caches = (0..(self.max_threads)).map(|_| HashMap::new()).collect();
         }
 
         Ok(())

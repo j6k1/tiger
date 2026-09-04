@@ -161,7 +161,7 @@ pub enum RootEvaluationResult {
     Timeout,
     Stop,
     Repetition,
-    Quit(MoveOrderer<UnusedQuietSee>,usize)
+    Quit(MoveOrderer<UnusedQuietSee>,HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>,usize)
 }
 impl<L,S> Environment<L,S> where L: Logger, S: InfoSender {
     pub fn new(event_queue:Arc<Mutex<UserEventQueue>>,
@@ -1952,7 +1952,8 @@ impl<L,S,M> Root<L,S,M>
                            env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                            mvs: Arc<Vec<LegalMove>>,
                            evalutor:&Arc<Evalutor<M>>,
-                           move_orderer: MoveOrderer<UnusedQuietSee>) {
+                           move_orderer: MoveOrderer<UnusedQuietSee>,
+                           threatmate_cache: HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>) {
         let sender = self.sender.clone();
         let teban = gs.teban;
         let mut env = env.clone();
@@ -1980,6 +1981,8 @@ impl<L,S,M> Root<L,S,M>
 
         if thread_index == 0 {
             self.thread_pool.spawn(move || {
+                let mut threatmate_cache = threatmate_cache;
+
                 env.move_orderer.startup();
 
                 let mut pv = VecDeque::new();
@@ -1989,8 +1992,6 @@ impl<L,S,M> Root<L,S,M>
                 let search_offset = 0;
 
                 let mut prev_score = Score::default();
-
-                let mut threatmate_cache = HashMap::new();
 
                 'outer: for depth in 1..=base_depth {
                     if let Score::Value(ps) = prev_score {
@@ -2176,7 +2177,7 @@ impl<L,S,M> Root<L,S,M>
                     shared_depth.fetch_add(1, Ordering::Release);
                 }
 
-                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,thread_index)));
+                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,threatmate_cache,thread_index)));
 
                 env.abort.store(true,Ordering::Release);
             });
@@ -2195,7 +2196,7 @@ impl<L,S,M> Root<L,S,M>
                 let mut rng = rand::thread_rng();
                 let mut rng = Prng::new(rng.gen());
 
-                let mut threatmate_cache = HashMap::new();
+                let mut threatmate_cache = threatmate_cache;
 
                 let mut depth = shared_depth.load(Ordering::Acquire) as u32;
 
@@ -2292,12 +2293,15 @@ impl<L,S,M> Root<L,S,M>
                     depth = (depth + 1).max(shared_depth.load(Ordering::Acquire) as u32);
                 }
 
-                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,thread_index)));
+                let _ = sender.send(Ok(RootEvaluationResult::Quit(env.move_orderer,threatmate_cache,thread_index)));
             });
         }
     }
 
-    fn termination(&self,env:&mut Environment<L,S>,mut busy_threads:u32,move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>) -> Result<(),ApplicationError> {
+    fn termination(&self,env:&mut Environment<L,S>,
+                   mut busy_threads:u32,
+                   move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>,
+                   threatmate_caches: &mut Vec<HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>>) -> Result<(),ApplicationError> {
         env.abort.store(true,Ordering::Release);
 
         let mut last_error = None;
@@ -2308,9 +2312,10 @@ impl<L,S,M> Root<L,S,M>
                     let _ = env.on_error_handler.lock().map(|h| h.call(&e));
                     last_error = Some(e);
                 },
-                Ok(RootEvaluationResult::Quit(move_orderer,thread_index)) => {
+                Ok(RootEvaluationResult::Quit(move_orderer,threatmate_cache,thread_index)) => {
                     busy_threads -= 1;
                     move_orderers[thread_index] = move_orderer;
+                    threatmate_caches[thread_index] = threatmate_cache;
                 },
                 _ => ()
             }
@@ -2342,7 +2347,9 @@ impl<L,S,M> Root<L,S,M>
     }
     pub fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      _:&mut UserEventDispatcher<'b,Root<L,S,M>,ApplicationError,L>,
-                     evalutor: &Arc<Evalutor<M>>,move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>) -> Result<EvaluationResult,ApplicationError> {
+                     evalutor: &Arc<Evalutor<M>>,
+                     move_orderers: &mut Vec<MoveOrderer<UnusedQuietSee>>,
+                     threatmate_caches: &mut Vec<HashMap<(Teban,u64,u64),(ThreatMateSearchResultRelative,u32)>>) -> Result<EvaluationResult,ApplicationError> {
         let base_depth = gs.base_depth;
         let max_depth = base_depth as usize + 2;
         let mut pv_result = vec![None;max_depth+1];
@@ -2387,7 +2394,8 @@ impl<L,S,M> Root<L,S,M>
                               &shared_depth,
                               env,gs,mvs,
                               evalutor,
-                              move_orderers[i as usize].clone());
+                              move_orderers[i as usize].clone(),
+                              threatmate_caches[i as usize].clone());
 
         }
 
@@ -2442,41 +2450,42 @@ impl<L,S,M> Root<L,S,M>
                     if thread_index == 0 {
                         let r = EvaluationResult::Exact(s, mvs, zh, seldepth);
 
-                        self.termination(env, busy_threads, move_orderers)?;
+                        self.termination(env, busy_threads, move_orderers, threatmate_caches)?;
 
                         return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(r));
                     }
                 },
                 Ok(RootEvaluationResult::NodeLimits) => {
-                    self.termination(env, busy_threads, move_orderers)?;
+                    self.termination(env, busy_threads, move_orderers, threatmate_caches)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::NodeLimits));
                 },
                 Ok(RootEvaluationResult::Timeout) => {
-                    self.termination(env, busy_threads, move_orderers)?;
+                    self.termination(env, busy_threads, move_orderers, threatmate_caches)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Timeout));
                 },
                 Ok(RootEvaluationResult::Stop) => {
-                    self.termination(env, busy_threads, move_orderers)?;
+                    self.termination(env, busy_threads, move_orderers, threatmate_caches)?;
 
                     return Ok(self.choose_result(&mut pv_result, pv_depth as usize, &mut worker_result, worker_depth as usize).unwrap_or(EvaluationResult::Stop));
                 },
                 Ok(RootEvaluationResult::Repetition) => {
-                    self.termination(env, busy_threads, move_orderers)?;
+                    self.termination(env, busy_threads, move_orderers, threatmate_caches)?;
 
                     return Err(ApplicationError::LogicError(String::from(
                         "A Repetition was returned at the root node."
                     )));
                 },
-                Ok(RootEvaluationResult::Quit(move_orderer,thread_index)) => {
+                Ok(RootEvaluationResult::Quit(move_orderer,threatmate_cache,thread_index)) => {
                     busy_threads -= 1;
                     move_orderers[thread_index] = move_orderer;
+                    threatmate_caches[thread_index] = threatmate_cache;
                 },
                 Err(e) => {
                     let _ = env.on_error_handler.lock().map(|h| h.call(&e));
 
-                    self.termination(env, busy_threads, move_orderers)?;
+                    self.termination(env, busy_threads, move_orderers,threatmate_caches)?;
 
                     return Err(e);
                 }
