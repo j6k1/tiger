@@ -16,7 +16,7 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, PartialForward, PersistProgress, PreTrain, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, Loss, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::input::{InputLayer};
 use nncombinator::layer::input::{DiffInputLayer};
@@ -124,7 +124,7 @@ pub fn sigmoid(x:f32) -> f32 {
 }
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-                                 BatchTrain<U,D,L> + Persistence<U,P,PT> + PersistProgress<P,PT> + Step
+                                 BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P> + Step
                                  where U: UnitValue<U>,
                                        D: Device<U>,
                                        I: BatchDataType + Debug + Send + Sync,
@@ -134,7 +134,7 @@ pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
 impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
     where T: ForwardAll<Input=I,Output=O> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-             BatchTrain<U,D,L> + Persistence<U,P,PT> + PersistProgress<P,PT> + Step,
+             BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P> + Step,
              U: UnitValue<U>,
              D: Device<U>,
              I: BatchDataType + Debug + Send + Sync,
@@ -149,7 +149,7 @@ impl EvalutorCreator {
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                                 PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                                 ContinueForward +
-                                PreTrain<f32,OutStack=impl Send + Sync + 'static> + Send + Sync + 'static>, ApplicationError> {
+                                PreTrainBase + PreTrain + Loss<f32> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
@@ -227,19 +227,19 @@ impl EvalutorCreator {
 }
 pub struct Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32, 1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + Loss<f32> +
                      PartialForward<PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
 }
 impl<M> Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + Loss<f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-                  <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+                  <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
@@ -488,7 +488,7 @@ pub type LF = CrossEntropy<f32>;
 
 #[cfg(feature = "cuda")]
 pub struct Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A:CudaAllocator {
     pub nn:M,
     a:PhantomData<A>,
@@ -501,7 +501,7 @@ pub struct TrainerCreator {
 impl TrainerCreator {
     pub fn create<A: CudaAllocator + MemoryType + 'static>(
         save_dir:String, nn_path:String, config:&Config, options:&Matches, allocator:A
-    ) -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
+    ) -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
         where A: CudaAllocator,
               for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
@@ -639,7 +639,7 @@ impl TrainerCreator {
 }
 #[cfg(feature = "cuda")]
 impl<M,A> Trainer<M,A>
-    where M: BatchNeuralNetwork<f32,DeviceGpu<f32,A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
+    where M: BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
           A: CudaAllocator {
     fn sigmoid(x:f32) -> f32 {
         sigmoid(x)

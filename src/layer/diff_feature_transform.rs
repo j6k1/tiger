@@ -6,8 +6,7 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
-use nncombinator::layer::{BackwardAll, BatchDataType, BatchSize, ContinueForward, Forward, ForwardAll, ForwardDiff, Loss, OnStep, PartialForward, PreTrain, UpdateWeight};
-use nncombinator::lossfunction::LossFunction;
+use nncombinator::layer::{BackwardAll, BackwardBase, BatchDataType, BatchSize, ContinueForward, Forward, ForwardAll, ForwardDiff, OnStep, PartialForward, PreTrain, PreTrainBase, UpdateWeight};
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;
@@ -32,16 +31,16 @@ pub struct DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:u
     u:PhantomData<U>
 }
 
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where U: UnitValue<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PreTrain<U>,
+             PreTrain,
           I: Debug + Send + Sync,
           DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>> {
+          OP: Optimizer<U,DeviceCpu> {
     #[inline]
-    pub fn new<OB: OptimizerBuilder<U,DeviceCpu<U>,Output=OP>>(parent:P,device:&DeviceCpu<U>,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
-        -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>, LayerInstantiationError> {
+    pub fn new<OB: OptimizerBuilder<U,DeviceCpu,Output=OP>>(parent:P,device:&DeviceCpu,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
+        -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>, LayerInstantiationError> {
 
         let mut units = Vec::with_capacity(NI*NO);
         let mut bias = Vec::with_capacity(NO);
@@ -62,14 +61,14 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,
         })
     }
 }
-impl<T,U,P,I,DI,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
+impl<T,U,P,I,DI,OP,const NI:usize,const NO:usize> Persistence<T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where T: LinearPersistence<U>,
-          P: ForwardAll<Input=I,Output=HalfKP<NI>> + Persistence<U,T,Linear> +
-             BackwardAll<U,LossInput=()> + PreTrain<U> + Loss<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>> + Persistence<T,Linear> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
           U: UnitValue<U>,
           I: Debug + Send + Sync,
           DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>> + 'static {
+          OP: Optimizer<U,DeviceCpu> + 'static {
     fn load(&mut self, persistence: &mut T) -> Result<(),ModelLoadError> {
         self.parent.load(persistence)?;
 
@@ -105,7 +104,7 @@ impl<T,U,P,I,DI,OP,const NI:usize,const NO:usize> Persistence<U,T,Linear> for Di
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,EvaluateError>>
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
           D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> + 'static,
@@ -122,7 +121,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<
 
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U> + 'static,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
           D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> + 'static,
@@ -144,8 +143,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeature
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardAll<U,LossInput=()> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+             BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
           U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -155,7 +154,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
           Self: ForwardAll<Input=<P as ForwardAll>::Output>,
-          Self: PreTrain<U>,
+          Self: PreTrain,
           [(); NO * 2]: {
     type PartialInput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
     type PartialOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
@@ -172,8 +171,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardAll<U,LossInput=()> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+             BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
           U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -182,7 +181,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
           OP: Optimizer<U,D> + 'static,
           for<'a> D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-          Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output> + PreTrain<U>,
+          Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output> + PreTrain,
           [(); NO * 2]: {
     fn forward_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
         Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_input)?)
@@ -191,8 +190,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardAll<U,LossInput=()> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+             BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
       C: 'static,
       B: 'static,
       U: Default + Clone + Copy + Send + UnitValue<U>,
@@ -204,16 +203,15 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
       Self: PartialForward<PartialInput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,PartialOutput=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
       <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Clone,
       Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>,
-      Self: PreTrain<U>,
+      Self: PreTrain,
       [(); NO * 2]: {
     fn continue_forward(&self, input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
         Ok(input.clone())
     }
 }
-impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain<U> for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: PreTrain<U,PreOutput=HalfKP<NI>> +
-             ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardAll<U,LossInput=()> + PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U> + 'static,
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
           D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> + 'static,
@@ -223,9 +221,20 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain<U> for DiffFeatur
           OP: Optimizer<U,D> + 'static,
           [(); NO * 2]: {
     type PreOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type OutStack = Cons<<P as PreTrain<U>>::OutStack,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>;
+    type OutStack = Cons<<P as PreTrainBase>::OutStack,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>;
+}
 
-    #[inline]
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
+          C: 'static,
+          B: 'static,
+          D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> + 'static,
+          U: UnitValue<U>,
+          I: Debug + Send + Sync + 'static,
+          DI: Debug,
+          OP: Optimizer<U,D> + 'static,
+          [(); NO * 2]: {
     fn pre_train(&self, input: Self::Input) -> Result<Self::OutStack, EvaluateError> {
         let r = self.parent.pre_train(input)?;
 
@@ -235,26 +244,41 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain<U> for DiffFeatur
     }
 }
 
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<U> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
-    where P: PreTrain<U,PreOutput=HalfKP<NI>> +
-             ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardAll<U,LossInput=()> + Loss<U> + 'static,
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           U: UnitValue<U>,
-          DeviceCpu<U>: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
+          DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
+          OP: Optimizer<U,DeviceCpu> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr2<U,NI,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
-    type LossInput = <DeviceCpu<U> as DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::Output;
+    type LossInputScalar = U;
+}
+
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<()> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+    where P: PreTrainBase<PreOutput=HalfKP<NI>> +
+             ForwardAll<Input=I,Output=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + BackwardAll<()> + 'static,
+          U: UnitValue<U>,
+          DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
+          I: Debug + Send + Sync + 'static,
+          DI: Debug,
+          OP: Optimizer<U,DeviceCpu> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr2<U,NI,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
+          [(); NO * 2]: {
     type LossOutput = ();
 
     #[inline]
-    fn backward_all<L: LossFunction<U>>(&mut self, input: Self::LossInput, stack:Self::OutStack, lossf:&L)
-        -> Result<(<Self as BackwardAll<U>>::LossOutput,<Self as UpdateWeight<U>>::GradientStack), TrainingError> {
+    fn backward_all(&mut self, input: Self::LossInput, stack:Self::OutStack)
+        -> Result<((),<Self as UpdateWeight>::GradientStack), TrainingError> {
         let (s,_) = stack.pop();
 
         let loss = input;
@@ -265,22 +289,22 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<U> for DiffFeatureTr
 
         let bg = self.device.backward_feature_transform_bias_gradient(&loss)?;
 
-        let (_,s) = self.parent.backward_all((), s, lossf)?;
+        let (_,s) = self.parent.backward_all((), s)?;
 
         Ok(((),Cons(s,(g,bg))))
     }
 }
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> UpdateWeight<U> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + UpdateWeight<U> + 'static,
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> UpdateWeight for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + UpdateWeight + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>> {
-    type GradientStack = Cons<<P as UpdateWeight<U>>::GradientStack,(Arr2<U,NI,NO>,Arr<U,NO>)>;
+          OP: Optimizer<U,DeviceCpu> + 'static,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr2<U,NI,NO>>,
+          for<'a> &'a <OP as Optimizer<U,DeviceCpu>>::InternalType: From<&'a Arr<U,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
+          for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>> {
+    type GradientStack = Cons<<P as UpdateWeight>::GradientStack,(Arr2<U,NI,NO>,Arr<U,NO>)>;
 
     #[inline]
     fn update_weight(&mut self, stack: Self::GradientStack, batch_size: usize) -> Result<(), TrainingError> {
@@ -295,19 +319,6 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> UpdateWeight<U> for DiffFeatureT
         Ok(self.parent.update_weight(s,batch_size)?)
     }
 }
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> Loss<U> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
-    where P: PreTrain<U,PreOutput=HalfKP<NI>> + ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardAll<U,LossInput=()> + Loss<U> + 'static,
-          DeviceCpu<U>: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
-          U: UnitValue<U>,
-          I: Debug + Send + Sync + 'static,
-          DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>> + 'static,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr2<U,NI,NO>>,
-          for<'a> &'a <OP as Optimizer<U,DeviceCpu<U>>>::InternalType: From<&'a Arr<U,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr2<U,NI,NO>>,
-          for<'a> <OP as Optimizer<U,DeviceCpu<U>>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
-          [(); NO * 2]: {}
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OnStep for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where U: UnitValue<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> + OnStep,
@@ -331,8 +342,8 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OnStep for DiffFeatureTran
     }
 }
 pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usize,const NO:usize>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync,
           DI: Debug,
@@ -355,18 +366,18 @@ pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usi
                                                          -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,BC,D,OP,NI,NO>,LayerInstantiationError>;
 }
 
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayerInstantiation<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
-    for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardAll<U,LossInput=()> +
-             PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayerInstantiation<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+    for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync,
           DI: Debug,
-          OP: Optimizer<U,DeviceCpu<U>>,
+          OP: Optimizer<U,DeviceCpu>,
           [(); NO * 2]:  {
-    fn instantiation<B: OptimizerBuilder<U,DeviceCpu<U>,Output=OP>>(parent: P, device:&DeviceCpu<U>,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b: &B)
-                                                                    -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,OP,NI,NO>,LayerInstantiationError> {
-        DiffFeatureTransformLayer::<_,_,_,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu<U>,_,NI,NO>::new(parent, device, ui, bi, b)
+    fn instantiation<B: OptimizerBuilder<U,DeviceCpu,Output=OP>>(parent: P, device:&DeviceCpu,ui: impl FnMut() -> U, bi: impl FnMut() -> U, b: &B)
+                                                                    -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>,LayerInstantiationError> {
+        DiffFeatureTransformLayer::<_,_,_,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,_,NI,NO>::new(parent, device, ui, bi, b)
     }
 }
 
@@ -393,8 +404,8 @@ impl<const NI:usize,const NO:usize> DiffFeatureTransformLayerBuilder<NI,NO> {
     pub fn build<U,C,B,P,D,I,DI,OP,OB>(&self,parent: P, device:&D, ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
         -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>,LayerInstantiationError>
         where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffInput=DI> +
-                 BackwardAll<U,LossInput=()> +
-                 PreTrain<U,PreOutput=HalfKP<NI>> + Loss<U>,
+                 BackwardBase<LossInputScalar=U, LossInput=()> +
+                 PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
               U: Clone + Copy + UnitValue<U>,
               I: Debug + Send + Sync + BatchDataType,
               DI: Debug,

@@ -2,10 +2,10 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use libc::size_t;
 #[cfg(feature = "cuda")]
+use nncombinator::ope::UnitValue;
+#[cfg(feature = "cuda")]
 use nncombinator::error::TypeConvertError;
 use nncombinator::layer::{BatchDataType, BatchSize};
-#[cfg(feature = "cuda")]
-use nncombinator::ope::UnitValue;
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::CudaAllocator;
 #[cfg(feature = "cuda")]
@@ -25,12 +25,11 @@ impl<const N:usize> BatchDataType for HalfKP<N> {
     type Type = HalfKPList<N>;
 }
 #[cfg(feature = "cuda")]
-impl<U,A,const N:usize> ToCuda<U,A> for HalfKP<N>
-    where U: UnitValue<U>,
-          A: CudaAllocator {
+impl<A,const N:usize> ToCuda<f32,A> for HalfKP<N>
+    where A: CudaAllocator + 'static {
     type Output = Self;
 
-    fn to_cuda(self, _: &DeviceGpu<U,A>) -> Result<Self::Output, TypeConvertError> {
+    fn to_cuda(self, _: &DeviceGpu<A>) -> Result<Self::Output, TypeConvertError> {
         Ok(self)
     }
 }
@@ -191,12 +190,12 @@ impl<const N: usize> BatchSize for HalfKPList<N> {
     }
 }
 #[cfg(feature = "cuda")]
-impl<U,A,const N:usize> ToCuda<U,A> for HalfKPList<N>
-    where U: UnitValue<U>,
-          A: CudaAllocator {
+impl<A,const N:usize> ToCuda<f32,A> for HalfKPList<N>
+
+    where A: CudaAllocator + 'static {
    type Output = Self;
 
-    fn to_cuda(self, _: &DeviceGpu<U,A>) -> Result<Self::Output, TypeConvertError> {
+    fn to_cuda(self, _: &DeviceGpu<A>) -> Result<Self::Output, TypeConvertError> {
         Ok(self)
     }
 }
@@ -343,3 +342,4 @@ impl<'a,S> Iterator for HalfKPDiffIter<'a,S>
         }
     }
 }
+

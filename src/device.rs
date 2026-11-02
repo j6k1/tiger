@@ -7,7 +7,7 @@ use rayon::prelude::{ParallelIterator, IntoParallelRefIterator, IndexedParallelI
 use nncombinator::arr::{SerializedVec};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::device::{DeviceCpu};
+use nncombinator::device::{Device, DeviceCpu};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{TypeConvertError};
 use nncombinator::error::{EvaluateError, TrainingError};
@@ -27,7 +27,7 @@ use crate::kernel::{Accumulator, AccumulatorArgs, AccumulatorBatch, AccumulatorB
 use crate::math::SignFloat;
 
 pub trait DeviceFeatureTransform<U,T,B,const NI: usize,const NO: usize>
-    where U: UnitValue<U>, [(); NO*2]: {
+    where U: Default + Clone + Copy + Debug + Send + Sync + 'static, [(); NO*2]: {
     type Output: BatchDataType + Debug + 'static;
     type BatchOutput: BatchSize + Debug + 'static;
     fn forward_feature_transform<'a>(&self,bias:&B,units:&T,input:HalfKPView<'a,NI>) -> Result<Self::Output,EvaluateError>;
@@ -74,11 +74,11 @@ pub const LANES_F64: usize = 2;
 )))]
 pub const LANES_F64: usize = 2;
 
-impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
+impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu
     where [(); NO*2]: {
 
     type Output = Arr<f32,{NO*2}>;
-    type BatchOutput = SerializedVec<f32,Arr<f32,{NO*2}>>;
+    type BatchOutput = SerializedVec<f32, Arr<f32,{NO*2}>>;
     #[inline]
     fn forward_feature_transform<'a>(&self,bias:&Arr<f32,NO>,units:&Arr2<f32,NI,NO>,input:HalfKPView<'a,NI>)
         -> Result<Arr<f32,{NO*2}>,EvaluateError> {
@@ -181,7 +181,7 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
         
         Ok(<&'a Vec<HalfKP<NI>>>::from(input).par_iter().map(|input| {
             self.forward_feature_transform(bias, units, input.into())
-        }).collect::<Result<Vec<Arr<f32,{NO*2}>>,EvaluateError>>()?.into())
+        }).collect::<Result<Vec<_>,_>>()?.into())
     }
 
     #[inline]
@@ -257,8 +257,9 @@ impl<const NI: usize,const NO:usize> DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,
     }
 }
 #[cfg(feature = "cuda")]
-impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,A,NI,NO>,CudaTensor1dPtr<f32,A,NO>,NI,NO> for DeviceGpu<f32,A>
-    where A: CudaAllocator + 'static,
+impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPtr<f32,A,NI,NO>,CudaTensor1dPtr<f32,A,NO>,NI,NO> for DeviceGpu<A>
+    where A: CudaAllocator + Clone,
+          DeviceGpu<A>: Device<f32>,
           CudaPtr<usize,A>: WriteMemory<usize>,
           CudaPtr<u8,A>: WriteMemory<u8>,
           CudaVec<f32,CudaTensor1dPtr<f32,A,NO>,A>: AsCudaMutPtr<Pointee=f32,Allocator=A>,
@@ -448,189 +449,8 @@ impl<A,const NI: usize,const NO:usize> DeviceFeatureTransform<f32,CudaTensor2dPt
         Ok(args.output)
     }
 }
-/// Trait that defines the implementation of various calculation processes in the accumulator layer
-pub trait DeviceAccumulator<U,IO,const N: usize>
-    where U: UnitValue<U>,
-          IO: BatchDataType + Debug,
-          <IO as BatchDataType>::Type: BatchSize + Debug {
-    /// Forward propagation calculation
-    /// # Arguments
-    /// * `input` - input
-    ///
-    /// # Errors
-    ///
-    /// This function may return the following errors
-    /// * [`EvaluateError`]
-    fn forward_accumulator<'a>(&self, input:&'a IO) -> Result<IO,EvaluateError>;
-    /// Backward propagation calculation
-    /// # Arguments
-    /// * `loss` - loss input
-    ///
-    /// # Errors
-    ///
-    /// This function may return the following errors
-    /// * [`EvaluateError`]
-    fn backward_accumulator<'a>(&self, loss:&'a IO) -> Result<IO,TrainingError>;
-    /// Forward propagation calculation in batch
-    /// # Arguments
-    /// * `input` - input
-    ///
-    /// # Errors
-    ///
-    /// This function may return the following errors
-    /// * [`TrainingError`]
-    fn batch_forward_accumulator<'a>(&self,input: &'a <IO as BatchDataType>::Type) -> Result<<IO as BatchDataType>::Type,TrainingError>;
-    /// Backward propagation calculation in batch
-    /// # Arguments
-    /// * `loss` - loss input
-    ///
-    /// # Errors
-    ///
-    /// This function may return the following errors
-    /// * [`TrainingError`]
-    fn batch_backward_accumulator<'a>(&self,loss: &'a <IO as BatchDataType>::Type) -> Result<<IO as BatchDataType>::Type,TrainingError>;
-}
-impl<U,const N:usize> DeviceAccumulator<U,Arr<U,{N*2}>,N> for DeviceCpu<U>
-    where U: UnitValue<U> {
-    fn forward_accumulator<'a>(&self, input: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,EvaluateError> {
-        let mut output = input.clone();
-
-        for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
-            *o += i;
-        }
-
-        for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
-            *o += i;
-        }
-
-        Ok(output)
-    }
-    fn backward_accumulator<'a>(&self, loss: &'a Arr<U,{N*2}>) -> Result<Arr<U,{N*2}>,TrainingError> {
-        let mut output = loss.clone();
-
-        for (o,&i) in output.iter_mut().take(N).zip(loss.iter().skip(N)) {
-            *o += i;
-        }
-
-        for (o,&i) in output.iter_mut().skip(N).zip(loss.iter().take(N)) {
-            *o += i;
-        }
-
-        Ok(output)
-    }
-
-    fn batch_forward_accumulator<'a>(&self, input: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
-        Ok(input.par_iter().map(|input| {
-            let mut output = Arr::<U,{N*2}>::new();
-
-            for (o,&i) in output.iter_mut().zip(input.iter()) {
-                *o = i
-            }
-
-            for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
-                *o += i;
-            }
-
-            for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
-                *o += i;
-            }
-
-            output
-        }).collect::<Vec<Arr<U,{N*2}>>>().into())
-    }
-
-    fn batch_backward_accumulator<'a>(&self, loss: &'a <Arr<U,{N*2}> as BatchDataType>::Type) -> Result<<Arr<U,{N*2}> as BatchDataType>::Type, TrainingError> {
-        Ok(loss.par_iter().map(|input| {
-            let mut output = Arr::<U,{N*2}>::new();
-
-            for (o,&i) in output.iter_mut().zip(input.iter()) {
-                *o = i
-            }
-
-            for (o,&i) in output.iter_mut().take(N).zip(input.iter().skip(N)) {
-                *o += i;
-            }
-
-            for (o,&i) in output.iter_mut().skip(N).zip(input.iter().take(N)) {
-                *o += i;
-            }
-
-            output
-        }).collect::<Vec<Arr<U,{N*2}>>>().into())
-    }
-}
-#[cfg(feature = "cuda")]
-impl<A,const N:usize> DeviceAccumulator<f32,CudaTensor1dPtr<f32,A,{N*2}>,N> for DeviceGpu<f32,A>
-    where A: CudaAllocator {
-    fn forward_accumulator<'a>(&self, input: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,EvaluateError> {
-        let output = CudaTensor1dPtr::<f32,A,{N*2}>::new(self.get_allocator())?;
-
-        let input = CudaTensor1dPtrView::<f32,{N*2}>::from(input);
-
-        let mut args = AccumulatorArgs::new(
-            CudaConstPtr::new(&input),
-            output);
-
-        let mut kernel = Accumulator::<f32,A,N>::new();
-
-        kernel.launch(&mut args)?;
-
-        Ok(args.output)
-    }
-    fn backward_accumulator<'a>(&self, loss: &'a CudaTensor1dPtr<f32,A,{N*2}>) -> Result<CudaTensor1dPtr<f32,A,{N*2}>,TrainingError> {
-        let output = CudaTensor1dPtr::<f32,A,{N*2}>::new(self.get_allocator())?;
-
-        let input = CudaTensor1dPtrView::<f32,{N*2}>::from(loss);
-
-        let mut args = AccumulatorArgs::new(
-            CudaConstPtr::new(&input),
-            output);
-
-        let mut kernel = Accumulator::<f32,A,N>::new();
-
-        kernel.launch(&mut args)?;
-
-        Ok(args.output)
-    }
-    fn batch_forward_accumulator<'a>(&self, input: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
-                              -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
-        let len = input.size();
-
-        let input = CudaVecView::<f32,CudaTensor1dPtrView<f32,{N*2}>>::try_from(input)?;
-        let output = CudaVec::<f32,CudaTensor1dPtr<f32,A,{N*2}>,A>::new(len,self.get_allocator())?;
-
-        let mut args = AccumulatorBatchArgs::new(
-            CudaConstPtr::new(&input),
-            output,
-            len);
-
-        let mut kernel = AccumulatorBatch::<f32,A,N>::new();
-
-        kernel.launch(&mut args)?;
-
-        Ok(args.output)
-    }
-    fn batch_backward_accumulator<'a>(&self, loss: &'a <CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type)
-                                     -> Result<<CudaTensor1dPtr<f32,A,{N*2}> as BatchDataType>::Type,TrainingError> {
-        let len = loss.size();
-
-        let input = CudaVecView::<f32,CudaTensor1dPtrView<f32,{N*2}>>::try_from(loss)?;
-        let output = CudaVec::<f32,CudaTensor1dPtr<f32,A,{N*2}>,A>::new(len,self.get_allocator())?;
-
-        let mut args = AccumulatorBatchArgs::new(
-            CudaConstPtr::new(&input),
-            output,
-            len);
-
-        let mut kernel = AccumulatorBatch::<f32,A,N>::new();
-
-        kernel.launch(&mut args)?;
-
-        Ok(args.output)
-    }
-}
-impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<SignFloat<f32>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu<f32>
-    where DeviceCpu<f32>: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
+impl<const NI: usize,const NO: usize> DeviceDiffFeatureTransform<f32,HalfKPDiff<SignFloat<f32>>,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO> for DeviceCpu
+    where DeviceCpu: DeviceFeatureTransform<f32,Arr2<f32,NI,NO>,Arr<f32,NO>,NI,NO,Output=Arr<f32,{NO*2}>>,
           [(); NO*2]: {
     fn forward_diff_feature_transform(&self, _: &Arr<f32,NO>, units: &Arr2<f32,NI,NO>,
                                       input: &HalfKPDiff<SignFloat<f32>>, partial_input:&Arr<f32,{NO*2}>)

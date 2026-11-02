@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
-use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain};
+use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain, PreTrainBase};
 use parking_lot::RwLock;
 use rand::Rng;
 use rayon::ThreadPool;
@@ -470,10 +470,10 @@ pub struct Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
     m:PhantomData<M>,
@@ -498,10 +498,10 @@ pub trait SendInfo<L,S,M>: Sized
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     fn send_info(&self, env:&mut Environment<L,S>,
                  depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
         where Arc<Mutex<OnErrorHandler<L>>>: Send + 'static {
@@ -545,10 +545,10 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
                      evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult,ApplicationError>;
@@ -1852,10 +1852,10 @@ pub trait PartialSearch<L,S,M>: Sized
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
                       mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError>;
@@ -1864,10 +1864,10 @@ impl<L,S,M> Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     pub fn new(thread_pool:ThreadPool) -> Root<L,S,M> {
         let(s,r) = mpsc::channel();
 
@@ -2503,18 +2503,18 @@ impl<L,S,M> SendInfo<L,S,M> for Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {}
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {}
 pub struct Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
     m:PhantomData<M>,
@@ -2523,10 +2523,10 @@ impl<L,S,M> Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     pub fn new() -> Recursive<L,S,M> {
         Recursive {
             l:PhantomData::<L>,
@@ -2711,18 +2711,18 @@ impl<L,S,M> SendInfo<L,S,M> for Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {}
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {}
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
                       evalutor: &Arc<Evalutor<M>>) -> Result<EvaluationResult, ApplicationError> {
@@ -3485,8 +3485,8 @@ pub struct Inter<L, S, M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-             PreTrain<f32> + Send + Sync + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+             PreTrainBase + PreTrain + Send + Sync + 'static,
+         <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
     m:PhantomData<M>
@@ -3495,10 +3495,10 @@ impl<L,S,M> Inter<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     pub fn new() -> Inter<L,S,M> {
         Inter {
             l:PhantomData::<L>,
@@ -3530,10 +3530,10 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrain<f32> + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
-          <M as PreTrain<f32>>::OutStack: Send + Sync + 'static {
+          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
     fn search<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
                       mvs:&Vec<LegalMove>) -> Result<EvaluationResult, ApplicationError> {
