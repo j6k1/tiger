@@ -16,7 +16,7 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, Loss, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, Loss, OutputTensorScalar, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::input::{InputLayer};
 use nncombinator::layer::input::{DiffInputLayer};
@@ -124,7 +124,7 @@ pub fn sigmoid(x:f32) -> f32 {
 }
 pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
                                  BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-                                 BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P> + Step
+                                 BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P,PT> + Step
                                  where U: UnitValue<U>,
                                        D: Device<U>,
                                        I: BatchDataType + Debug + Send + Sync,
@@ -134,7 +134,7 @@ pub trait BatchNeuralNetwork<U,D,P,PT,I,O,L>: ForwardAll<Input=I,Output=O> +
 impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
     where T: ForwardAll<Input=I,Output=O> +
              BatchForwardBase<BatchInput=<I as BatchDataType>::Type,BatchOutput=<O as BatchDataType>::Type> +
-             BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P> + Step,
+             BatchTrain<U,D,L> + Persistence<P,PT> + PersistProgress<P,PT> + Step,
              U: UnitValue<U>,
              D: Device<U>,
              I: BatchDataType + Debug + Send + Sync,
@@ -149,7 +149,7 @@ impl EvalutorCreator {
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                                 PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                                 ContinueForward +
-                                PreTrainBase + PreTrain + Loss<f32> + Send + Sync + 'static>, ApplicationError> {
+                                PreTrainBase<OutStack=impl Send+Sync+'static> + PreTrain + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
@@ -227,7 +227,7 @@ impl EvalutorCreator {
 }
 pub struct Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32, 1>> +
-                     PreTrainBase + PreTrain + Send + Sync + Loss<f32> +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -236,7 +236,7 @@ pub struct Evalutor<M>
 }
 impl<M> Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + Loss<f32> +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
                   <M as PreTrainBase>::OutStack: Send + Sync + 'static {

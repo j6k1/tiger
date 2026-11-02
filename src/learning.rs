@@ -95,7 +95,7 @@ pub struct Learnener<M,A>
     where M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
              BatchForwardBase<BatchInput=<HalfKP<FEATURES_NUM> as BatchDataType>::Type,BatchOutput=SerializedVec<f32,Arr<f32,1>>> +
              BatchTrain<f32,DeviceGpu<A>,LF> + Persistence<BinFilePersistence,Linear> + Step,
-          A: CudaAllocator {
+          A: CudaAllocator + 'static {
           nn:PhantomData<M>,
           allocator:PhantomData<A>
 }
@@ -106,7 +106,7 @@ impl<M,A> Learnener<M,A>
              Persistence<BinFilePersistence,Linear> +
              PersistProgress<BinFilePersistence,Linear> +
              Step + 'static,
-          A: CudaAllocator,
+          A: CudaAllocator + 'static,
           [(); FEATURES_NUM * 2]:,
           [(); FEATURES_NUM * 256]: {
     pub fn new() -> Learnener<M,A> {

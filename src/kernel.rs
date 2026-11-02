@@ -32,7 +32,7 @@ extern "C" {
 /// of Forward propagation of linear layers specialized for processing HalfKP.
 pub struct TransformFeaturesForwardArgs<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     indexes: CudaPtr<size_t,A>,
     boundaries: CudaPtr<size_t,A>,
@@ -46,7 +46,7 @@ pub struct TransformFeaturesForwardArgs<'a,T,A,const NI:usize,const NO:usize>
 /// the forward propagation calculation of the linear layer specialized for processing HalfKP.
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesForwardArgs instance
     /// # Arguments
@@ -73,7 +73,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardArgs<'a,T,A,N
 }
 impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesForwardArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -98,7 +98,7 @@ pub struct TransformFeaturesForward<'a,T,A,const NI:usize,const NO:usize>
 }
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForward<'a,T,A,NI,NO,>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesForward instance
     pub fn new() -> TransformFeaturesForward<'a,T,A,NI,NO> {
@@ -112,7 +112,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForward<'a,T,A,NI,NO
     }
 }
 impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForward<'a,f32,A,NI,NO>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
     type Args = TransformFeaturesForwardArgs<'a,f32,A,NI,NO>;
@@ -129,7 +129,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForward<'a,
 /// of Forward propagation of linear layers specialized for processing HalfKP.
 pub struct TransformFeaturesForwardBatchArgs<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     indexes: CudaPtr<size_t,A>,
     boundaries: CudaPtr<size_t,A>,
@@ -143,7 +143,7 @@ pub struct TransformFeaturesForwardBatchArgs<'a,T,A,const NI:usize,const NO:usiz
 /// the forward propagation calculation of the linear layer specialized for processing HalfKP.
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardBatchArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesForwardBatchArgs instance
     /// # Arguments
@@ -172,7 +172,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardBatchArgs<'a,
 }
 impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesForwardBatchArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -189,7 +189,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesForwa
 /// Implementation of forward propagation calculations for linear layers
 pub struct TransformFeaturesForwardBatch<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     t:PhantomData<T>,
     a:PhantomData<A>,
@@ -199,7 +199,7 @@ pub struct TransformFeaturesForwardBatch<'a,T,A,const NI:usize,const NO:usize>
 }
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardBatch<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesForwardBatch instance
     pub fn new() -> TransformFeaturesForwardBatch<'a,T,A,NI,NO> {
@@ -213,7 +213,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesForwardBatch<'a,T,A,
     }
 }
 impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForwardBatch<'a,f32,A,NI,NO>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = forward_transform_features_batch_float as *const c_void;
     type Args = TransformFeaturesForwardBatchArgs<'a,f32,A,NI,NO>;
@@ -230,7 +230,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesForwardBatc
 /// for calculating the weight update amount for the linear layer specialized for HalfKP processing.
 pub struct TransformFeaturesGradientArgs<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     loss: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{NO*2}>>,
     input: CudaPtr<u8,A>,
@@ -243,7 +243,7 @@ pub struct TransformFeaturesGradientArgs<'a,T,A,const NI:usize,const NO:usize>
 /// for HalfKP processing, create an instance of the object representing the argument list.
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesGradientArgs instance
     /// # Arguments
@@ -265,7 +265,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientArgs<'a,T,A,
 }
 impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesGradientArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -289,7 +289,7 @@ pub struct TransformFeaturesGradient<'a,T,A,const NI:usize,const NO:usize>
 }
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradient<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesGradient instance
     pub fn new() -> TransformFeaturesGradient<'a,T,A,NI,NO> {
@@ -303,7 +303,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradient<'a,T,A,NI,N
     }
 }
 impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradient<'a,f32,A,NI,NO>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientArgs<'a, f32, A, NI, NO>;
@@ -320,7 +320,7 @@ impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradient<'a
 /// for calculating the weight update amount of the linear layer specialized for HalfKP processing.
 pub struct TransformFeaturesGradientBatchArgs<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     loss: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{NO*2}>>>,
     input: CudaPtr<u8,A>,
@@ -333,7 +333,7 @@ pub struct TransformFeaturesGradientBatchArgs<'a,T,A,const NI:usize,const NO:usi
 /// for HalfKP processing, create an instance of the object representing the argument list.
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatchArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesGradientBatchArgs instance
     /// * `loss` - loss
@@ -356,7 +356,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatchArgs<'a
 }
 impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesGradientBatchArgs<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -372,7 +372,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> KernelArgs for TransformFeaturesGradi
 /// Implementation of Weight Update Calculation in Linear Layers Specialized for HalfKP
 pub struct TransformFeaturesGradientBatch<'a,T,A,const NI:usize,const NO:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     t:PhantomData<T>,
     a:PhantomData<A>,
@@ -382,7 +382,7 @@ pub struct TransformFeaturesGradientBatch<'a,T,A,const NI:usize,const NO:usize>
 }
 impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatch<'a,T,A,NI,NO>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); NO*2]: {
     /// Create a TransformFeaturesGradientBatch instance
     pub fn new() -> TransformFeaturesGradientBatch<'a,T,A,NI,NO> {
@@ -396,7 +396,7 @@ impl<'a,T,A,const NI:usize,const NO:usize> TransformFeaturesGradientBatch<'a,T,A
     }
 }
 impl<'a,A,const NI:usize,const NO:usize> Kernel for TransformFeaturesGradientBatch<'a,f32,A,NI,NO>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); NO*2]: {
     const FUNC_PTR: *const c_void = transform_features_gradient_batch_float as *const c_void;
     type Args = TransformFeaturesGradientBatchArgs<'a,f32,A,NI,NO>;
@@ -484,7 +484,7 @@ impl<A,const NI:usize> Kernel for TransformFeaturesInputToBits<A,NI>
 /// that mix the outputs of the active and inactive sides.
 pub struct AccumulatorArgs<'a,T,A,const N:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     input: CudaConstPtr<'a,CudaTensor1dPtrView<'a,T,{N*2}>>,
     pub output: CudaTensor1dPtr<T,A,{N*2}>,
@@ -495,7 +495,7 @@ pub struct AccumulatorArgs<'a,T,A,const N:usize>
 /// that combine the outputs of active and inactive players.
 impl<'a,T,A,const N:usize> AccumulatorArgs<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     /// Create a AccumulatorArgs instance
     /// # Arguments
@@ -513,7 +513,7 @@ impl<'a,T,A,const N:usize> AccumulatorArgs<'a,T,A,N>
 }
 impl<'a,T,A,const N:usize> KernelArgs for AccumulatorArgs<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -533,7 +533,7 @@ pub struct Accumulator<'a,T,A,const N:usize>
 }
 impl<'a,T,A,const N:usize> Accumulator<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     /// Create a Accumulator instance
     pub fn new() -> Accumulator<'a,T,A,N> {
@@ -545,7 +545,7 @@ impl<'a,T,A,const N:usize> Accumulator<'a,T,A,N>
     }
 }
 impl<'a,A,const N:usize> Kernel for Accumulator<'a,f32,A,N>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); N*2]: {
     const FUNC_PTR: *const c_void = bi_mix_accumulator_float as *const c_void;
     type Args = AccumulatorArgs<'a,f32,A,N>;
@@ -562,7 +562,7 @@ impl<'a,A,const N:usize> Kernel for Accumulator<'a,f32,A,N>
 // and use it as an argument to perform calculations that mix outputs from the active and inactive sides.
 pub struct AccumulatorBatchArgs<'a,T,A,const N:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     input: CudaConstPtr<'a,CudaVecView<'a,T,CudaTensor1dPtrView<'a,T,{N*2}>>>,
     pub output: CudaVec<T,CudaTensor1dPtr<T,A,{N*2}>,A>,
@@ -573,7 +573,7 @@ pub struct AccumulatorBatchArgs<'a,T,A,const N:usize>
 /// that combine the outputs of active and inactive players during batch processing.
 impl<'a,T,A,const N:usize> AccumulatorBatchArgs<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     /// Create a AccumulatorBatchArgs instance
     /// * `input` - input (bits)
@@ -592,7 +592,7 @@ impl<'a,T,A,const N:usize> AccumulatorBatchArgs<'a,T,A,N>
 }
 impl<'a,T,A,const N:usize> KernelArgs for AccumulatorBatchArgs<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     fn as_vec(&mut self) -> Vec<&mut dyn AsKernelPtr> {
         vec![
@@ -606,7 +606,7 @@ impl<'a,T,A,const N:usize> KernelArgs for AccumulatorBatchArgs<'a,T,A,N>
 /// Implementation of Weight Update Calculation in Linear Layers Specialized for HalfKP
 pub struct AccumulatorBatch<'a,T,A,const N:usize>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     t:PhantomData<T>,
     a:PhantomData<A>,
@@ -614,7 +614,7 @@ pub struct AccumulatorBatch<'a,T,A,const N:usize>
 }
 impl<'a,T,A,const N:usize> AccumulatorBatch<'a,T,A,N>
     where T: DataTypeInfo + Debug + Default + UnitValue<T>,
-          A: CudaAllocator + 'a,
+          A: CudaAllocator + 'static,
           [(); N*2]: {
     /// Create a AccumulatorBatch instance
     pub fn new() -> AccumulatorBatch<'a,T,A,N> {
@@ -626,7 +626,7 @@ impl<'a,T,A,const N:usize> AccumulatorBatch<'a,T,A,N>
     }
 }
 impl<'a,A,const N:usize> Kernel for AccumulatorBatch<'a,f32,A,N>
-    where A: CudaAllocator + 'a,
+    where A: CudaAllocator + 'static,
           [(); N*2]: {
     const FUNC_PTR: *const c_void = bi_mix_accumulator_float as *const c_void;
     type Args = AccumulatorBatchArgs<'a,f32,A,N>;

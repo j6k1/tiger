@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
-use nncombinator::layer::{ContinueForward, ForwardAll, PartialForward, PreTrain, PreTrainBase};
+use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase};
 use parking_lot::RwLock;
 use rand::Rng;
 use rayon::ThreadPool;
@@ -470,7 +470,7 @@ pub struct Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -498,7 +498,7 @@ pub trait SendInfo<L,S,M>: Sized
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -545,7 +545,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -1852,7 +1852,7 @@ pub trait PartialSearch<L,S,M>: Sized
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -1864,7 +1864,7 @@ impl<L,S,M> Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -2503,7 +2503,7 @@ impl<L,S,M> SendInfo<L,S,M> for Root<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {}
@@ -2511,7 +2511,7 @@ pub struct Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -2523,7 +2523,7 @@ impl<L,S,M> Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -2711,7 +2711,7 @@ impl<L,S,M> SendInfo<L,S,M> for Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {}
@@ -2719,7 +2719,7 @@ impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -3495,7 +3495,7 @@ impl<L,S,M> Inter<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {
@@ -3530,7 +3530,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync +
+                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
                      PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
                      ContinueForward + 'static,
           <M as PreTrainBase>::OutStack: Send + Sync + 'static {

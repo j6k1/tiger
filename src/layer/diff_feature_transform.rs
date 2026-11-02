@@ -6,7 +6,8 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
-use nncombinator::layer::{BackwardAll, BackwardBase, BatchDataType, BatchSize, ContinueForward, Forward, ForwardAll, ForwardDiff, OnStep, PartialForward, PreTrain, PreTrainBase, UpdateWeight};
+use nncombinator::layer::{BackwardAll, BackwardBase, BatchDataType, BatchSize, Bridge, BridgeRepr, ContinueForward, Forward, ForwardAll, ForwardDiff, OnStep, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase, UpdateWeight};
+use nncombinator::layer::{BridgeBase, BatchBridge};
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;
@@ -226,7 +227,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatu
 
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
-             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
           D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO> + 'static,
@@ -246,7 +247,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTr
 
 impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + BackwardBase<LossInputScalar=U, LossInput=()> + 'static,
           U: UnitValue<U>,
           DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
@@ -258,12 +259,13 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTran
           for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
     type LossInputScalar = U;
+    type LossInput = <DeviceCpu as DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::Output;
 }
 
 impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<()> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: PreTrainBase<PreOutput=HalfKP<NI>> +
              ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + BackwardAll<()> + 'static,
+             BackwardBase<LossInputScalar=U, LossInput=()> + BackwardAll<()> + PreTrain + 'static,
           U: UnitValue<U>,
           DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
@@ -339,6 +341,93 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OnStep for DiffFeatureTran
         self.bias_optimizer.on_frequently_step(step,frequently_step)?;
 
         Ok(self.parent.on_frequently_step(step,frequently_step)?)
+    }
+}
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OutputTensorScalar for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where U: UnitValue<U>,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + 'static,
+          OP: Optimizer<U,D> {
+    type Scalar = U;
+}
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeBase
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+          U: Default + Clone + Copy + UnitValue<U>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
+          OP: Optimizer<U,D>,
+          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          [(); NO * 2]: {
+    type UseDevice = D;
+    type RealScale = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
+    type RealOutput = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
+    type SourceInput = HalfKP<NI>;
+}
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Bridge
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+          U: Default + Clone + Copy + UnitValue<U>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
+          OP: Optimizer<U,D>,
+          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          [(); NO * 2]: {
+    type RealMapper<'a> = nncombinator::mapper::IdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
+        where Self: 'a;
+
+    fn as_real<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::RealMapper<'a>, EvaluateError>
+        where Self: 'a {
+        Ok(nncombinator::mapper::IdentityMapper::new(input))
+    }
+}
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeRepr
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+          U: Default + Clone + Copy + UnitValue<U>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
+          OP: Optimizer<U,D>,
+          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          [(); NO * 2]: {
+    type RepresentationOutput = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
+    type ReprMapper<'a> = nncombinator::mapper::IdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
+        where Self: 'a;
+
+    fn as_repr<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::ReprMapper<'a>, EvaluateError>
+        where Self: 'a {
+        Ok(nncombinator::mapper::IdentityMapper::new(input))
+    }
+}
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BatchBridge
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+          U: Default + Clone + Copy + UnitValue<U>,
+          I: Debug + Send + Sync + BatchDataType,
+          DI: Debug,
+          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
+          OP: Optimizer<U,D>,
+          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          [(); NO * 2]: {
+    type BatchRealMapper<'a> = nncombinator::mapper::BatchIdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
+        where Self: 'a;
+
+    fn batch_as_real<'a>(&'a self, input: &'a <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type) -> Result<Self::BatchRealMapper<'a>, EvaluateError>
+        where Self: 'a {
+        Ok(nncombinator::mapper::BatchIdentityMapper::new(input))
     }
 }
 pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usize,const NO:usize>
