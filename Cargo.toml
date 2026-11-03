@@ -36,6 +36,8 @@ path = "../packedsfen"
 path = "../USIAgent"
 [dependencies.shogi_dataloader]
 path = "../shogi_dataloader"
+[dependencies.simdoperator]
+path = "../simdoperator"
 [build-dependencies]
 cc = "1.0.73"
 [profile.release]

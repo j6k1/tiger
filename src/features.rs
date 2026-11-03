@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use libc::size_t;
+use simdoperator::traits::Sign;
 #[cfg(feature = "cuda")]
 use nncombinator::ope::UnitValue;
 #[cfg(feature = "cuda")]
@@ -13,7 +14,6 @@ use nncombinator::cuda::ToCuda;
 #[cfg(feature = "cuda")]
 use nncombinator::device::DeviceGpu;
 use rand_distr::num_traits::FromPrimitive;
-use crate::math::Sign;
 
 /// InputFeatures Implementaion
 #[derive(Debug)]

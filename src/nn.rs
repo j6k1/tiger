@@ -49,13 +49,14 @@ use nncombinator::device::{DeviceGpu};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
+use simdoperator::backend::common::SignFloat;
+use simdoperator::traits::Sign;
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::layer::diff_feature_transform::DiffFeatureTransformLayerBuilder;
 #[cfg(feature = "cuda")]
 use crate::layer::feature_transform::FeatureTransformLayerBuilder;
-use crate::math::{Sign, SignFloat};
 
 const BANMEN_SIZE:usize = 81;
 
@@ -499,10 +500,10 @@ pub struct TrainerCreator {
 }
 #[cfg(feature = "cuda")]
 impl TrainerCreator {
-    pub fn create<A: CudaAllocator + MemoryType + 'static>(
+    pub fn create<A>(
         save_dir:String, nn_path:String, config:&Config, options:&Matches, allocator:A
     ) -> Result<Trainer<impl BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,A>, ApplicationError>
-        where A: CudaAllocator,
+        where A: CudaAllocator + MemoryType + 'static,
               for<'a> CudaPtr<f32,A>: ReadMemory<f32> +
                                       WriteMemory<f32> + MemoryMoveTo<f32,CudaMutPtr<'a,f32,A>>,
               CudaPtr<usize,A>: WriteMemory<usize>,

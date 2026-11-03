@@ -315,8 +315,8 @@ mod tests {
     use usiagent::protocol::{ParsePosition, PositionParser};
     use usiagent::rule::{EvasionsAll, LegalMove, NonEvasionsAll, Rule, State};
     use usiagent::shogi::Teban;
+    use simdoperator::backend::common::SignFloat;
     use crate::features::{HalfKP, HalfKPDiff};
-    use crate::math::SignFloat;
     use crate::nn::{Evalutor, FEATURES_NUM};
 
     use super::*;
@@ -528,7 +528,7 @@ mod tests {
         for _ in 0..MAX_THREADS {
             let _ = r.recv().unwrap();
         }
-        
+
         let elapsed = start.elapsed();
 
         println!("processing time is {}.{:09} secs.", elapsed.as_secs(), elapsed.subsec_nanos());

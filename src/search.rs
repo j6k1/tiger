@@ -26,9 +26,10 @@ use usiagent::rule::{CaptureOrPawnPromotions, Checks, Evasions, LegalMove, Quiet
 use usiagent::see::calc_see;
 use usiagent::shogi::{KomaKind, MochigomaCollections, MochigomaKind, ObtainKind, Teban};
 use usiagent::shogi::KomaKind::{Blank, GHishaN, GKakuN, SHishaN, SKakuN};
+use simdoperator::traits::Sign;
+use simdoperator::backend::common::SignFloat;
 use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
-use crate::math::SignFloat;
 use crate::nn::{Evalutor, FEATURES_NUM};
 use crate::transposition_table::{TT, ZobristHash, TTPartialEntry, Bound, Score, LocalizeScore, NormalizeScore, ExactScoreBound, TTScore};
 
