@@ -13,10 +13,10 @@ use rand::{prelude, Rng, SeedableRng};
 use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{ClippedReLu, Sigmoid};
+use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, Loss, OutputTensorScalar, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::input::{InputLayer};
 use nncombinator::layer::input::{DiffInputLayer};
@@ -188,7 +188,7 @@ impl EvalutorCreator {
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                                                              || n2.sample(&mut rnd),
@@ -196,21 +196,21 @@ impl EvalutorCreator {
                                                              &optimizer_builder_middle_large
             )
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                                                      || n3.sample(&mut rnd),
                                                       || 0.0,
                                                       &optimizer_builder_middle)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
                                                      || {
                                                          n4.sample(&mut rnd)
                                                      },|| (0.503f32 / 0.497f32).ln(), &optimizer_builder_out)
        })?.add_layer(|l| {
-            ActivationLayer::new(l, Sigmoid::new(&device), &device)
+            ActivationLayer::new(l, SigmoidBuilder::new(&device), &device)
         }).try_add_layer(|l| {
             LinearOutputLayer::new(l, &device)
         })?;
@@ -489,7 +489,7 @@ pub type LF = CrossEntropy<f32>;
 #[cfg(feature = "cuda")]
 pub struct Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
-          A:CudaAllocator {
+          A:CudaAllocator + 'static {
     pub nn:M,
     a:PhantomData<A>,
     nn_path:String,
@@ -577,26 +577,26 @@ impl TrainerCreator {
                                                                           || n1.sample(&mut rnd), || 0.0,
                                                                           &optimizer_builder_feature)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                 || n2.sample(&mut rnd),
                    || 0.0, &optimizer_builder_middle_large)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 32>::new().build(l, &device,
                 || n3.sample(&mut rnd),
                    || 0.0 ,&optimizer_builder_middle)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLu::new(&device,1.0), &device)
+            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
             LinearLayerBuilder::<32, 1>::new().build(l, &device,
             move || {
                 n4.sample(&mut rnd)
             },|| (0.503f32 / 0.497f32).ln(), &optimizer_builder_out)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, Sigmoid::new(&device), &device)
+            ActivationLayer::new(l, SigmoidBuilder::new(&device), &device)
         }).try_add_layer(|l| {
             LinearOutputLayer::new(l, &device)
         })?;
@@ -640,7 +640,7 @@ impl TrainerCreator {
 #[cfg(feature = "cuda")]
 impl<M,A> Trainer<M,A>
     where M: BatchNeuralNetwork<f32,DeviceGpu<A>,BinFilePersistence,Linear,HalfKP<FEATURES_NUM>,Arr<f32,1>,LF>,
-          A: CudaAllocator {
+          A: CudaAllocator + 'static {
     fn sigmoid(x:f32) -> f32 {
         sigmoid(x)
     }

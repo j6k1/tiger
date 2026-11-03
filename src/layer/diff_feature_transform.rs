@@ -7,7 +7,8 @@ use nncombinator::{Cons, Stack};
 use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
 use nncombinator::layer::{BackwardAll, BackwardBase, BatchDataType, BatchSize, Bridge, BridgeRepr, ContinueForward, Forward, ForwardAll, ForwardDiff, OnStep, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase, UpdateWeight};
-use nncombinator::layer::{BridgeBase, BatchBridge};
+use nncombinator::layer::{BridgeBase};
+use nncombinator::mapper::{IdentityMapper};
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;
@@ -65,7 +66,7 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,
 impl<T,U,P,I,DI,OP,const NI:usize,const NO:usize> Persistence<T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where T: LinearPersistence<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> + Persistence<T,Linear> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+             BackwardBase<LossInputScalar=(), LossInput=()> + PreTrain,
           U: UnitValue<U>,
           I: Debug + Send + Sync,
           DI: Debug,
@@ -144,7 +145,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeature
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardBase<LossInputScalar=U, LossInput=()> +
+             BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
@@ -172,7 +173,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardBase<LossInputScalar=U, LossInput=()> +
+             BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
@@ -191,7 +192,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
-             BackwardBase<LossInputScalar=U, LossInput=()> +
+             BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
       C: 'static,
       B: 'static,
@@ -211,7 +212,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
@@ -226,7 +227,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatu
 }
 
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
@@ -247,7 +248,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTr
 
 impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + BackwardBase<LossInputScalar=U, LossInput=()> + 'static,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + BackwardBase<LossInputScalar=(), LossInput=()> + 'static,
           U: UnitValue<U>,
           DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
@@ -262,10 +263,10 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTran
     type LossInput = <DeviceCpu as DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::Output;
 }
 
-impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<()> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
+impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<U> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: PreTrainBase<PreOutput=HalfKP<NI>> +
              ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + BackwardAll<()> + PreTrain + 'static,
+             BackwardBase<LossInputScalar=(), LossInput=()> + BackwardAll<()> + PreTrain + 'static,
           U: UnitValue<U>,
           DeviceCpu: Device<U> + DeviceFeatureTransform<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
@@ -355,83 +356,73 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> OutputTensorScalar for Dif
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeBase
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+             BackwardBase<LossInputScalar=(), LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           U: Default + Clone + Copy + UnitValue<U>,
-          I: Debug + Send + Sync,
-          DI: Debug,
-          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
-          OP: Optimizer<U,D>,
-          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          I: Debug + Send + Sync + 'static,
+          DI: Debug + 'static,
+          D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO>,
+          C: 'static,
+          B: 'static,
+          OP: Optimizer<U,D> + 'static,
+          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
     type UseDevice = D;
-    type RealScale = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
-    type RealOutput = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
-    type SourceInput = HalfKP<NI>;
+    type RealScale = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type RealOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type SourceInput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Bridge
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+             PreTrainBase<PreOutput=HalfKP<NI>> +
+             BackwardBase<LossInputScalar=(), LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           U: Default + Clone + Copy + UnitValue<U>,
-          I: Debug + Send + Sync,
-          DI: Debug,
-          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
-          OP: Optimizer<U,D>,
-          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          I: Debug + Send + Sync + 'static,
+          DI: Debug + 'static,
+          C: 'static,
+          B: 'static,
+          D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO>,
+          OP: Optimizer<U,D> + 'static,
+          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RealMapper<'a> = nncombinator::mapper::IdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
+    type RealMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,Self::UseDevice>
         where Self: 'a;
 
     fn as_real<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::RealMapper<'a>, EvaluateError>
         where Self: 'a {
-        Ok(nncombinator::mapper::IdentityMapper::new(input))
+        Ok(IdentityMapper::new(input))
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeRepr
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
+             BackwardBase<LossInputScalar=(), LossInput=()> +
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           U: Default + Clone + Copy + UnitValue<U>,
-          I: Debug + Send + Sync,
-          DI: Debug,
-          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
-          OP: Optimizer<U,D>,
-          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          I: Debug + Send + Sync + 'static,
+          DI: Debug + 'static,
+          D: Device<U> + DeviceFeatureTransform<U,C,B,NI,NO>,
+          C: 'static,
+          B: 'static,
+          OP: Optimizer<U,D> + 'static,
+          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RepresentationOutput = <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output;
-    type ReprMapper<'a> = nncombinator::mapper::IdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
+    type RepresentationOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type ReprMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,Self::UseDevice>
         where Self: 'a;
 
     fn as_repr<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::ReprMapper<'a>, EvaluateError>
         where Self: 'a {
-        Ok(nncombinator::mapper::IdentityMapper::new(input))
-    }
-}
-impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BatchBridge
-    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
-             BackwardBase<LossInputScalar=U, LossInput=()> + PreTrain,
-          U: Default + Clone + Copy + UnitValue<U>,
-          I: Debug + Send + Sync + BatchDataType,
-          DI: Debug,
-          D: Device<U> + DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>,
-          OP: Optimizer<U,D>,
-          <D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
-          [(); NO * 2]: {
-    type BatchRealMapper<'a> = nncombinator::mapper::BatchIdentityMapper<'a,<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output,Self::UseDevice>
-        where Self: 'a;
-
-    fn batch_as_real<'a>(&'a self, input: &'a <<D as DeviceDiffFeatureTransform<U,C,B,DI,NI,NO>>::Output as BatchDataType>::Type) -> Result<Self::BatchRealMapper<'a>, EvaluateError>
-        where Self: 'a {
-        Ok(nncombinator::mapper::BatchIdentityMapper::new(input))
+        Ok(IdentityMapper::new(input))
     }
 }
 pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usize,const NO:usize>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync,
@@ -457,7 +448,7 @@ pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,OP,const NI:usi
 
 impl<U,P,I,DI,OP,const NI:usize,const NO:usize> DiffFeatureTransformLayerInstantiation<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
-    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=U, LossInput=()> +
+    where P: ForwardAll<Input=I,Output=HalfKP<NI>> + BackwardBase<LossInputScalar=(), LossInput=()> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync,
@@ -493,7 +484,7 @@ impl<const NI:usize,const NO:usize> DiffFeatureTransformLayerBuilder<NI,NO> {
     pub fn build<U,C,B,P,D,I,DI,OP,OB>(&self,parent: P, device:&D, ui: impl FnMut() -> U, bi: impl FnMut() -> U, b:&OB)
         -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>,LayerInstantiationError>
         where P: ForwardAll<Input=I,Output=HalfKP<NI>> + PartialForward<DiffInput=DI> +
-                 BackwardBase<LossInputScalar=U, LossInput=()> +
+                 BackwardBase<LossInputScalar=(), LossInput=()> +
                  PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
               U: Clone + Copy + UnitValue<U>,
               I: Debug + Send + Sync + BatchDataType,

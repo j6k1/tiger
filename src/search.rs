@@ -264,7 +264,7 @@ impl ChecksMoveOrderer {
 
     pub fn ordering<I: Iterator<Item=LegalMove>>(&self,teban:Teban,
                                                  state:&State,
-                                                 mc:&MochigomaCollections,
+                                                 _:&MochigomaCollections,
                                                  it:I) -> impl Iterator<Item=LegalMove> {
         let mut mvs = Vec::new();
 
