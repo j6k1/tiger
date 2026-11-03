@@ -17,3 +17,5 @@ Cargo.lock
 /.vscode
 /data/
 /logs/
+/temp_nn/
+settings.toml

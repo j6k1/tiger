@@ -298,3 +298,239 @@ fn run() -> Result<(),ApplicationError> {
         )))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ops::{Add, AddAssign};
+    use std::hint::black_box;
+    use std::sync::mpsc;
+    use std::time::Instant;
+    use nncombinator::arr::Arr;
+    use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase};
+    use rand::RngCore;
+    use rayon::ThreadPoolBuilder;
+    use usiagent::math::Prng;
+    use usiagent::movepick::{MovePicker, RandomPicker};
+    use usiagent::position::Position;
+    use usiagent::protocol::{ParsePosition, PositionParser};
+    use usiagent::rule::{EvasionsAll, LegalMove, NonEvasionsAll, Rule, State};
+    use usiagent::shogi::Teban;
+    use crate::features::{HalfKP, HalfKPDiff};
+    use crate::math::SignFloat;
+    use crate::nn::{Evalutor, FEATURES_NUM};
+
+    use super::*;
+    #[derive(Default,Debug,PartialEq,Eq)]
+    struct PerftResult {
+        pub nodes:usize,
+        pub captures:usize,
+        pub promotions:usize,
+        pub checks:usize,
+        pub mates:usize
+    }
+
+    impl Add for PerftResult {
+        type Output = Self;
+        fn add(self, rhs: Self) -> Self::Output {
+            PerftResult {
+                nodes: self.nodes + rhs.nodes,
+                captures: self.captures + rhs.captures,
+                promotions: self.promotions + rhs.promotions,
+                checks: self.checks + rhs.checks,
+                mates: self.mates + rhs.mates
+            }
+        }
+    }
+    impl AddAssign for PerftResult {
+        fn add_assign(&mut self, rhs: Self) {
+            *self = PerftResult {
+                nodes: self.nodes + rhs.nodes,
+                captures: self.captures + rhs.captures,
+                promotions: self.promotions + rhs.promotions,
+                checks: self.checks + rhs.checks,
+                mates: self.mates + rhs.mates
+            }
+        }
+    }
+    impl From<String> for PerftResult {
+        fn from(value: String) -> Self {
+            let fields: Vec<_> = value.split(',').map(|f| f.parse().unwrap()).collect();
+
+            PerftResult {
+                nodes: fields[0],
+                captures: fields[1],
+                promotions: fields[2],
+                checks: fields[3],
+                mates: fields[4]
+            }
+        }
+    }
+
+    struct GameState<'a> {
+        pub self_partial_output: &'a Arr<f32,{256*2}>,
+        pub opponent_partial_output: &'a Arr<f32,{256*2}>,
+    }
+    trait PerftSolverForPosition<M,const N: usize>
+        where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                         PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
+                         PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                         ContinueForward + 'static,
+                      <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+        fn perft<'a>(&self,teban:Teban,pos:&mut Position<N>,m:Option<LegalMove>,depth:usize,
+                 evalutor: &Arc<Evalutor<M>>, gs:&GameState<'a>) -> PerftResult;
+    }
+    struct PerftSolverForPositionByEvasions;
+
+    impl<M> PerftSolverForPosition<M,200> for PerftSolverForPositionByEvasions
+        where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                         PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
+                         PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
+                         ContinueForward + 'static,
+                      <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+        fn perft<'a>(&self,teban:Teban,pos:&mut Position<200>, m: Option<LegalMove>, depth: usize,
+                 evalutor: &Arc<Evalutor<M>>, gs: &GameState<'a>) -> PerftResult {
+            let mut rng = rand::thread_rng();
+            let mut prng = Prng::new(rng.next_u64());
+
+            let mut result = PerftResult::default();
+
+            if depth == 0 {
+                result.nodes += 1;
+
+                black_box(evalutor.evalute(gs.self_partial_output)).unwrap();
+
+                match m {
+                    Some(LegalMove::To(m)) => {
+                        if m.obtained().is_some() {
+                            result.captures += 1;
+                        }
+                        if m.is_nari() {
+                            result.promotions += 1;
+                        }
+                    },
+                    _ => ()
+                };
+
+                if Rule::in_check(teban,pos.get_state()) {
+                    result.checks += 1;
+
+                    let mut buffer = RandomPicker::new(Prng::new(prng.rnd64()));
+
+                    Rule::generate_moves::<EvasionsAll>(teban, pos.get_state(), pos.get_mc(), &mut buffer).unwrap();
+
+                    if buffer.len() == 0 {
+                        result.mates += 1;
+                    }
+                }
+            } else {
+                let mut buffer = RandomPicker::new(Prng::new(prng.rnd64()));
+
+                if Rule::in_check(teban,pos.get_state()) {
+                    Rule::generate_moves::<EvasionsAll>(teban, pos.get_state(), pos.get_mc(), &mut buffer).unwrap();
+                } else {
+                    Rule::generate_moves::<NonEvasionsAll>(teban, pos.get_state(), pos.get_mc(), &mut buffer).unwrap();
+                }
+
+                for m in buffer {
+                    let use_diff = match m {
+                        LegalMove::To(m) => m.src() != Rule::ou_square(teban,pos.get_state()) as u32,
+                        _ => false
+                    };
+
+                    let (self_partial_output,opponent_partial_output) = if use_diff {
+                        let self_partial_output = evalutor.prepare_evalute_by_diff(teban, teban,pos.get_state(),pos.get_mc(),m,gs.self_partial_output).unwrap();
+                        let opponent_partial_output = evalutor.prepare_evalute_by_diff(teban, teban.opposite(),pos.get_state(),pos.get_mc(),m,gs.opponent_partial_output).unwrap();
+
+                        pos.apply_move(teban,m).unwrap();
+
+                        (self_partial_output,opponent_partial_output)
+                    } else {
+                        pos.apply_move(teban,m).unwrap();
+
+                        let self_partial_output = evalutor.prepare_evalute(teban,pos.get_state(),pos.get_mc()).unwrap();
+                        let opponent_partial_output = evalutor.prepare_evalute(teban.opposite(),pos.get_state(),pos.get_mc()).unwrap();
+
+                        (self_partial_output,opponent_partial_output)
+                    };
+
+                    if !Rule::in_check(teban,pos.get_state()) {
+                        let gs = GameState {
+                            self_partial_output: &opponent_partial_output,
+                            opponent_partial_output: &self_partial_output,
+                        };
+
+                        result += self.perft(teban.opposite(),pos,Some(m),depth - 1,evalutor,&gs);
+                    }
+
+                    pos.undo_move().unwrap();
+                }
+            }
+
+            result
+        }
+    }
+
+    const INITIAL_SFEN:&'static str = "sfen l6nl/5+P1gk/2np1S3/p1p4Pp/3P2Sp1/1PPb2P1P/P5GS1/R8/LN4bKL w RGgsn5p 1";
+
+    const MAX_THREADS: usize = 8;
+
+    #[test]
+    fn test_perft_and_evaluation() {
+        let position_parser = PositionParser::new();
+
+        let (teban, banmen, mc, _, _) = match position_parser.parse(&INITIAL_SFEN.split(" ").collect::<Vec<&str>>()) {
+            Ok(position) => {
+                position.extract()
+            },
+            _ => {
+                panic!("invalid state.");
+            }
+        };
+
+        let state = State::new(banmen);
+
+        let evalutor = Arc::new(EvalutorCreator::create(String::from("data"),"nn.bin",&ConfigLoader::new("settings.toml").unwrap().load().unwrap()).unwrap());
+
+        println!("test_perft_and_evaluation");
+
+        let tb = ThreadPoolBuilder::new()
+            .num_threads(MAX_THREADS).stack_size(1024 * 1024 * 200).build().unwrap();
+
+        let (s,r) = mpsc::channel();
+
+        let start = Instant::now();
+
+        for _ in 0..MAX_THREADS {
+            let evalutor = Arc::clone(&evalutor);
+            let state = state.clone();
+            let mc = mc.clone();
+            let s = s.clone();
+
+            tb.spawn(move || {
+                let mut pos = Position::<200>::new(state, mc);
+
+                let solver = PerftSolverForPositionByEvasions;
+
+                let self_partial_output = evalutor.prepare_evalute(teban,pos.get_state(),pos.get_mc()).unwrap();
+                let opponent_partial_output = evalutor.prepare_evalute(teban.opposite(),pos.get_state(),pos.get_mc()).unwrap();
+
+                let gs = GameState {
+                    self_partial_output: &self_partial_output,
+                    opponent_partial_output: &opponent_partial_output
+                };
+
+                solver.perft(teban,&mut pos,None,3,&evalutor,&gs);
+
+                let _ = s.send(());
+            });
+        }
+
+        for _ in 0..MAX_THREADS {
+            let _ = r.recv().unwrap();
+        }
+        
+        let elapsed = start.elapsed();
+
+        println!("processing time is {}.{:09} secs.", elapsed.as_secs(), elapsed.subsec_nanos());
+    }
+}

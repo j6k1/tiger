@@ -38,6 +38,13 @@ path = "../USIAgent"
 path = "../shogi_dataloader"
 [build-dependencies]
 cc = "1.0.73"
+[profile.release]
+opt-level = 3
+lto = "fat"
+overflow-checks = false
 [profile.dev]
 opt-level = 1
-
+[profile.test]
+opt-level = 3
+lto = "fat"
+overflow-checks = false
