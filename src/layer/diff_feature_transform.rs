@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::{Cons, Stack};
-use nncombinator::device::{Device, DeviceBatchAveraging, DeviceCpu};
+use nncombinator::device::{Device, DeviceCpu};
 use nncombinator::error::{EvaluateError, LayerInstantiationError, TrainingError, ModelLoadError, PersistenceError};
 use nncombinator::layer::{BackwardAll, BackwardBase, BatchDataType, BatchSize, Bridge, BridgeRepr, ContinueForward, Forward, ForwardAll, ForwardDiff, OnStep, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase, UpdateWeight};
 use nncombinator::layer::{BridgeBase};
@@ -12,7 +12,7 @@ use nncombinator::mapper::{IdentityMapper};
 use nncombinator::optimizer::{Optimizer, OptimizerBuilder};
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use nncombinator::ope::UnitValue;
-use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransform, DeviceFeatureTransformEvaluation};
+use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling};
 use crate::features::HalfKP;
 
 pub struct DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize>
@@ -103,37 +103,42 @@ impl<T,U,P,I,DI,OP,const NI:usize,const NO:usize> Persistence<T,Linear> for Diff
         Ok(())
     }
 }
-impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,EvaluateError>>
+impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,EvaluateError>>
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
           C: 'static,
           B: 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> + 'static,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
           [(); NO*2]: {
     #[inline]
-    fn forward(&self, input:&HalfKP<NI>) -> Result<<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,EvaluateError> {
-        self.device.forward_feature_transform(&self.bias,&self.units,input.into())
+    fn forward(&self, input:&HalfKP<NI>) -> Result<<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,EvaluateError> {
+        let r = self.device.forward_feature_transform(&self.bias,&self.units,input.into())?;
+
+        Ok(self.device.forward_feature_transform_scaling(&r)?)
     }
 }
-
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> + 'static,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
           [(); NO * 2]: {
     type Input = I;
-    type Output = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type Output = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
 
     #[inline]
     fn forward_all(&self, input: Self::Input) -> Result<Self::Output, EvaluateError> {
@@ -146,23 +151,26 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PartialForward for DiffFea
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
              BackwardBase<LossInputScalar=(), LossInput=()> +
-             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
           U: Default + Clone + Copy + Send + UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
-          for<'a> D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+          for<'a> D: Device<U> +
+                     DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+                     DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-          Self: ForwardAll<Input=<P as ForwardAll>::Output>,
           [(); NO * 2]: {
     type PartialInput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
     type PartialOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
     type DiffInput = DI;
 
     fn partial_forward(&self, input: Self::Input) -> Result<Self::PartialOutput, EvaluateError> {
-        Ok(self.forward(&input)?)
+        let r = self.parent.forward_all(input)?;
+
+        Ok(self.device.forward_feature_transform(&self.bias,&self.units,(&r).into())?)
     }
 
     fn partial_forward_by_diff(&self, input: Self::DiffInput, partial_inpput: &Self::PartialInput) -> Result<Self::PartialOutput, EvaluateError> {
@@ -173,14 +181,16 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI> +
              BackwardBase<LossInputScalar=(), LossInput=()> +
-             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
+             PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
           U: Default + Clone + Copy + Send + UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
-          for<'a> D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+          for<'a> D: Device<U> +
+                     DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+                     DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
                      DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
           Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output> + PreTrain,
           [(); NO * 2]: {
@@ -199,7 +209,9 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
       I: Debug + Send + Sync,
       DI: Debug,
       OP: Optimizer<U,D>,
-      for<'a> D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+      for<'a> D: Device<U> +
+                 DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+                 DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
                  DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
       Self: PartialForward<PartialInput=<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,PartialOutput=<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output>,
       <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Clone,
@@ -214,14 +226,16 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatu
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> + 'static,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,D> + 'static,
           [(); NO * 2]: {
-    type PreOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
-    type OutStack = Cons<<P as PreTrainBase>::OutStack,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output>;
+    type PreOutput = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
+    type OutStack = Cons<<P as PreTrainBase>::OutStack,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput>;
 }
 
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
@@ -229,7 +243,9 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for DiffFeatureTr
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + 'static,
           C: 'static,
           B: 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO> + 'static,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> + 'static,
           U: UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
@@ -247,7 +263,9 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTran
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain + BackwardBase<LossInputScalar=(), LossInput=()> + 'static,
           U: UnitValue<U>,
-          DeviceCpu: Device<U> + DeviceFeatureTransformEvaluation<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
+          DeviceCpu: Device<U> +
+                     DeviceFeatureTransformEvaluation<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> +
+                     DeviceFeatureTransformEvaluationScaling<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,DeviceCpu> + 'static,
@@ -257,15 +275,16 @@ impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardBase for DiffFeatureTran
           for<'a> <OP as Optimizer<U,DeviceCpu>>::InternalUpdateType<'a>: From<&'a mut Arr<U,NO>>,
           [(); NO * 2]: {
     type LossInputScalar = U;
-    type LossInput = <DeviceCpu as DeviceFeatureTransformEvaluation<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::Output;
+    type LossInput = <DeviceCpu as DeviceFeatureTransformEvaluationScaling<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO>>::ScaledOutput;
 }
-
 impl<U,P,I,DI,OP,const NI:usize,const NO:usize> BackwardAll<U> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: PreTrainBase<PreOutput=HalfKP<NI>> +
              ForwardAll<Input=I,Output=HalfKP<NI>> +
              BackwardBase<LossInputScalar=(), LossInput=()> + BackwardAll<()> + PreTrain + 'static,
           U: UnitValue<U>,
-          DeviceCpu: Device<U> + DeviceFeatureTransformEvaluation<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
+          DeviceCpu: Device<U> +
+                     DeviceFeatureTransformEvaluation<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> +
+                     DeviceFeatureTransformEvaluationScaling<U,Arr2<U,NI,NO>,Arr<U,NO>,NI,NO> + 'static,
           I: Debug + Send + Sync + 'static,
           DI: Debug,
           OP: Optimizer<U,DeviceCpu> + 'static,
@@ -338,17 +357,19 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeBase
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug + 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO>,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>,
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
     type UseDevice = D;
-    type RealScale = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
-    type RealOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
-    type SourceInput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type RealScale = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
+    type RealOutput = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
+    type SourceInput = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Bridge
     for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
@@ -361,12 +382,14 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> Bridge
           DI: Debug + 'static,
           C: 'static,
           B: 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO>,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RealMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,Self::UseDevice>
+    type RealMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,Self::UseDevice>
         where Self: 'a;
 
     fn as_real<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::RealMapper<'a>, EvaluateError>
@@ -382,15 +405,17 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> BridgeRepr
           U: Default + Clone + Copy + UnitValue<U>,
           I: Debug + Send + Sync + 'static,
           DI: Debug + 'static,
-          D: Device<U> + DeviceFeatureTransformEvaluation<U,C,B,NI,NO>,
+          D: Device<U> +
+             DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
+             DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>,
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RepresentationOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
-    type ReprMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,Self::UseDevice>
+    type RepresentationOutput = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
+    type ReprMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,Self::UseDevice>
         where Self: 'a;
 
     fn as_repr<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::ReprMapper<'a>, EvaluateError>
