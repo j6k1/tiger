@@ -4,7 +4,7 @@ use nncombinator::device::{DeviceSimd};
 use nncombinator::error::{EvaluateError, SpecializationError};
 use nncombinator::mem::{AsRawSlice};
 use simdoperator::backend::common::{Backend, SignInt};
-use simdoperator::traits::{Demote, LinearCombination, Promote, Sign};
+use simdoperator::traits::{Demote, LinearCombination, Promote};
 use simdoperator::{AccVector, Matrix, Vector, VectorMut};
 use simdoperator::error::InstantiationError;
 use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling, DeviceQuantizedFeatureTransform};
@@ -61,7 +61,7 @@ const SHIFT: usize = 7;
 impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluationScaling<i8,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO> for DeviceSimd<BE>
     where BE: Backend,
           AccVector<i16,{NO*2},BE>: Demote<AccVector<i8,{NO*2},BE>>,
-          Box<[i8;{NO*2}]>: From<AccVector<i8,{NO*2},BE>>,
+          Box<[i8;NO*2]>: From<AccVector<i8,{NO*2},BE>>,
           for<'a> Vector<'a,i8,NO,BE>: Promote<AccVector<i16,NO,BE>>,
           for<'a,'b> VectorMut<'a,i16,NO,BE>: AddAssign<Vector<'b,i8,NO,BE>>,
           for<'a> Vector<'a,i16,{NO*2},BE>: TryFrom<&'a [i16],Error=InstantiationError> +
@@ -72,7 +72,7 @@ impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluationScalin
     fn forward_feature_transform_scaling<'a>(&self, input: &<Self as DeviceFeatureTransformEvaluation<i8,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO>>::Output) -> Result<Self::ScaledOutput, EvaluateError> {
         let input = Vector::try_from(input)?;
 
-        Ok(Arr::try_from(*<Box<[i8;{NO*2}]>>::from((input >> SHIFT).demotion()))?)
+        Ok(Arr::try_from(*<Box<[i8;NO*2]>>::from((input >> SHIFT).demotion()))?)
     }
 }
 impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDiff<SignInt<i8>>,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO> for DeviceSimd<BE>

@@ -9,12 +9,11 @@ use simdoperator::backend::common::{SignFloat};
 use nncombinator::arr::{SerializedVec};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::device::{Device, DeviceCpu};
+use nncombinator::device::{DeviceCpu};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{TypeConvertError};
 use nncombinator::error::{EvaluateError, SpecializationError, TrainingError};
 use nncombinator::layer::{BatchDataType, BatchSize};
-use nncombinator::ope::UnitValue;
 use crate::features::{HalfKP, HalfKPDiff, HalfKPListView, HalfKPView};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::kernel::device::{BackwardLinear, BackwardLinearArgs, BackwardLinearBatch, BackwardLinearBatchArgs, LinearGradientBatch, LinearGradientBatchArgs, ReduceLinearBatch, ReduceLinearBatchArgs};
@@ -55,7 +54,6 @@ pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: D
 }
 
 pub trait DeviceQuantizedFeatureTransform<T,B,const NI: usize, const NO: usize> {
-    #[inline]
     fn quantization(&self, units: &Arr2<f32, NI, NO>, bias: &Arr<f32, NO>) -> Result<(T,B),SpecializationError>;
 }
 #[cfg(target_feature = "avx512f")]
