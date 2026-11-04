@@ -2,7 +2,7 @@ use std::ops::{AddAssign, Shr};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::device::{DeviceSimd};
 use nncombinator::error::{EvaluateError, SpecializationError};
-use nncombinator::mem::{AsRawMutSlice, AsRawSlice};
+use nncombinator::mem::{AsRawSlice};
 use simdoperator::backend::common::{Backend, SignInt};
 use simdoperator::traits::{Demote, LinearCombination, Promote, Sign};
 use simdoperator::{AccVector, Matrix, Vector, VectorMut};

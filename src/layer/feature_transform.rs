@@ -22,7 +22,7 @@ use nncombinator::cuda::{CudaPtr, CudaTensor1dPtr, CudaTensor2dPtr, ReadMemory, 
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::CudaAllocator;
 use nncombinator::mapper::{BatchIdentityMapper, IdentityMapper};
-use crate::device::DeviceFeatureTransform;
+use crate::device::{DeviceFeatureTransform, DeviceFeatureTransformEvaluation};
 use crate::features::{HalfKP, HalfKPList};
 
 pub struct FeatureTransformLayer<U,P,I,C,B,D,OP,const NI:usize,const NO:usize>
@@ -194,7 +194,7 @@ impl<T,U,P,I,A,OP,const NI:usize,const NO:usize> Persistence<T,Linear>
     }
 }
 
-impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,EvaluateError>>
+impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,EvaluateError>>
     for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain,
@@ -206,7 +206,7 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D 
           OP: Optimizer<U,D> + 'static,
           [(); NO*2]: {
     #[inline]
-    fn forward(&self, input:&HalfKP<NI>) -> Result<<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,EvaluateError> {
+    fn forward(&self, input:&HalfKP<NI>) -> Result<<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,EvaluateError> {
         self.device.forward_feature_transform(&self.bias,&self.units,input.into())
     }
 }
@@ -222,7 +222,7 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> ForwardAll for FeatureTransfo
           OP: Optimizer<U,D> + 'static,
           [(); NO * 2]: {
     type Input = I;
-    type Output = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type Output = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
 
     #[inline]
     fn forward_all(&self, input: Self::Input) -> Result<Self::Output, EvaluateError> {
@@ -240,8 +240,8 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for FeatureTrans
           U: UnitValue<U>,
           OP: Optimizer<U,D>,
           [(); NO * 2]: {
-    type PreOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type OutStack = Cons<<P as PreTrainBase>::OutStack,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output>;
+    type PreOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type OutStack = Cons<<P as PreTrainBase>::OutStack,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output>;
 }
 
 impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> PreTrain for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
@@ -278,7 +278,7 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BackwardBase for FeatureTrans
           Self:UpdateWeight,
           [(); NO * 2]: {
     type LossInputScalar = U;
-    type LossInput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type LossInput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
 }
 impl<U,P,I,OP,const NI:usize,const NO:usize> BackwardAll<U> for FeatureTransformLayer<U,P,I,Arr2<U,NI,NO>,Arr<U,NO>,DeviceCpu,OP,NI,NO>
     where P: PreTrainBase<PreOutput=HalfKP<NI>> + PreTrain +
@@ -666,13 +666,13 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BridgeBase
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
     type UseDevice = D;
-    type RealScale = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type RealOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type SourceInput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
+    type RealScale = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type RealOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type SourceInput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
 }
 impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> Bridge
     for FeatureTransformLayer<U,P,I,C,B,D,OP,NI,NO>
@@ -685,10 +685,10 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> Bridge
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RealMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,Self::UseDevice>
+    type RealMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,Self::UseDevice>
         where Self: 'a;
 
     fn as_real<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::RealMapper<'a>, EvaluateError>
@@ -707,11 +707,11 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BridgeRepr
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type RepresentationOutput = <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output;
-    type ReprMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,Self::UseDevice>
+    type RepresentationOutput = <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output;
+    type ReprMapper<'a> = IdentityMapper<'a,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,Self::UseDevice>
         where Self: 'a;
 
     fn as_repr<'a>(&'a self, input: &'a <Self as ForwardAll>::Output) -> Result<Self::ReprMapper<'a>, EvaluateError>
@@ -733,14 +733,14 @@ impl<U,P,I,C,B,D,OP,const NI:usize,const NO:usize> BatchBridge
           C: 'static,
           B: 'static,
           OP: Optimizer<U,D> + 'static,
-          <D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
-          <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output: Debug + BatchDataType + 'static,
+          <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type: Debug + BatchSize + 'static,
           <I as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
-    type BatchRealMapper<'a> = BatchIdentityMapper<'a,<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output,Self::UseDevice>
+    type BatchRealMapper<'a> = BatchIdentityMapper<'a,<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output,Self::UseDevice>
         where Self: 'a;
 
-    fn batch_as_real<'a>(&'a self, input: &'a <<D as DeviceFeatureTransform<U,C,B,NI,NO>>::Output as BatchDataType>::Type) -> Result<Self::BatchRealMapper<'a>, EvaluateError>
+    fn batch_as_real<'a>(&'a self, input: &'a <<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output as BatchDataType>::Type) -> Result<Self::BatchRealMapper<'a>, EvaluateError>
         where Self: 'a {
         Ok(BatchIdentityMapper::new(input))
     }
