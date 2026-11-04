@@ -221,7 +221,7 @@ impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> ContinueForward for DiffFe
       Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output>,
       [(); NO * 2]: {
     fn continue_forward(&self, input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
-        Ok(input.clone())
+        Ok(self.device.forward_feature_transform_scaling(input)?)
     }
 }
 impl<U,P,I,DI,C,B,D,OP,const NI:usize,const NO:usize> PreTrainBase for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,OP,NI,NO>
