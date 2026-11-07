@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{Ordering};
 use std::time::{Duration, Instant};
 use nncombinator::arr::Arr;
-use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase};
+use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward};
 use rand::Rng;
 use rayon::ThreadPoolBuilder;
 use usiagent::command::{BestMove, CheckMate, UsiInfoSubCommand, UsiOptType};
@@ -22,7 +22,7 @@ use usiagent::output::USIOutputWriter;
 use usiagent::player::{InfoSender, OnKeepAlive, PeriodicallyInfo, USIPlayer};
 use usiagent::rule::{AppliedMove, Kyokumen, Rule, State};
 use usiagent::shogi::{Banmen, KomaKind, Mochigoma, MochigomaCollections, Move, Teban};
-use simdoperator::backend::common::SignFloat;
+use simdoperator::backend::common::{SignInt};
 use crate::error::ApplicationError;
 use crate::features::{HalfKP, HalfKPDiff};
 use crate::nn::{Evalutor, FEATURES_NUM};
@@ -98,10 +98,9 @@ impl FromOption for String {
 }
 pub struct Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+                     Send + Sync + OutputTensorScalar<Scalar=f32> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + 'static {
     evalutor_creator: Box<dyn Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + 'static>,
     evalutor: Option<Arc<Evalutor<M>>>,
     kyokumen:Option<Kyokumen>,
@@ -123,20 +122,18 @@ pub struct Tiger<M>
 }
 impl<M> fmt::Debug for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-          <M as PreTrainBase>::OutStack: Send + Sync + 'static{
+                     Send + Sync + OutputTensorScalar<Scalar=f32> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + 'static {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Tiger")
     }
 }
 impl<M> Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+                     Send + Sync + OutputTensorScalar<Scalar=f32> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + 'static {
     pub fn new<C: Fn(String) -> Result<Evalutor<M>,ApplicationError> + Send + Sync + 'static>(evalutor_creator:C) -> Tiger<M> {
         Tiger {
             evalutor_creator:Box::new(evalutor_creator),
@@ -331,10 +328,9 @@ impl<M> Tiger<M>
 }
 impl<M> USIPlayer<ApplicationError> for Tiger<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+                     Send + Sync + OutputTensorScalar<Scalar=f32> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + 'static {
     const ID: &'static str = "tiger";
     const AUTHOR: &'static str = "j6k1";
 

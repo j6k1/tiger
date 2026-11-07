@@ -17,7 +17,9 @@ use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu, DeviceSimd};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, Step, TryAddLayer};
+#[cfg(feature = "cuda")]
+use nncombinator::layer::{PreTrainBase,PreTrain};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::input::{InputLayer};
 use nncombinator::layer::input::{DiffInputLayer};
@@ -53,7 +55,7 @@ use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemo
 use nncombinator::cuda::allocator::{CudaAllocator};
 use nncombinator::layer::quantization::DequantizeLayerBuilder;
 use simdoperator::backend::autoselect::AutoSelect;
-use simdoperator::backend::common::{Backend, SignFloat, SignInt};
+use simdoperator::backend::common::{Backend, SignInt};
 use simdoperator::traits::Sign;
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
@@ -152,9 +154,8 @@ pub struct EvalutorCreator {
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                                PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                                ContinueForward +
-                                PreTrainBase<OutStack=impl Send+Sync+'static> + PreTrain + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
+                                PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                                ContinueForward + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
         let mut rnd = prelude::thread_rng();
         let mut rnd = XorShiftRng::from_seed(rnd.gen());
 
@@ -226,20 +227,18 @@ impl EvalutorCreator {
 }
 pub struct Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32, 1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-          <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+                     OutputTensorScalar<Scalar=f32> +
+                     PartialForward<PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + Send + Sync + 'static {
     nn:M,
     material_evalutor:crate::evalutor::material::Evalutor
 }
 impl<M> Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                     PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                     ContinueForward + 'static,
-                  <M as PreTrainBase>::OutStack: Send + Sync + 'static {
-    pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<f32,{256*2}>,ApplicationError> {
+                     OutputTensorScalar<Scalar=f32> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     ContinueForward + Send + Sync + 'static {
+    pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<i16,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
 
         let r = self.nn.partial_forward(input)?;
@@ -249,8 +248,8 @@ impl<M> Evalutor<M>
 
     pub fn prepare_evalute_by_diff<'a>(&self, active_player: Teban, t:Teban,
                                               state:&State, mc:&MochigomaCollections,
-                                              m:LegalMove, partial_input: &Arr<f32,{256*2}>)
-        -> Result<Arr<f32,{256*2}>,ApplicationError> {
+                                              m:LegalMove, partial_input: &Arr<i16,{256*2}>)
+        -> Result<Arr<i16,{256*2}>,ApplicationError> {
         let input = HalfKPDiff::new(
             InputCreator::make_diff_input(active_player, t, state, mc, m)?,
             InputCreator::make_diff_input(active_player, t.opposite(), state, mc, m)?
@@ -260,7 +259,7 @@ impl<M> Evalutor<M>
 
         Ok(r)
     }
-    pub fn evalute(&self, partial_output: &Arr<f32,{256*2}>) -> Result<i32,ApplicationError> {
+    pub fn evalute(&self, partial_output: &Arr<i16,{256*2}>) -> Result<i32,ApplicationError> {
         let r = self.nn.continue_forward(partial_output)?;
 
         Ok(((r[0] - 0.5) * 2230.) as i32)
@@ -919,7 +918,7 @@ impl InputCreator {
         }
         inputs
     }
-    pub fn make_diff_input(active_player: Teban, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignFloat<f32>)>,ApplicationError> {
+    pub fn make_diff_input(active_player: Teban, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignInt<i8>)>,ApplicationError> {
         let mut inputs = Vec::new();
 
         let p = Rule::ou_square(t,state);
@@ -947,7 +946,7 @@ impl InputCreator {
                     let index = InputCreator::input_index_of_banmen(t, kind, sx as u32, sy as u32).unwrap();
 
                     if index < MOCHIGOMA_END {
-                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::minus()));
+                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignInt::minus()));
                     }
                 }
 
@@ -963,7 +962,7 @@ impl InputCreator {
                     let index = InputCreator::input_index_of_banmen(t, kind, dx as u32, dy as u32).unwrap();
 
                     if index < MOCHIGOMA_END {
-                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::plus()));
+                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignInt::plus()));
                     }
                 }
 
@@ -973,7 +972,7 @@ impl InputCreator {
                     let index = InputCreator::input_index_of_banmen(t, kind, dx as u32, dy as u32).unwrap();
 
                     if index < MOCHIGOMA_END {
-                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::minus()));
+                        inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignInt::minus()));
                     }
                 }
 
@@ -996,9 +995,9 @@ impl InputCreator {
                         let s = ou_position as usize * MOCHIGOMA_END + PIECE_END;
 
                         if t == active_player {
-                            inputs.push((s + SELF_INDEX_MAP[k as usize] + c, SignFloat::plus()));
+                            inputs.push((s + SELF_INDEX_MAP[k as usize] + c, SignInt::plus()));
                         } else {
-                            inputs.push((s + OPPONENT_INDEX_MAP[k as usize] + c, SignFloat::plus()));
+                            inputs.push((s + OPPONENT_INDEX_MAP[k as usize] + c, SignInt::plus()));
                         }
                     }
                 }
@@ -1021,7 +1020,7 @@ impl InputCreator {
                         let index = InputCreator::input_index_of_banmen(t, k, dx as u32, dy as u32).unwrap();
 
                         if index < MOCHIGOMA_END {
-                            inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignFloat::plus()));
+                            inputs.push(((ou_position as usize * MOCHIGOMA_END + index) as size_t, SignInt::plus()));
                         }
                     },
                     _ => ()
@@ -1046,9 +1045,9 @@ impl InputCreator {
 
                 if c > 0 {
                     if t == active_player {
-                        inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignFloat::minus()));
+                        inputs.push((s + SELF_INDEX_MAP[kind as usize] + c - 1, SignInt::minus()));
                     } else {
-                        inputs.push((s + OPPONENT_INDEX_MAP[kind as usize] + c - 1, SignFloat::minus()));
+                        inputs.push((s + OPPONENT_INDEX_MAP[kind as usize] + c - 1, SignInt::minus()));
                     }
                 }
 

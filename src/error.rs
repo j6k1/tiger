@@ -12,6 +12,7 @@ use usiagent::error::{EventDispatchError, InfoSendError, InvalidInputError, Inva
 use usiagent::event::{EventQueue, SystemEvent, SystemEventKind, UserEvent, UserEventKind};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{CudaError};
+use simdoperator::error::InstantiationError;
 
 #[derive(Debug)]
 pub enum ApplicationError {
@@ -35,6 +36,7 @@ pub enum ApplicationError {
     LayerInstantiationError(LayerInstantiationError),
     PersistenceError(PersistenceError),
     DataLoadError(DataLoadError),
+    InstantiationError(InstantiationError),
     #[cfg(feature = "cuda")]
     CudaError(CudaError),
     RecvError(RecvError),
@@ -73,6 +75,7 @@ impl fmt::Display for ApplicationError {
             ApplicationError::LayerInstantiationError(ref e) => write!(f,"{}",e),
             ApplicationError::PersistenceError(ref e) => write!(f,"{}",e),
             ApplicationError::DataLoadError(ref e) => write!(f,"{}",e),
+            ApplicationError::InstantiationError(ref e) => write!(f,"{}",e),
             #[cfg(feature = "cuda")]
             ApplicationError::CudaError(ref e) => write!(f, "An error occurred in the process of cuda. ({})",e),
             ApplicationError::RecvError(ref e) => write!(f, "{}",e),
@@ -113,6 +116,7 @@ impl error::Error for ApplicationError {
             ApplicationError::LayerInstantiationError(_) => "An unexpected error occurred during layer instantiation.",
             ApplicationError::PersistenceError(_) => "An error occurred when saving model information.",
             ApplicationError::DataLoadError(_) => "An error occurred during the loading process of training data.",
+            ApplicationError::InstantiationError(_) => "This environment is not supported.",
             #[cfg(feature = "cuda")]
             ApplicationError::CudaError(_) => "An error occurred in the process of cuda.",
             ApplicationError::RecvError(_) => "An error occurred while receiving the message.",
@@ -153,6 +157,7 @@ impl error::Error for ApplicationError {
             ApplicationError::LayerInstantiationError(ref e) => Some(e),
             ApplicationError::PersistenceError(ref e) => Some(e),
             ApplicationError::DataLoadError(ref e) => Some(e),
+            ApplicationError::InstantiationError(ref e) => Some(e),
             #[cfg(feature = "cuda")]
             ApplicationError::CudaError(_) => None,
             ApplicationError::RecvError(ref e) => Some(e),
@@ -306,6 +311,11 @@ impl From<BorrowMutError> for ApplicationError {
 impl From<DataLoadError> for ApplicationError {
     fn from(err: DataLoadError) -> ApplicationError {
         ApplicationError::DataLoadError(err)
+    }
+}
+impl From<InstantiationError> for ApplicationError {
+    fn from(err: InstantiationError) -> ApplicationError {
+        ApplicationError::InstantiationError(err)
     }
 }
 impl From<InvalidInputError> for ApplicationError {
