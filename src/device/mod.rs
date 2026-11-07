@@ -1,4 +1,4 @@
-mod simd;
+pub mod simd;
 
 use std::fmt::Debug;
 use std::simd::Simd;
@@ -9,7 +9,7 @@ use simdoperator::backend::common::{SignFloat};
 use nncombinator::arr::{SerializedVec};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::device::{DeviceCpu};
+use nncombinator::device::{Device, DeviceCpu};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{TypeConvertError};
 use nncombinator::error::{EvaluateError, SpecializationError, TrainingError};

@@ -15,7 +15,7 @@ use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
 use nncombinator::arr::{Arr};
-use nncombinator::device::{Device, DeviceCpu};
+use nncombinator::device::{Device, DeviceCpu, DeviceSimd};
 use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, PreTrain, PreTrainBase, Step, TryAddLayer};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::input::{InputLayer};
@@ -49,7 +49,8 @@ use nncombinator::device::{DeviceGpu};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
-use simdoperator::backend::common::SignFloat;
+use simdoperator::backend::autoselect::AutoSelect;
+use simdoperator::backend::common::{Backend, SignFloat};
 use simdoperator::traits::Sign;
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
@@ -160,8 +161,9 @@ impl EvalutorCreator {
         let n4 = Normal::<f32>::new(0.0, 2f32 / (32f32 + 1f32).sqrt()).unwrap();
 
         let device = DeviceCpu::new()?;
+        let device_simd = DeviceSimd::new(AutoSelect::new()?)?;
 
-        let optimizer_builder_feature = AdamWBuilder::new(&device)
+        let optimizer_builder_feature = AdamWBuilder::new(&device_simd)
             .lr(config.learning_rate.unwrap_or(0.001))
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
@@ -184,7 +186,7 @@ impl EvalutorCreator {
         let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<SignFloat<f32>>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
-            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device,
+            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd,
                                                                            || n1.sample(&mut rnd),
                                                                            || 0.0,
                                                                            &optimizer_builder_feature)

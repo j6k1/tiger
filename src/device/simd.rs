@@ -85,7 +85,7 @@ impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDif
 
         let units = Matrix::<i8,NI,NO,BE>::try_from(units.as_raw_slice())?;
 
-        let mut chunks = r.chunks_exact_mut(NO);
+        let chunks = r.chunks_exact_mut(NO);
         for (chunk,indexes) in chunks.zip(input.iter()) {
             let mut lines = Vec::with_capacity(indexes.len());
 

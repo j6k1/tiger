@@ -8,7 +8,7 @@ edition = "2021"
 build = "build.rs"
 [features]
 default = ["cuda"]
-cuda = ["cuda-runtime-sys","rcudnn","rcudnn-sys","rcublas","rcublas-sys","nncombinator/cuda"]
+cuda = ["cuda-runtime-sys","rcudnn","rcudnn-sys","rcublas","rcublas-sys","cc","nncombinator/cuda"]
 [dependencies]
 rand = "0.8.5"
 rand_xorshift = "0.3.0"
@@ -39,7 +39,7 @@ path = "../shogi_dataloader"
 [dependencies.simdoperator]
 path = "../simdoperator"
 [build-dependencies]
-cc = "1.0.73"
+cc = { version = "1.0.73", optional = true }
 [profile.release]
 opt-level = 3
 lto = "fat"
