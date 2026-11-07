@@ -9,7 +9,9 @@ use simdoperator::backend::common::{SignFloat};
 use nncombinator::arr::{SerializedVec};
 use nncombinator::mem::{AsRawSlice};
 use nncombinator::arr::{Arr, Arr2};
-use nncombinator::device::{Device, DeviceCpu};
+#[cfg(feature = "cuda")]
+use nncombinator::device::Device;
+use nncombinator::device::{DeviceCpu};
 #[cfg(feature = "cuda")]
 use nncombinator::error::{TypeConvertError};
 use nncombinator::error::{EvaluateError, SpecializationError, TrainingError};

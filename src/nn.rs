@@ -10,6 +10,7 @@ use std::sync::mpsc::{Receiver};
 use getopts::{Matches};
 use libc::{size_t};
 use rand::{prelude, Rng, SeedableRng};
+#[cfg(feature = "cuda")]
 use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 use rand_xorshift::XorShiftRng;
@@ -21,6 +22,7 @@ use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, 
 use nncombinator::layer::input::{InputLayer};
 use nncombinator::layer::input::{DiffInputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
+#[cfg(feature = "cuda")]
 use nncombinator::layer::linear::{LinearLayerBuilder};
 use nncombinator::layer::activation::ActivationLayer;
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
@@ -49,8 +51,9 @@ use nncombinator::device::{DeviceGpu};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
+use nncombinator::layer::quantization::DequantizeLayerBuilder;
 use simdoperator::backend::autoselect::AutoSelect;
-use simdoperator::backend::common::{Backend, SignFloat};
+use simdoperator::backend::common::{Backend, SignFloat, SignInt};
 use simdoperator::traits::Sign;
 use crate::{Config, EVAL_TEST_SAMPLES};
 use crate::error::{ApplicationError};
@@ -183,35 +186,28 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: DiffInputLayer<f32, HalfKP<FEATURES_NUM>, HalfKPDiff<SignFloat<f32>>, Arr<f32,{256*2}>, (), _> = DiffInputLayer::new(&device);
+        let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i8>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device);
 
         let mut nn = net.try_add_layer(|l| {
             DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd,
-                                                                           || n1.sample(&mut rnd),
-                                                                           || 0.0,
                                                                            &optimizer_builder_feature)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            LinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                                                             || n2.sample(&mut rnd),
-                                                             || 0.0,
+            QuantizedEvaluationLinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
                                                              &optimizer_builder_middle_large
             )
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            LinearLayerBuilder::<32, 32>::new().build(l, &device,
-                                                     || n3.sample(&mut rnd),
-                                                      || 0.0,
+            QuantizedEvaluationLinearLayerBuilder::<32, 32>::new().build(l, &device,
                                                       &optimizer_builder_middle)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            LinearLayerBuilder::<32, 1>::new().build(l, &device,
-                                                     || {
-                                                         n4.sample(&mut rnd)
-                                                     },|| (0.503f32 / 0.497f32).ln(), &optimizer_builder_out)
+            QuantizedEvaluationLinearLayerBuilder::<32, 1>::new().build(l, &device, &optimizer_builder_out)
+        }).add_layer(|l| {
+            DequantizeLayerBuilder::<f32,Arr<f32,1>>::new().build(l, &device).unwrap()
        })?.add_layer(|l| {
             ActivationLayer::new(l, SigmoidBuilder::new(&device), &device)
         }).try_add_layer(|l| {
@@ -220,7 +216,7 @@ impl EvalutorCreator {
 
         let mut p = BinFilePersistence::new(savedir.as_ref().join(&nn_path))?;
 
-        nn.load(&mut p)?;
+        nn.quantization(&mut p)?;
 
         Ok(Evalutor {
             nn:nn,
