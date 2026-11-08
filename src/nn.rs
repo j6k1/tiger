@@ -9,10 +9,13 @@ use std::sync::mpsc::{Receiver};
 #[cfg(feature = "cuda")]
 use getopts::{Matches};
 use libc::{size_t};
+#[cfg(feature = "cuda")]
 use rand::{prelude, Rng, SeedableRng};
 #[cfg(feature = "cuda")]
 use rand::prelude::{Distribution};
+#[cfg(feature = "cuda")]
 use rand_distr::{Normal};
+#[cfg(feature = "cuda")]
 use rand_xorshift::XorShiftRng;
 use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
 use nncombinator::arr::{Arr};
@@ -53,6 +56,7 @@ use nncombinator::device::{DeviceGpu};
 use nncombinator::cuda::{CudaMutPtr, CudaPtr, MemoryMoveTo, MemoryType, ReadMemory, WriteMemory};
 #[cfg(feature = "cuda")]
 use nncombinator::cuda::allocator::{CudaAllocator};
+use nncombinator::layer::linear::QuantizedEvaluationLinearLayerBuilder;
 use nncombinator::layer::quantization::DequantizeLayerBuilder;
 use simdoperator::backend::autoselect::AutoSelect;
 use simdoperator::backend::common::{Backend, SignInt};
@@ -156,14 +160,6 @@ impl EvalutorCreator {
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                                 ContinueForward + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
-        let mut rnd = prelude::thread_rng();
-        let mut rnd = XorShiftRng::from_seed(rnd.gen());
-
-        let n1 = Normal::<f32>::new(0.0, 0.25 * 1.5 / (ACTIVE_INDICES as f32).sqrt()).unwrap();
-        let n2 = Normal::<f32>::new(0.0, (2. / (512f32 + 32f32)).sqrt()).unwrap();
-        let n3 = Normal::<f32>::new(0.0, (2. / (32f32 + 32f32)).sqrt()).unwrap();
-        let n4 = Normal::<f32>::new(0.0, 2f32 / (32f32 + 1f32).sqrt()).unwrap();
-
         let device = DeviceCpu::new()?;
         let device_simd = DeviceSimd::new(AutoSelect::new()?)?;
 
@@ -187,26 +183,22 @@ impl EvalutorCreator {
             .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
             .weight_decay(1e-5);
 
-        let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i8>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device);
+        let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i8>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device_simd);
 
         let mut nn = net.try_add_layer(|l| {
-            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd,
-                                                                           &optimizer_builder_feature)
+            DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<{256 * 2}, 32>::new().build(l, &device,
-                                                             &optimizer_builder_middle_large
-            )
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,{256 * 2}, 32>::new().build(l, &device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<32, 32>::new().build(l, &device,
-                                                      &optimizer_builder_middle)
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,32, 32>::new().build(l, &device)
         })?.add_layer(|l| {
             ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<32, 1>::new().build(l, &device, &optimizer_builder_out)
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,32, 1>::new().build(l, &device)
         }).add_layer(|l| {
             DequantizeLayerBuilder::<f32,Arr<f32,1>>::new().build(l, &device).unwrap()
        })?.add_layer(|l| {

@@ -57,7 +57,7 @@ impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluation<i8,Ar
         Ok(Arr::try_from(result)?)
     }
 }
-const SHIFT: usize = 7;
+const SHIFT: usize = 6;
 impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluationScaling<i8,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO> for DeviceSimd<BE>
     where BE: Backend,
           AccVector<i16,{NO*2},BE>: Demote<AccVector<i8,{NO*2},BE>>,
