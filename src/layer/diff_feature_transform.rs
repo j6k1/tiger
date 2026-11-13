@@ -6,16 +6,16 @@ use nncombinator::arr::{Arr, Arr2};
 use nncombinator::device::{Device, DeviceSimd};
 use nncombinator::device::bridge::DeviceBridge;
 use nncombinator::device::scale::DeviceScale;
-use nncombinator::error::{EvaluateError, LayerInstantiationError, ModelLoadError, PersistenceError};
-use nncombinator::layer::{BatchDataType, BatchSize, Bridge, BridgeBase, ContinueForward, Forward, ForwardAll, ForwardDiff, InputMax, OutputTensorScalar, PartialForward};
+use nncombinator::error::{EvaluateError, LayerInstantiationError, ModelLoadError, PersistenceError, TrainingError};
+use nncombinator::layer::{BatchDataType, BatchSize, Bridge, BridgeBase, ContinueForward, Forward, ForwardAll, ForwardDiff, InputMax, InputScale, OnStep, OutputTensorScalar, PartialForward, Quantization};
 use nncombinator::mapper::ScalingMapper;
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use simdoperator::backend::common::Backend;
-use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling};
+use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling, DeviceQuantizedFeatureTransform};
 use crate::features::HalfKP;
 use crate::nn::ACTIVE_INDICES;
 
-pub struct DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize>
+pub struct DiffFeatureTransformLayer<U,P,I,DI,C,B,D,const NI:usize,const NO:usize>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
           P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           I: Debug + Send + Sync,
@@ -28,11 +28,10 @@ pub struct DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:u
     scale:f32,
     i:PhantomData<I>,
     di:PhantomData<DI>,
-    ri:PhantomData<RI>,
     u:PhantomData<U>
 }
 
-impl<BE,U,P,I,DI,RI,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
+impl<BE,U,P,I,DI,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
     where BE: Backend + Clone,
           U: Default + Clone + Copy + Debug + Send + Sync + 'static,
           P: ForwardAll<Input=I,Output=HalfKP<NI>>,
@@ -40,7 +39,7 @@ impl<BE,U,P,I,DI,RI,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P
           DI: Debug {
     #[inline]
     pub fn new(parent:P,device:&DeviceSimd<BE>)
-        -> Result<DiffFeatureTransformLayer<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>, LayerInstantiationError> {
+        -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>, LayerInstantiationError> {
 
         let mut units = Vec::<U>::with_capacity(NI*NO);
         let mut bias = Vec::<U>::with_capacity(NO);
@@ -56,12 +55,11 @@ impl<BE,U,P,I,DI,RI,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,P
             scale: (1 << 6) as f32 / 128.,
             i:PhantomData::<I>,
             di:PhantomData::<DI>,
-            ri:PhantomData::<RI>,
             u:PhantomData::<U>
         })
     }
 }
-impl<T,BE,U,P,I,DI,RI,const NI:usize,const NO:usize> Persistence<T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
+impl<T,BE,U,P,I,DI,const NI:usize,const NO:usize> Persistence<T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
     where BE: Backend + Clone,
           T: LinearPersistence<U>,
           P: ForwardAll<Input=I,Output=HalfKP<NI>> + Persistence<T,Linear>,
@@ -100,8 +98,8 @@ impl<T,BE,U,P,I,DI,RI,const NI:usize,const NO:usize> Persistence<T,Linear> for D
         Ok(())
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,EvaluateError>>
-    for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,EvaluateError>>
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           C: 'static,
           B: 'static,
@@ -119,7 +117,7 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<
         Ok(self.device.forward_feature_transform_scaling(&r)?)
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ForwardAll for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> ForwardAll for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + 'static,
           C: 'static,
           B: 'static,
@@ -140,7 +138,7 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ForwardAll for DiffFeature
         Ok(self.forward(&input)?)
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> PartialForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + 'static,
           C: 'static,
           B: 'static,
@@ -166,7 +164,7 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> PartialForward for DiffFea
         Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_inpput)?)
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> ForwardDiff for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + 'static,
           C: 'static,
           B: 'static,
@@ -176,14 +174,17 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ForwardDiff for DiffFeatur
           for<'a> D: Device<U> +
                      DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
                      DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
-                     DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> + 'static,
-          Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransformEvaluation<U,C,B,NI,NO>>::Output>,
+                     DeviceDiffFeatureTransform<U,DI,C,B,NI,NO> +
+                     DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> + 'static,
+          Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput>,
           [(); NO * 2]: {
     fn forward_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
-        Ok(self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_input)?)
+        let r = self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_input)?;
+
+        Ok(self.device.forward_feature_transform_scaling(&r)?)
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> +
              PartialForward<DiffInput=DI>,
       C: 'static,
@@ -203,7 +204,7 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> ContinueForward for DiffFe
         Ok(self.device.forward_feature_transform_scaling(input)?)
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> OutputTensorScalar for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> OutputTensorScalar for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
           P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           I: Debug + Send + Sync,
@@ -211,7 +212,7 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> OutputTensorScalar for Dif
           D: Device<U> + 'static {
     type Scalar = U;
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> InputMax for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> InputMax for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
           P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           I: Debug + Send + Sync,
@@ -222,48 +223,75 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> InputMax for DiffFeatureTr
         ACTIVE_INDICES as f32 * 128. / (1 << 6) as f32
     }
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> BridgeBase
-    for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> InputScale for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
+    where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + 'static {
+    fn input_scale(&self) -> f32 {
+        (1 << 6) as f32 / 128.
+    }
+}
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> OnStep for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
+    where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>> + OnStep,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> + 'static {
+    fn on_step(&mut self, step: usize) -> Result<(), TrainingError> {
+        self.parent.on_step(step)
+    }
+
+    fn on_frequently_step(&mut self, step: usize, frequently_step: usize) -> Result<(), TrainingError> {
+        self.parent.on_frequently_step(step, frequently_step)
+    }
+}
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> BridgeBase
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + 'static,
           U: Default + Clone + Copy + Default + Clone + Copy + Debug + Send + Sync + 'static,
           I: Debug + Send + Sync + 'static,
           DI: Debug + 'static,
-          RI: BatchDataType + Debug + 'static,
           D: Device<U> +
              DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
              DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
-             DeviceBridge<U,f32,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,RI> + DeviceScale<f32,RI,NO>,
+             DeviceQuantizedFeatureTransform<C,B,NI,NO> +
+             DeviceBridge<U,f32,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,D::RealOutput> +
+             DeviceScale<f32,D::RealOutput,NO>,
           C: 'static,
           B: 'static,
-          <RI as BatchDataType>::Type: Debug + BatchSize + 'static,
           <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput: Debug + BatchDataType + 'static,
           <<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceQuantizedFeatureTransform<C,B,NI,NO>>::RealOutput: Debug + BatchDataType + 'static,
+          <<D as DeviceQuantizedFeatureTransform<C,B,NI,NO>>::RealOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
           [(); NO * 2]: {
     type UseDevice = D;
-    type RealScale = RI;
-    type RealOutput = RI;
+    type RealScale = D::RealOutput;
+    type RealOutput = D::RealOutput;
     type SourceInput = <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput;
 }
-impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> Bridge
-    for DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>
+impl<U,P,I,DI,C,B,D,const NI:usize,const NO:usize> Bridge
+    for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>> + 'static,
           U: Default + Clone + Copy + Default + Clone + Copy + Debug + Send + Sync + 'static,
           I: Debug + Send + Sync + 'static,
           DI: Debug + 'static,
-          RI: BatchDataType + Debug + 'static,
           C: 'static,
           B: 'static,
           D: Device<U> +
              DeviceFeatureTransformEvaluation<U,C,B,NI,NO> +
              DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO> +
-             DeviceBridge<U,f32,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,RI> +
-             DeviceScale<f32,RI,NO>,
+             DeviceQuantizedFeatureTransform<C,B,NI,NO> +
+             DeviceBridge<U,f32,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,D::RealOutput> +
+             DeviceScale<f32,D::RealOutput,NO>,
           <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput: Debug + BatchDataType + 'static,
           <<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
-          <RI as BatchDataType>::Type: Debug + BatchSize + 'static,
+          <D as DeviceQuantizedFeatureTransform<C,B,NI,NO>>::RealOutput: Debug + BatchDataType + 'static,
+          <<D as DeviceQuantizedFeatureTransform<C,B,NI,NO>>::RealOutput as BatchDataType>::Type: Debug + BatchSize + 'static,
           Self: ForwardAll<Output=<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput>,
           [(); NO * 2]: {
-    type RealMapper<'a> = ScalingMapper<'a,f32,<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,RI,D,NO>
+    type RealMapper<'a> = ScalingMapper<'a,f32,D::ScaledOutput,D::RealOutput,D,NO>
        where Self: 'a;
     fn as_real<'a>(&'a self, input: &'a <D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput) -> Result<Self::RealMapper<'a>, EvaluateError>
         where Self: 'a {
@@ -272,7 +300,38 @@ impl<U,P,I,DI,RI,C,B,D,const NI:usize,const NO:usize> Bridge
         Ok(ScalingMapper::new(&self.device,input,&o,self.scale)?)
     }
 }
-pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,RI,C,BC,D,const NI:usize,const NO:usize>
+impl<T,U,P,I,DI,C,B,D,const NI:usize,const NO:usize> Quantization<T,Linear> for DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>
+    where T: LinearPersistence<f32>,
+          U: Default + Clone + Copy + Debug + Send + Sync + 'static,
+          P: ForwardAll<Input=I,Output=HalfKP<NI>>,
+          I: Debug + Send + Sync,
+          DI: Debug,
+          D: Device<U> +
+             DeviceQuantizedFeatureTransform<C,B,NI,NO> + 'static {
+    fn quantization(&mut self, persistence: &mut T) -> Result<(), TrainingError> {
+        let mut bias = Arr::<f32,NO>::new();
+
+        for b in bias.iter_mut() {
+            *b = persistence.read()?;
+        }
+
+        let mut units = Arr2::<f32,NI,NO>::new();
+
+        for mut u in units.iter_mut() {
+            for w in u.iter_mut() {
+                *w = persistence.read()?;
+            }
+        }
+
+        let (units, bias) = self.device.quantization(&units, &bias)?;
+
+        self.units = units;
+        self.bias = bias;
+
+        Ok(())
+    }
+}
+pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,BC,D,const NI:usize,const NO:usize>
     where P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           U: Default + Clone + Copy + Default + Clone + Copy + Debug + Send + Sync + 'static,
           I: Debug + Send + Sync,
@@ -291,19 +350,19 @@ pub trait DiffFeatureTransformLayerInstantiation<U,P,I,DI,RI,C,BC,D,const NI:usi
     ///
     /// This function may return the following errors
     /// * [`LayerInstantiationError`]
-    fn instantiation(parent:P,device:&D) -> Result<DiffFeatureTransformLayer<U,P,I,DI,RI,C,BC,D,NI,NO>,LayerInstantiationError>;
+    fn instantiation(parent:P,device:&D) -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,BC,D,NI,NO>,LayerInstantiationError>;
 }
 
-impl<BE,U,P,I,DI,RI,const NI:usize,const NO:usize> DiffFeatureTransformLayerInstantiation<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
-    for DiffFeatureTransformLayer<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
+impl<BE,U,P,I,DI,const NI:usize,const NO:usize> DiffFeatureTransformLayerInstantiation<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
+    for DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>
     where BE: Backend + Clone,
           P: ForwardAll<Input=I,Output=HalfKP<NI>>,
           U: Default + Clone + Copy + Default + Clone + Copy + Debug + Send + Sync + 'static,
           I: Debug + Send + Sync,
           DI: Debug,
           [(); NO * 2]:  {
-    fn instantiation(parent: P, device:&DeviceSimd<BE>) -> Result<DiffFeatureTransformLayer<U,P,I,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>,LayerInstantiationError> {
-        DiffFeatureTransformLayer::<_,_,_,DI,RI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>::new(parent, device)
+    fn instantiation(parent: P, device:&DeviceSimd<BE>) -> Result<DiffFeatureTransformLayer<U,P,I,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>,LayerInstantiationError> {
+        DiffFeatureTransformLayer::<_,_,_,DI,Arr2<U,NI,NO>,Arr<U,NO>,DeviceSimd<BE>,NI,NO>::new(parent, device)
     }
 }
 
@@ -327,16 +386,16 @@ impl<const NI:usize,const NO:usize> DiffFeatureTransformLayerBuilder<NI,NO> {
     ///
     /// This function may return the following errors
     /// * [`LayerInstantiationError`]
-    pub fn build<U,C,B,P,D,I,DI,RI>(&self,parent: P, device:&D)
-        -> Result<DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>,LayerInstantiationError>
+    pub fn build<U,C,B,P,D,I,DI>(&self,parent: P, device:&D)
+        -> Result<DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>,LayerInstantiationError>
         where P: ForwardAll<Input=I,Output=HalfKP<NI>>,
               U: Clone + Copy + Default + Clone + Copy + Debug + Send + Sync + 'static,
               I: Debug + Send + Sync + BatchDataType,
               DI: Debug,
               D: Device<U> + 'static,
               <I as BatchDataType>::Type: Debug + BatchSize,
-              DiffFeatureTransformLayer<U,P,I,DI,RI,C,B,D,NI,NO>: DiffFeatureTransformLayerInstantiation<U,P,I,DI,RI,C,B,D,NI,NO>,
+              DiffFeatureTransformLayer<U,P,I,DI,C,B,D,NI,NO>: DiffFeatureTransformLayerInstantiation<U,P,I,DI,C,B,D,NI,NO>,
               [(); NO * 2]: {
-        Ok(DiffFeatureTransformLayer::<U,P,I,DI,RI,C,B,D,NI,NO>::instantiation(parent, device)?)
+        Ok(DiffFeatureTransformLayer::<U,P,I,DI,C,B,D,NI,NO>::instantiation(parent, device)?)
     }
 }

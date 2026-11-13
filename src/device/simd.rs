@@ -1,17 +1,19 @@
 use std::ops::{AddAssign, Shr};
 use nncombinator::arr::{Arr, Arr2};
 use nncombinator::device::{DeviceSimd};
-use nncombinator::error::{EvaluateError, SpecializationError};
+use nncombinator::error::{EvaluateError, SpecializationError, TypeConvertError};
 use nncombinator::mem::{AsRawSlice};
 use simdoperator::backend::common::{Backend, SignInt};
 use simdoperator::traits::{Demote, LinearCombination, Promote};
-use simdoperator::{AccVector, Matrix, Vector, VectorMut};
+use simdoperator::{AccVector, Matrix, Vector, VectorMut, VectorView};
 use simdoperator::error::InstantiationError;
 use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling, DeviceQuantizedFeatureTransform};
 use crate::features::{HalfKPDiff, HalfKPView};
 
 impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i8, NI, NO>, Arr<i8, NO>, NI, NO> for DeviceSimd<BE>
-    where BE: Backend {
+    where BE: Backend,
+          [(); NO*2]: {
+    type RealOutput = Arr<f32,{NO*2}>;
     fn quantization(&self, units: &Arr2<f32, NI, NO>, bias: &Arr<f32, NO>) -> Result<(Arr2<i8, NI, NO>, Arr<i8, NO>),SpecializationError> {
         let mut qunits = Arr2::<i8, NI, NO>::new();
 
@@ -78,7 +80,9 @@ impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluationScalin
 impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDiff<SignInt<i8>>,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO> for DeviceSimd<BE>
     where BE: Backend,
           DeviceSimd<BE>: DeviceFeatureTransformEvaluation<i8,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO,Output=Arr<i16,{NO*2}>>,
-          for<'a,'b> VectorMut<'a,i16,NO,BE>: LinearCombination<Vector<'b,i8,NO,BE>,SignInt<i8>>,
+          Arr<i16,{NO*2}>: TryFrom<Vec<i16>,Error=TypeConvertError>,
+          for<'a,'b> VectorView<'b,i8,NO>: From<Vector<'a,i8,NO,BE>>,
+          for<'a,'b> VectorMut<'a,i16,NO,BE>: LinearCombination<VectorView<'b,i8,NO>,SignInt<i8>>,
           [(); NO*2]: {
     fn forward_diff_feature_transform(&self, _: &Arr<i8, NO>, units: &Arr2<i8, NI, NO>, input: &HalfKPDiff<SignInt<i8>>, partial_input: &Self::Output) -> Result<Self::Output, EvaluateError> {
         let mut r = partial_input.to_vec();
@@ -90,7 +94,7 @@ impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDif
             let mut lines = Vec::with_capacity(indexes.len());
 
             for (index,sign) in indexes.iter().copied() {
-                lines.push((units.row(index), sign));
+                lines.push((units.row(index).into(), sign));
             }
 
             let mut pr = VectorMut::try_from(chunk)?;

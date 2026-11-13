@@ -17,10 +17,10 @@ use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 #[cfg(feature = "cuda")]
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
+use nncombinator::activation::{ClippedReLuBuilder, ReLu, Sigmoid, SigmoidBuilder};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu, DeviceSimd};
-use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, Step, TryAddLayer};
+use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, Step, TryAddLayer, Quantization};
 #[cfg(feature = "cuda")]
 use nncombinator::layer::{PreTrainBase,PreTrain};
 #[cfg(feature = "cuda")]
@@ -29,7 +29,7 @@ use nncombinator::layer::input::{DiffInputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 #[cfg(feature = "cuda")]
 use nncombinator::layer::linear::{LinearLayerBuilder};
-use nncombinator::layer::activation::ActivationLayer;
+use nncombinator::layer::activation::{ActivationLayer, EvaluationActivationLayer};
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
 use nncombinator::optimizer::{AdamWBuilder};
@@ -162,47 +162,26 @@ impl EvalutorCreator {
                                 ContinueForward + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
         let device = DeviceCpu::new()?;
         let device_simd = DeviceSimd::new(AutoSelect::new()?)?;
-
-        let optimizer_builder_feature = AdamWBuilder::new(&device_simd)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
-            .weight_decay(1e-5);
-
-        let optimizer_builder_middle_large = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
-            .weight_decay(1e-5);
-
-        let optimizer_builder_middle = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
-            .weight_decay(1e-5);
-
-        let optimizer_builder_out = AdamWBuilder::new(&device)
-            .lr(config.learning_rate.unwrap_or(0.001))
-            .scheduler(StepLR::new(config.step_count.unwrap_or(1),config.gamma.unwrap_or(0.5)))
-            .weight_decay(1e-5);
-
         let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i8>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device_simd);
 
         let mut nn = net.try_add_layer(|l| {
             DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
+            EvaluationActivationLayer::new(l, ReLu::new(&device),&device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<i8,i8,{256 * 2}, 32>::new().build(l, &device)
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,Arr<f32,{256 * 2}>,{256 * 2},32>::new().build(l, &device)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
+            EvaluationActivationLayer::new(l, ReLu::new(&device),&device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<i8,i8,32, 32>::new().build(l, &device)
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,Arr<f32,32>,32,32>::new().build(l, &device)
         })?.add_layer(|l| {
-            ActivationLayer::new(l, ClippedReLuBuilder::new(&device,1.0,1.0), &device)
+            EvaluationActivationLayer::new(l, ReLu::new(&device),&device)
         }).try_add_layer(|l| {
-            QuantizedEvaluationLinearLayerBuilder::<i8,i8,32, 1>::new().build(l, &device)
-        }).add_layer(|l| {
-            DequantizeLayerBuilder::<f32,Arr<f32,1>>::new().build(l, &device).unwrap()
+            QuantizedEvaluationLinearLayerBuilder::<i8,i8,Arr<f32,1>,32,1>::new().build(l, &device)
+        })?.try_add_layer(|l| {
+            DequantizeLayerBuilder::<f32,Arr<f32,1>>::new().build(l, &device)
        })?.add_layer(|l| {
-            ActivationLayer::new(l, SigmoidBuilder::new(&device), &device)
+            EvaluationActivationLayer::new(l, Sigmoid::new(&device),&device)
         }).try_add_layer(|l| {
             LinearOutputLayer::new(l, &device)
         })?;

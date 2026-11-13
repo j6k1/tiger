@@ -56,6 +56,7 @@ pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: D
 }
 
 pub trait DeviceQuantizedFeatureTransform<T,B,const NI: usize, const NO: usize> {
+    type RealOutput: BatchDataType + Debug + 'static;
     fn quantization(&self, units: &Arr2<f32, NI, NO>, bias: &Arr<f32, NO>) -> Result<(T,B),SpecializationError>;
 }
 #[cfg(target_feature = "avx512f")]
