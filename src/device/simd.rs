@@ -31,7 +31,6 @@ impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i
 impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluation<i8,Arr2<i8, NI, NO>, Arr<i8, NO>, NI, NO> for DeviceSimd<BE>
     where BE: Backend,
           for<'a> Vector<'a,i8,NO,BE>: Promote<AccVector<i16,NO,BE>>,
-          for<'a> Vector<'a,i16,{NO*2},BE>: Shr<usize,Output=AccVector<i16,{NO*2},BE>>,
           for<'a,'b> VectorMut<'a,i16,NO,BE>: AddAssign<Vector<'b,i8,NO,BE>>,
           [(); NO*2]: {
     type Output = Arr<i16,{NO*2}>;
@@ -81,7 +80,7 @@ impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDif
     where BE: Backend,
           DeviceSimd<BE>: DeviceFeatureTransformEvaluation<i8,Arr2<i8,NI,NO>,Arr<i8,NO>,NI,NO,Output=Arr<i16,{NO*2}>>,
           Arr<i16,{NO*2}>: TryFrom<Vec<i16>,Error=TypeConvertError>,
-          for<'a,'b> VectorView<'b,i8,NO>: From<Vector<'a,i8,NO,BE>>,
+          for<'a> VectorView<'a,i8,NO>: From<&'a Vector<'a,i8,NO,BE>>,
           for<'a,'b> VectorMut<'a,i16,NO,BE>: LinearCombination<VectorView<'b,i8,NO>,SignInt<i8>>,
           [(); NO*2]: {
     fn forward_diff_feature_transform(&self, _: &Arr<i8, NO>, units: &Arr2<i8, NI, NO>, input: &HalfKPDiff<SignInt<i8>>, partial_input: &Self::Output) -> Result<Self::Output, EvaluateError> {

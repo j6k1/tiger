@@ -17,7 +17,9 @@ use rand::prelude::{Distribution};
 use rand_distr::{Normal};
 #[cfg(feature = "cuda")]
 use rand_xorshift::XorShiftRng;
-use nncombinator::activation::{ClippedReLuBuilder, ReLu, Sigmoid, SigmoidBuilder};
+#[cfg(feature = "cuda")]
+use nncombinator::activation::{ClippedReLuBuilder, SigmoidBuilder};
+use nncombinator::activation::{ReLu, Sigmoid};
 use nncombinator::arr::{Arr};
 use nncombinator::device::{Device, DeviceCpu, DeviceSimd};
 use nncombinator::layer::{AddLayer, BatchDataType, BatchForwardBase, BatchSize, BatchTrain, ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PersistProgress, Step, TryAddLayer, Quantization};
@@ -29,15 +31,19 @@ use nncombinator::layer::input::{DiffInputLayer};
 use nncombinator::layer::output::LinearOutputLayer;
 #[cfg(feature = "cuda")]
 use nncombinator::layer::linear::{LinearLayerBuilder};
-use nncombinator::layer::activation::{ActivationLayer, EvaluationActivationLayer};
+#[cfg(feature = "cuda")]
+use nncombinator::layer::activation::{ActivationLayer};
+use nncombinator::layer::activation::{EvaluationActivationLayer};
 use nncombinator::lossfunction::{CrossEntropy, LossFunction};
 use nncombinator::ope::{UnitValue};
+#[cfg(feature = "cuda")]
 use nncombinator::optimizer::{AdamWBuilder};
 #[cfg(feature = "cuda")]
 use nncombinator::persistence::{Linear, SaveToFile};
 use nncombinator::persistence::{BinFilePersistence, Persistence, PersistenceType};
 #[cfg(feature = "cuda")]
 use nncombinator::scheduler::{Scheduler, CosineAnnealingLR, LinearWarmupLR};
+#[cfg(feature = "cuda")]
 use nncombinator::scheduler::{StepLR};
 use packedsfen::hcpe::reader::HcpeReader;
 use packedsfen::traits::Reader;
@@ -156,7 +162,7 @@ impl<T,U,D,P,PT,I,O,L> BatchNeuralNetwork<U,D,P,PT,I,O,L> for T
 pub struct EvalutorCreator {
 }
 impl EvalutorCreator {
-    pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, config:&Config)
+    pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, _:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                                 ContinueForward + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
