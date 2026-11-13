@@ -306,7 +306,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
     use nncombinator::arr::Arr;
-    use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward, PreTrain, PreTrainBase};
+    use nncombinator::layer::{ContinueForward, ForwardAll, OutputTensorScalar, PartialForward};
     use rand::RngCore;
     use rayon::ThreadPoolBuilder;
     use usiagent::math::Prng;
@@ -315,7 +315,7 @@ mod tests {
     use usiagent::protocol::{ParsePosition, PositionParser};
     use usiagent::rule::{EvasionsAll, LegalMove, NonEvasionsAll, Rule, State};
     use usiagent::shogi::Teban;
-    use simdoperator::backend::common::SignFloat;
+    use simdoperator::backend::common::SignInt;
     use crate::features::{HalfKP, HalfKPDiff};
     use crate::nn::{Evalutor, FEATURES_NUM};
 
@@ -367,26 +367,24 @@ mod tests {
     }
 
     struct GameState<'a> {
-        pub self_partial_output: &'a Arr<f32,{256*2}>,
-        pub opponent_partial_output: &'a Arr<f32,{256*2}>,
+        pub self_partial_output: &'a Arr<i16,{256*2}>,
+        pub opponent_partial_output: &'a Arr<i16,{256*2}>,
     }
     trait PerftSolverForPosition<M,const N: usize>
-        where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                         PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                         PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                         ContinueForward + 'static,
-                      <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+        where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                 Send + Sync + OutputTensorScalar<Scalar=f32> +
+                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                 ContinueForward + 'static {
         fn perft<'a>(&self,teban:Teban,pos:&mut Position<N>,m:Option<LegalMove>,depth:usize,
                  evalutor: &Arc<Evalutor<M>>, gs:&GameState<'a>) -> PerftResult;
     }
     struct PerftSolverForPositionByEvasions;
 
     impl<M> PerftSolverForPosition<M,200> for PerftSolverForPositionByEvasions
-        where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
-                         PreTrainBase + PreTrain + Send + Sync + OutputTensorScalar<Scalar=f32> +
-                         PartialForward<DiffInput=HalfKPDiff<SignFloat<f32>>,PartialInput=Arr<f32,{256*2}>,PartialOutput=Arr<f32,{256*2}>> +
-                         ContinueForward + 'static,
-                      <M as PreTrainBase>::OutStack: Send + Sync + 'static {
+        where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
+                 Send + Sync + OutputTensorScalar<Scalar=f32> +
+                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                 ContinueForward + 'static {
         fn perft<'a>(&self,teban:Teban,pos:&mut Position<200>, m: Option<LegalMove>, depth: usize,
                  evalutor: &Arc<Evalutor<M>>, gs: &GameState<'a>) -> PerftResult {
             let mut rng = rand::thread_rng();
