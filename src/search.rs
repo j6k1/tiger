@@ -471,7 +471,7 @@ pub struct Root<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
@@ -498,7 +498,7 @@ pub trait SendInfo<L,S,M>: Sized
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     fn send_info(&self, env:&mut Environment<L,S>,
                  depth:u32, seldepth:u32, pv:&VecDeque<LegalMove>, score:&Score) -> Result<(),ApplicationError>
@@ -544,7 +544,7 @@ pub trait Search<L,S,M>: SendInfo<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     fn search<'a,'b>(&self,env:&mut Environment<L,S>, gs:&mut GameState<'a>,
                      event_dispatcher:&mut UserEventDispatcher<'b,Self,ApplicationError,L>,
@@ -1850,7 +1850,7 @@ pub trait PartialSearch<L,S,M>: Sized
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,
@@ -1861,7 +1861,7 @@ impl<L,S,M> Root<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     pub fn new(thread_pool:ThreadPool) -> Root<L,S,M> {
         let(s,r) = mpsc::channel();
@@ -2499,14 +2499,14 @@ impl<L,S,M> SendInfo<L,S,M> for Root<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {}
 pub struct Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     l:PhantomData<L>,
     s:PhantomData<S>,
@@ -2517,7 +2517,7 @@ impl<L,S,M> Recursive<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32, 1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     pub fn new() -> Recursive<L,S,M> {
         Recursive {
@@ -2704,14 +2704,14 @@ impl<L,S,M> SendInfo<L,S,M> for Recursive<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {}
 impl<L,S,M> Search<L,S,M> for Recursive<L,S,M>
     where L: Logger + Send + 'static,
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     fn search<'a, 'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       event_dispatcher: &mut UserEventDispatcher<'b, Recursive<L,S,M>, ApplicationError, L>,
@@ -3485,7 +3485,7 @@ impl<L,S,M> Inter<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + 'static {
     pub fn new() -> Inter<L,S,M> {
         Inter {
@@ -3519,7 +3519,7 @@ impl<L,S,M> PartialSearch<L,S,M> for Inter<L,S,M>
           S: InfoSender,
           for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                      Send + Sync + OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + Send + Sync + 'static {
     fn search<'a,'b>(&self, env: &mut Environment<L, S>, gs: &mut GameState<'a>,
                       evalutor: &Arc<Evalutor<M>>,

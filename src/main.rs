@@ -373,7 +373,7 @@ mod tests {
     trait PerftSolverForPosition<M,const N: usize>
         where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                  Send + Sync + OutputTensorScalar<Scalar=f32> +
-                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                 PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                  ContinueForward + 'static {
         fn perft<'a>(&self,teban:Teban,pos:&mut Position<N>,m:Option<LegalMove>,depth:usize,
                  evalutor: &Arc<Evalutor<M>>, gs:&GameState<'a>) -> PerftResult;
@@ -383,7 +383,7 @@ mod tests {
     impl<M> PerftSolverForPosition<M,200> for PerftSolverForPositionByEvasions
         where M: ForwardAll<Input=HalfKP<FEATURES_NUM>, Output=Arr<f32,1>> +
                  Send + Sync + OutputTensorScalar<Scalar=f32> +
-                 PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                 PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                  ContinueForward + 'static {
         fn perft<'a>(&self,teban:Teban,pos:&mut Position<200>, m: Option<LegalMove>, depth: usize,
                  evalutor: &Arc<Evalutor<M>>, gs: &GameState<'a>) -> PerftResult {

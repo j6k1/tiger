@@ -164,11 +164,11 @@ pub struct EvalutorCreator {
 impl EvalutorCreator {
     pub fn create(savedir: impl AsRef<Path> + 'static, nn_path: impl AsRef<Path> + 'static, _:&Config)
         -> Result<Evalutor<impl ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
-                                PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                                PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                                 ContinueForward + OutputTensorScalar<Scalar=f32> + Send + Sync + 'static>, ApplicationError> {
         let device = DeviceCpu::new()?;
         let device_simd = DeviceSimd::new(AutoSelect::new()?)?;
-        let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i8>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device_simd);
+        let net: DiffInputLayer<i8, HalfKP<FEATURES_NUM>, HalfKPDiff<SignInt<i16>>, Arr<i8,{256*2}>, (), _> = DiffInputLayer::new(&device_simd);
 
         let mut nn = net.try_add_layer(|l| {
             DiffFeatureTransformLayerBuilder::<FEATURES_NUM,256>::new().build(l, &device_simd)
@@ -213,7 +213,7 @@ pub struct Evalutor<M>
 impl<M> Evalutor<M>
     where for<'a> M: ForwardAll<Input=HalfKP<FEATURES_NUM>,Output=Arr<f32,1>> +
                      OutputTensorScalar<Scalar=f32> +
-                     PartialForward<DiffInput=HalfKPDiff<SignInt<i8>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
+                     PartialForward<DiffInput=HalfKPDiff<SignInt<i16>>,PartialInput=Arr<i16,{256*2}>,PartialOutput=Arr<i16,{256*2}>> +
                      ContinueForward + Send + Sync + 'static {
     pub fn prepare_evalute(&self, t:Teban, state:&State, mc:&MochigomaCollections) -> Result<Arr<i16,{256*2}>,ApplicationError> {
         let input = HalfKP::new(InputCreator::make_input(t,state,mc),InputCreator::make_input(t.opposite(),state,mc));
@@ -895,7 +895,7 @@ impl InputCreator {
         }
         inputs
     }
-    pub fn make_diff_input(active_player: Teban, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignInt<i8>)>,ApplicationError> {
+    pub fn make_diff_input(active_player: Teban, t:Teban,state:&State,mc:&MochigomaCollections,m:LegalMove) -> Result<Vec<(size_t,SignInt<i16>)>,ApplicationError> {
         let mut inputs = Vec::new();
 
         let p = Rule::ou_square(t,state);
