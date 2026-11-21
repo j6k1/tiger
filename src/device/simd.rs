@@ -52,7 +52,7 @@ impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i
 
             for i in (1..current_size).rev() {
                 if acc[i] > acc[i-1] {
-                    let tmp = acc[i-1];
+                    let tmp = acc[i];
                     acc[i] = acc[i-1];
                     acc[i-1] = tmp;
                 } else {
@@ -360,7 +360,7 @@ impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i
         }
 
         let shift = (raw_next_input_max / i8::MAX as f32).max(1.0).log2().ceil() as usize;
-dbg!(shift,raw_next_input_max);
+
         let next_input_max = raw_next_input_max / (1 << shift) as f32;
         let scale = SCALE / (1 << shift) as f32;
 
