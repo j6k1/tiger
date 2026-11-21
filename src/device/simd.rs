@@ -26,12 +26,12 @@ impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i
 
         for (row, mut qrow) in units.iter().zip(qunits.iter_mut()) {
             for (&w, qw) in row.iter().zip(qrow.iter_mut()) {
-                *qw = (w * SCALE + 0.5) as i16;
+                *qw = (w * SCALE) as i16;
             }
         }
 
         let qbias = bias.iter().map(|&b| {
-            (b * SCALE + 0.5) as i16
+            (b * SCALE) as i16
         }).collect::<Vec<i16>>();
 
         fn insert(acc: &mut [f32;18],max_size:usize,mut current_size:usize,w:f32) -> usize {
@@ -399,18 +399,14 @@ impl<BE,const NI: usize, const NO: usize> DeviceFeatureTransformEvaluationScalin
           Box<[i8;NO*2]>: From<AccVector<i8,{NO*2},BE>>,
           for<'a,'b> VectorMut<'a,i16,NO,BE>: AddAssign<Vector<'b,i16,NO,BE>>,
           for<'a> Vector<'a,i16,{NO*2},BE>: TryFrom<&'a [i16],Error=InstantiationError> +
-                                            Add<Vector<'a,i16,{NO*2},BE>,Output=AccVector<i16,{NO*2},BE>> +
                                             Shr<usize,Output=AccVector<i16,{NO*2},BE>>,
           [(); NO*2]: {
     type ScaledOutput = Arr<i8,{NO*2}>;
 
     fn forward_feature_transform_scaling<'a>(&self, shift: usize, input: &<Self as DeviceFeatureTransformEvaluation<i8,Arr2<i16,NI,NO>,Arr<i16,NO>,NI,NO>>::Output) -> Result<Self::ScaledOutput, EvaluateError> {
-        let pad = [(1 << (shift - 1));NO*2];
-
-        let pad = Vector::try_from(&pad)?;
         let input = Vector::try_from(input)?;
 
-        Ok(Arr::try_from(*<Box<[i8;NO*2]>>::from(((input + pad) >> shift).demotion()))?)
+        Ok(Arr::try_from(*<Box<[i8;NO*2]>>::from((input >> shift).demotion()))?)
     }
 }
 impl<BE,const NI: usize,const NO: usize> DeviceDiffFeatureTransform<i8,HalfKPDiff<SignInt<i16>>,Arr2<i16,NI,NO>,Arr<i16,NO>,NI,NO> for DeviceSimd<BE>
