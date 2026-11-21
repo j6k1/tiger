@@ -350,7 +350,7 @@ impl<BE,const NI: usize, const NO: usize> DeviceQuantizedFeatureTransform<Arr2<i
 
                 sum += acc.iter().take(2).fold(0.0, |acc, &w| acc + w);
 
-                sum
+                sum + qbias[i] as f32
             }).fold(|| 0.0/0.0, |acc, w| f32::max(acc, w)).reduce(|| 0.0/0.0, |acc, w| f32::max(acc, w));
 
             if ws > raw_next_input_max {
