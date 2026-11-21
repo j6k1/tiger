@@ -47,7 +47,7 @@ pub trait DeviceFeatureTransformEvaluation<U,T,B,const NI: usize,const NO: usize
 pub trait DeviceFeatureTransformEvaluationScaling<U,T,B,const NI:usize, const NO: usize>: DeviceFeatureTransformEvaluation<U,T,B,NI,NO>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static, [(); NO*2]: {
     type ScaledOutput: BatchDataType + Debug + 'static;
-    fn forward_feature_transform_scaling<'a>(&self,input: &<Self as DeviceFeatureTransformEvaluation<U,T,B,NI,NO>>::Output) -> Result<Self::ScaledOutput,EvaluateError>;
+    fn forward_feature_transform_scaling<'a>(&self,shift:usize,input: &<Self as DeviceFeatureTransformEvaluation<U,T,B,NI,NO>>::Output) -> Result<Self::ScaledOutput,EvaluateError>;
 }
 pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: DeviceFeatureTransformEvaluation<U,T,B,NI,NO>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
@@ -57,7 +57,8 @@ pub trait DeviceDiffFeatureTransform<U,I,T,B,const NI: usize,const NO: usize>: D
 
 pub trait DeviceQuantizedFeatureTransform<T,B,const NI: usize, const NO: usize> {
     type RealOutput: BatchDataType + Debug + 'static;
-    fn quantization(&self, units: &Arr2<f32, NI, NO>, bias: &Arr<f32, NO>) -> Result<(T,B),SpecializationError>;
+    fn quantization(&self, units: &Arr2<f32, NI, NO>, bias: &Arr<f32, NO>)
+        -> Result<(f32,usize,f32,f32,T,B),SpecializationError>;
 }
 #[cfg(target_feature = "avx512f")]
 pub const LANES_F32: usize = 16;

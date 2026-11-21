@@ -11,22 +11,22 @@ use nncombinator::ope::UnitValue;
 extern "C" {
     fn forward_transform_features_batch_float(indexes: *const size_t, boundaries: *const size_t,
                                         units: *const f32, bias: *const f32, output: *mut f32,
-                                        output_len: size_t, batch_size: size_t) -> c_void;
+                                        output_len: size_t, batch_size: size_t);
     fn transform_features_gradient_batch_float(loss: *const f32,indexes: *const size_t,
                                                boundaries: *const size_t,
                                                output: *mut f32,
                                                input_len: size_t,
                                                output_len: size_t,
-                                               batch_size: size_t) -> c_void;
+                                               batch_size: size_t);
     fn transform_features_input_to_bits(indexes: *const size_t,
                                         boundaries: *const size_t,
                                         bits: *mut u8,
                                         input_len: size_t,
-                                        batch_size: size_t) -> c_void;
+                                        batch_size: size_t);
     fn bi_mix_accumulator_float(input: *const f32,
                                 output: *mut f32,
                                 input_len: size_t,
-                                batch_size: size_t) -> c_void;
+                                batch_size: size_t);
 }
 /// Defines the list that is passed to the cuda kernel function as arguments for the computation
 /// of Forward propagation of linear layers specialized for processing HalfKP.

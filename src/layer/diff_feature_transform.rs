@@ -12,9 +12,7 @@ use nncombinator::mapper::ScalingMapper;
 use nncombinator::persistence::{Linear, LinearPersistence, Persistence};
 use simdoperator::backend::common::Backend;
 use crate::device::{DeviceDiffFeatureTransform, DeviceFeatureTransformEvaluation, DeviceFeatureTransformEvaluationScaling, DeviceQuantizedFeatureTransform};
-use crate::device::simd::{SCALE,SHIFT};
 use crate::features::HalfKP;
-use crate::nn::ACTIVE_INDICES;
 
 pub struct DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize>
     where U: Default + Clone + Copy + Debug + Send + Sync + 'static,
@@ -28,6 +26,9 @@ pub struct DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,const NI:usize,const NO:us
     units:C,
     bias:B,
     scale:f32,
+    shift:usize,
+    input_scale:f32,
+    input_max:f32,
     i:PhantomData<I>,
     di:PhantomData<DI>,
     u:PhantomData<U>,
@@ -56,7 +57,10 @@ impl<BE,U,W,P,I,DI,const NI:usize,const NO:usize> DiffFeatureTransformLayer<U,W,
             device: device.clone(),
             units: units.try_into()?,
             bias: bias.try_into()?,
-            scale: (1 << SHIFT) as f32 / SCALE,
+            scale: 1.,
+            shift: 1,
+            input_scale: 1.,
+            input_max: 1.,
             i:PhantomData::<I>,
             di:PhantomData::<DI>,
             u:PhantomData::<U>,
@@ -121,7 +125,7 @@ impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> Forward<HalfKP<NI>,Result<<
     fn forward(&self, input:&HalfKP<NI>) -> Result<<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput,EvaluateError> {
         let r = self.device.forward_feature_transform(&self.bias,&self.units,input.into())?;
 
-        Ok(self.device.forward_feature_transform_scaling(&r)?)
+        Ok(self.device.forward_feature_transform_scaling(self.shift,&r)?)
     }
 }
 impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> ForwardAll for DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,NI,NO>
@@ -191,7 +195,7 @@ impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> ForwardDiff for DiffFeature
     fn forward_diff(&self, input: Self::DiffInput, partial_input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
         let r = self.device.forward_diff_feature_transform(&self.bias,&self.units,&input,partial_input)?;
 
-        Ok(self.device.forward_feature_transform_scaling(&r)?)
+        Ok(self.device.forward_feature_transform_scaling(self.shift,&r)?)
     }
 }
 impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> ContinueForward for DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,NI,NO>
@@ -212,7 +216,7 @@ impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> ContinueForward for DiffFea
       Self: ForwardAll<Input=<P as ForwardAll>::Output,Output=<D as DeviceFeatureTransformEvaluationScaling<U,C,B,NI,NO>>::ScaledOutput>,
       [(); NO * 2]: {
     fn continue_forward(&self, input: &Self::PartialInput) -> Result<Self::Output, EvaluateError> {
-        Ok(self.device.forward_feature_transform_scaling(input)?)
+        Ok(self.device.forward_feature_transform_scaling(self.shift,input)?)
     }
 }
 impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> OutputTensorScalar for DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,NI,NO>
@@ -233,7 +237,7 @@ impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> InputMax for DiffFeatureTra
           D: Device<U> + 'static {
     type Scalar = f32;
     fn input_max(&self) -> Self::Scalar {
-        ACTIVE_INDICES as f32 * SCALE / (1 << SHIFT) as f32
+        self.input_max
     }
 }
 impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> InputScale for DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,NI,NO>
@@ -244,7 +248,7 @@ impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> InputScale for DiffFeatureT
           DI: Debug,
           D: Device<U> + 'static {
     fn input_scale(&self) -> f32 {
-        (1 << SHIFT) as f32 / SCALE
+        self.input_scale
     }
 }
 impl<U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> OnStep for DiffFeatureTransformLayer<U,W,P,I,DI,C,B,D,NI,NO>
@@ -341,8 +345,12 @@ impl<T,U,W,P,I,DI,C,B,D,const NI:usize,const NO:usize> Quantization<T,Linear> fo
             }
         }
 
-        let (units, bias) = self.device.quantization(&units, &bias)?;
+        let (scale,shift,input_scale,input_max,units, bias) = self.device.quantization(&units, &bias)?;
 
+        self.scale = scale;
+        self.shift = shift;
+        self.input_scale = input_scale;
+        self.input_max = input_max;
         self.units = units;
         self.bias = bias;
 
